@@ -8,10 +8,14 @@ Settings live in **Settings → Workspaces** (previously under General). The gea
 
 Every linked folder is remembered as a named **profile** (name + absolute path), newest first.
 
-- **Open existing** — Browse to a folder, confirm the name (defaults to the folder name), optionally tick Git init, and Link it. Re-linking a known folder updates its name and moves it to the front — never a duplicate.
+- **Open existing** — Pick a folder in the built-in browser, confirm the name (defaults to the folder name), optionally tick Git init, and Link it. Re-linking a known folder updates its name and moves it to the front — never a duplicate.
 - **Create new** — Pick a parent folder, type a single project-folder name, optionally tick Git init. margin scaffolds the folder only when it is new or empty (chapters, characters, manifest starter) and links it in one atomic step — a Git failure won't leave you pointing at a half-built directory.
 - **Rename / delete** — Rename changes the display name only (your folder on disk is untouched). Deleting a profile just forgets it; your files stay on disk.
 - **Switch** — Use the workspace switcher in the file sidebar header. The editor reloads from the newly linked folder.
+
+### Folder browser
+
+Both flows open an in-app browser (no native OS dialog) served by `GET /api/workspace/browse`. It opens at the folder margin was launched from, lists subfolders only, and walks up with `..` or back to the app folder with one click. System locations are off limits — `.ssh`, `.config`, `.aws`, `/etc`, `/usr` and friends are refused rather than listed.
 
 Profiles are stored in your platform config (`workspace_profiles` in `settings.json`) alongside `linked_workspace_dir` — never sent anywhere.
 
