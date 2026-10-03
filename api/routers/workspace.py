@@ -5,8 +5,6 @@ from pydantic import BaseModel
 from pathlib import Path
 import urllib.parse
 import urllib.request
-import sys
-import subprocess
 import tempfile
 import os
 import shutil
@@ -70,192 +68,6 @@ class MediaFromUrlRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Cross-platform folder picker
-# ---------------------------------------------------------------------------
-
-# Interactive folder picker timeout (seconds). A picker is deliberately
-# interactive — a user may legitimately spend minutes browsing — so this is
-# intentionally long. Contrast with short backend timeouts (e.g. git
-# rev-parse timeout=5, git init/add/commit timeout=10). On timeout/expiry the
-# picker must degrade gracefully to the next picker (ultimately Tk), never
-# fail outright.
-PICKER_TIMEOUT = 120
-
-
-def _open_folder_picker() -> str | None:
-    """Open a native folder-picker dialog in an isolated subprocess.
-
-    On Windows, uses the modern native IFileOpenDialog (with FOS_PICKFOLDERS)
-    via ctypes in an isolated child process. This opens the modern Windows
-    File Explorer folder picker (with 'Select Folder' button, toolbar 'New folder',
-    navigation bar, and full shell context menu support) without freezing.
-    """
-    try:
-        # Windows: modern native Explorer folder picker (IFileOpenDialog with FOS_PICKFOLDERS)
-        if sys.platform == "win32":
-            win_code = (
-                "import ctypes\n"
-                "from ctypes import wintypes\n"
-                "class GUID(ctypes.Structure):\n"
-                "    _fields_ = [('Data1', ctypes.c_uint32), ('Data2', ctypes.c_uint16), ('Data3', ctypes.c_uint16), ('Data4', ctypes.c_uint8 * 8)]\n"
-                "ole32 = ctypes.windll.ole32\n"
-                "ole32.OleInitialize(None)\n"
-                "def g(s):\n"
-                "    res = GUID()\n"
-                "    ole32.IIDFromString(ctypes.c_wchar_p(s), ctypes.byref(res))\n"
-                "    return res\n"
-                "clsid = g('{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}')\n"
-                "iid_open = g('{d57c7288-d4ad-4768-be02-9d969532d960}')\n"
-                "pDialog = ctypes.c_void_p()\n"
-                "hr = ole32.CoCreateInstance(ctypes.byref(clsid), None, 1, ctypes.byref(iid_open), ctypes.byref(pDialog))\n"
-                "if hr == 0 and pDialog.value:\n"
-                "    try:\n"
-                "        vt = ctypes.cast(pDialog, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents\n"
-                "        Show = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.HWND)(vt[3])\n"
-                "        SetOptions = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.DWORD)(vt[9])\n"
-                "        SetTitle = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.LPCWSTR)(vt[17])\n"
-                "        SetOkButtonLabel = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.LPCWSTR)(vt[18])\n"
-                "        GetResult = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(vt[20])\n"
-                "        Release = ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vt[2])\n"
-                "        SetOptions(pDialog, 0x00000020 | 0x00000040 | 0x00000800)\n"
-                "        SetTitle(pDialog, 'Select Workspace Folder')\n"
-                "        SetOkButtonLabel(pDialog, 'Select Folder')\n"
-                "        if Show(pDialog, None) == 0:\n"
-                "            pItem = ctypes.c_void_p()\n"
-                "            if GetResult(pDialog, ctypes.byref(pItem)) == 0 and pItem.value:\n"
-                "                item_vt = ctypes.cast(pItem, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents\n"
-                "                GetDisplayName = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR))(item_vt[5])\n"
-                "                ReleaseItem = ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(item_vt[2])\n"
-                "                psz = wintypes.LPWSTR()\n"
-                "                if GetDisplayName(pItem, 0x80058000, ctypes.byref(psz)) == 0 and psz.value:\n"
-                "                    print(psz.value)\n"
-                "                    ole32.CoTaskMemFree(psz)\n"
-                "                ReleaseItem(pItem)\n"
-                "        Release(pDialog)\n"
-                "    finally:\n"
-                "        ole32.OleUninitialize()\n"
-            )
-            try:
-                res = subprocess.run(
-                    [sys.executable, "-c", win_code],
-                    capture_output=True,
-                    text=True,
-                    timeout=PICKER_TIMEOUT,
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    return res.stdout.strip()
-                # Dialog was shown but dismissed (Cancel): don't fall through
-                # to Tk — that would pop a SECOND dialog after the first one
-                # was dismissed.
-                if res.returncode == 0:
-                    return None
-                # Native failure -> fall through to Tk fallback below.
-            except subprocess.TimeoutExpired:
-                # Interactive timeout -> degrade gracefully to Tk fallback.
-                pass
-
-        # macOS: native Cocoa dialog via osascript
-        elif sys.platform == "darwin":
-            try:
-                res = subprocess.run(
-                    [
-                        "osascript",
-                        "-e",
-                        'POSIX path of (choose folder with prompt "Select Workspace Folder")',
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=PICKER_TIMEOUT,
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    return res.stdout.strip()
-                # The osascript dialog ran and was dismissed (Cancel sends a
-                # non-zero exit, e.g. "User canceled"). Never fall through to
-                # Tk here — that opens a SECOND dialog after the user just
-                # closed the first one.
-                return None
-            except subprocess.TimeoutExpired:
-                # Timed out while the native dialog was up; it has been
-                # killed, so don't stack a Tk dialog on top — just bail out.
-                return None
-            except FileNotFoundError:
-                # osascript missing -> fall through to Tk fallback below.
-                pass
-
-        # Linux / BSD: native desktop dialogs if installed
-        elif sys.platform.startswith("linux") or sys.platform.startswith("freebsd"):
-            if shutil.which("zenity"):
-                try:
-                    res = subprocess.run(
-                        ["zenity", "--file-selection", "--directory", "--title=Select Workspace Folder"],
-                        capture_output=True,
-                        text=True,
-                        timeout=PICKER_TIMEOUT,
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        return res.stdout.strip()
-                except subprocess.TimeoutExpired:
-                    # Interactive timeout -> try next picker, ultimately Tk.
-                    pass
-            if shutil.which("kdialog"):
-                try:
-                    res = subprocess.run(
-                        ["kdialog", "--getexistingdirectory", ".", "--title", "Select Workspace Folder"],
-                        capture_output=True,
-                        text=True,
-                        timeout=PICKER_TIMEOUT,
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        return res.stdout.strip()
-                except subprocess.TimeoutExpired:
-                    # Interactive timeout -> try next picker, ultimately Tk.
-                    pass
-            if shutil.which("yad"):
-                try:
-                    res = subprocess.run(
-                        ["yad", "--file", "--directory", "--title=Select Workspace Folder"],
-                        capture_output=True,
-                        text=True,
-                        timeout=PICKER_TIMEOUT,
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        return res.stdout.strip()
-                except subprocess.TimeoutExpired:
-                    # Interactive timeout -> try next picker, ultimately Tk.
-                    pass
-            # All native options failed/missing -> fall through to Tk fallback below.
-
-        # Universal fallback: isolated Python Tkinter subprocess
-        py_code = (
-            "import tkinter as tk\n"
-            "from tkinter import filedialog\n"
-            "root = tk.Tk()\n"
-            "root.withdraw()\n"
-            "root.attributes('-topmost', True)\n"
-            "root.focus_force()\n"
-            "p = filedialog.askdirectory(parent=root, title='Select Workspace Folder')\n"
-            "root.destroy()\n"
-            "if p: print(p)\n"
-        )
-        try:
-            res = subprocess.run(
-                [sys.executable, "-c", py_code],
-                capture_output=True,
-                text=True,
-                timeout=PICKER_TIMEOUT,
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                return res.stdout.strip()
-        except subprocess.TimeoutExpired:
-            return None
-
-    except Exception:
-        return None
-
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -282,11 +94,58 @@ def get_git_status():
     return is_git_available()
 
 
-@router.get("/pick-folder")
-def pick_folder():
-    """Open a native folder-picker dialog."""
-    path = _open_folder_picker()
-    return {"path": path}
+def _resolve_browse_dir(raw: str | None) -> Path:
+    """Resolve a browse target: absolute, existing, and outside the sensitive
+    prefixes. A blank path means the application's cwd, which is what
+    `FileStorageService(base_dir=".")` treats as the app root."""
+    raw = (raw or "").strip()
+    if not raw:
+        return Path.cwd().resolve()
+
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise HTTPException(status_code=400, detail="Path must be absolute.")
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path.")
+    if not resolved.exists() or not resolved.is_dir():
+        raise HTTPException(status_code=404, detail="Directory does not exist.")
+
+    for blocked in _SENSITIVE_PATH_PREFIXES:
+        try:
+            blocked_resolved = blocked.expanduser().resolve()
+        except Exception:
+            continue
+        if _is_subpath(resolved, blocked_resolved):
+            raise HTTPException(status_code=403, detail="The selected path is not allowed.")
+    return resolved
+
+
+@router.get("/browse")
+def browse_folders(path: str = ""):
+    """List the subfolders of `path` as JSON — replaces the native folder
+    picker. Omit `path` to start at the application's cwd. Only the target
+    directory is listed (never recursed), so symlink cycles need no guard."""
+    resolved = _resolve_browse_dir(path)
+
+    try:
+        entries = sorted(
+            (child for child in resolved.iterdir() if child.is_dir()),
+            key=lambda child: child.name.lower(),
+        )
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied reading this directory.")
+
+    # `parent == resolved` only at a filesystem root (or a drive root), where
+    # there is nowhere further up to go.
+    parent = str(resolved.parent) if resolved.parent != resolved else None
+    return {
+        "path": str(resolved),
+        "parent": parent,
+        "cwd": str(Path.cwd().resolve()),
+        "folders": [{"name": child.name, "path": str(child)} for child in entries],
+    }
 
 
 @router.post("/create")

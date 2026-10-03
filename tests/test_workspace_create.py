@@ -3,7 +3,6 @@ import tempfile
 import shutil
 import os
 import subprocess
-import sys
 from pathlib import Path
 from unittest import mock
 from fastapi.testclient import TestClient
@@ -789,113 +788,90 @@ class TestFolderOps(unittest.TestCase):
         self.assertEqual(stats["markdown_files"], 1)
 
 
-class TestFolderPickerFallback(unittest.TestCase):
-    """Windows native failure/timeout must degrade to Tk, not return None."""
 
-    def _completed(self, returncode=0, stdout=""):
-        return subprocess.CompletedProcess(args=["picker"], returncode=returncode, stdout=stdout, stderr="")
+class TestBrowseFolders(unittest.TestCase):
+    """GET /api/workspace/browse — the JSON folder picker that replaced the
+    native dialog. Starts at the app cwd, lists directories only, and refuses
+    the sensitive path prefixes."""
 
-    def test_windows_native_failure_invokes_tk_fallback(self):
-        tk_path = "C:\\Users\\writer\\novel" if sys.platform == "win32" else "/tmp/tk-picked"
-        calls = []
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.root = Path(self.temp_dir).resolve()
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            if len(calls) == 1:
-                # Windows IFileOpenDialog fails (user cancelled / non-zero exit).
-                return self._completed(returncode=1, stdout="")
-            # Tk fallback succeeds.
-            return self._completed(returncode=0, stdout=tk_path + "\n")
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-        with mock.patch.object(workspace_router.sys, "platform", "win32"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
+    def test_defaults_to_application_cwd(self):
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["path"], str(Path.cwd().resolve()))
+        self.assertEqual(body["cwd"], str(Path.cwd().resolve()))
 
-        self.assertEqual(result, tk_path)
-        # Prove BOTH halves: native was attempted and Tk was actually attempted.
-        self.assertEqual(len(calls), 2, "Tk fallback was not attempted after native failure")
-        self.assertIn("filedialog.askdirectory", calls[1][2])
+    def test_lists_only_directories_sorted_case_insensitively(self):
+        for name in ("Zeta", "alpha", "Nested"):
+            (self.root / name).mkdir()
+        (self.root / "chapter-1.md").write_text("hi", encoding="utf-8")
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": str(self.root)})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual([f["name"] for f in res.json()["folders"]], ["alpha", "Nested", "Zeta"])
+        self.assertEqual(res.json()["folders"][0]["path"], str(self.root / "alpha"))
 
-    def test_windows_native_cancel_does_not_invoke_tk_fallback(self):
-        calls = []
+    def test_hidden_directories_are_listed(self):
+        (self.root / ".config").mkdir()
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": str(self.root)})
+        self.assertEqual([f["name"] for f in res.json()["folders"]], [".config"])
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            # Dialog shown, user pressed Cancel: exit 0, no path printed.
-            return self._completed(returncode=0, stdout="")
+    def test_parent_is_the_enclosing_directory(self):
+        (self.root / "chapters").mkdir()
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": str(self.root / "chapters")})
+        self.assertEqual(res.json()["parent"], str(self.root))
 
-        with mock.patch.object(workspace_router.sys, "platform", "win32"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
+    def test_parent_is_null_at_filesystem_root(self):
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": self.root.anchor})
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNone(res.json()["parent"])
 
-        self.assertIsNone(result)
-        self.assertEqual(len(calls), 1, "Tk fallback opened a second dialog after Cancel")
+    def test_sensitive_prefix_is_refused(self):
+        secret = self.root / "secrets"
+        secret.mkdir()
+        with mock.patch.object(workspace_router, "_SENSITIVE_PATH_PREFIXES", [self.root]):
+            client = TestClient(app)
+            res = client.get("/api/workspace/browse", params={"path": str(secret)})
+        self.assertEqual(res.status_code, 403)
+        self.assertIn("not allowed", res.json()["detail"])
 
-    def test_macos_cancel_does_not_invoke_tk_fallback(self):
-        calls = []
+    def test_sensitive_prefix_itself_is_refused(self):
+        with mock.patch.object(workspace_router, "_SENSITIVE_PATH_PREFIXES", [self.root]):
+            client = TestClient(app)
+            res = client.get("/api/workspace/browse", params={"path": str(self.root)})
+        self.assertEqual(res.status_code, 403)
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            # osascript "User canceled": non-zero exit, empty stdout.
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="0:0: execution error: User canceled. (-128)"
-            )
+    def test_missing_directory_is_404(self):
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": str(self.root / "nope")})
+        self.assertEqual(res.status_code, 404)
 
-        with mock.patch.object(workspace_router.sys, "platform", "darwin"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
+    def test_file_target_is_404(self):
+        (self.root / "note.md").write_text("x", encoding="utf-8")
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": str(self.root / "note.md")})
+        self.assertEqual(res.status_code, 404)
 
-        self.assertIsNone(result)
-        self.assertEqual(len(calls), 1, "Tk fallback opened a second dialog after Cancel")
+    def test_relative_path_is_rejected(self):
+        client = TestClient(app)
+        res = client.get("/api/workspace/browse", params={"path": "relative/dir"})
+        self.assertEqual(res.status_code, 400)
 
-    def test_macos_success_returns_path_without_tk(self):
-        calls = []
+    def test_pick_folder_endpoint_is_gone(self):
+        client = TestClient(app)
+        self.assertEqual(client.get("/api/workspace/pick-folder").status_code, 404)
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            return self._completed(returncode=0, stdout="/Users/writer/my-novel\n")
-
-        with mock.patch.object(workspace_router.sys, "platform", "darwin"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
-
-        self.assertEqual(result, "/Users/writer/my-novel")
-        self.assertEqual(len(calls), 1)
-
-    def test_macos_missing_osascript_invokes_tk_fallback(self):
-        tk_path = "/tmp/tk-picked-no-osascript"
-        calls = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            if len(calls) == 1:
-                raise FileNotFoundError("osascript")
-            return self._completed(returncode=0, stdout=tk_path + "\n")
-
-        with mock.patch.object(workspace_router.sys, "platform", "darwin"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
-
-        self.assertEqual(result, tk_path)
-        self.assertEqual(len(calls), 2, "Tk fallback was not attempted when osascript is missing")
-
-    def test_windows_native_timeout_invokes_tk_fallback(self):
-        tk_path = "/tmp/tk-picked-after-timeout"
-        calls = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            if len(calls) == 1:
-                raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
-            return self._completed(returncode=0, stdout=tk_path + "\n")
-
-        with mock.patch.object(workspace_router.sys, "platform", "win32"), \
-             mock.patch.object(workspace_router.subprocess, "run", side_effect=fake_run):
-            result = workspace_router._open_folder_picker()
-
-        self.assertEqual(result, tk_path)
-        self.assertEqual(len(calls), 2, "Tk fallback was not attempted after native timeout")
-        self.assertIn("filedialog.askdirectory", calls[1][2])
 
 
 if __name__ == "__main__":
