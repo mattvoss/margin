@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Pencil, Trash2, X, FolderOpen, Plus } from 'lucide-react'
 import type { AppSettings } from '../../stores/settingsStore'
 import { toast } from '../../stores/toastStore'
 import { API_BASE } from '../../lib/api'
 import { FilterSection, SectionCard, SectionLabel, Toggle } from './shared'
+import { FolderBrowser } from './FolderBrowser'
 import { workspaceNameError } from './workspaceName'
 
 type Profile = { id: string; name: string; path: string }
@@ -159,17 +160,13 @@ export function WorkspacesSettings({ settings, updateSettings, query }: { settin
   const [pickedPath, setPickedPath] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('')
   const [createName, setCreateName] = useState('')
-  const [isPicking, setIsPicking] = useState(false)
-  // Synchronous re-entrancy guard: `busy` only disables the buttons after a
-  // re-render, so a fast double-click would fire two picker requests and
-  // stack two native dialogs (cancelling the first reveals the second).
-  // Refs update synchronously, closing that window.
-  const pickingRef = useRef(false)
   const [initGitOpen, setInitGitOpen] = useState(false)
   const [initGitCreate, setInitGitCreate] = useState(false)  // default false — local-first
   const [gitAvailable, setGitAvailable] = useState<boolean | null>(null)
   const [isWorking, setIsWorking] = useState(false)
   const [mode, setMode] = useState<'open' | 'create' | null>(null)
+  // Which flow opened the folder browser; null = browser closed.
+  const [browserMode, setBrowserMode] = useState<'open' | 'create' | null>(null)
   const [editProfile, setEditProfile] = useState<Profile | null>(null)
 
   const profiles: Profile[] = settings.workspace_profiles || []
@@ -199,57 +196,28 @@ export function WorkspacesSettings({ settings, updateSettings, query }: { settin
 
   const cancel = () => {
     setMode(null)
+    setBrowserMode(null)
     setPickedPath(null)
     setProfileName('')
     setCreateName('')
   }
 
-  /** Shared folder-picker: opens the native dialog. Resolves true when a path was chosen. */
-  const browsePicker = async (onPicked: (path: string) => void) => {
-    if (pickingRef.current) return false
-    pickingRef.current = true
-    setIsPicking(true)
-    try {
-      const res = await fetch(`${API_BASE}/api/workspace/pick-folder`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.path) {
-          onPicked(data.path)
-          return true
-        }
-      }
-      return false
-    } catch (err) {
-      console.error('Failed to pick folder', err)
-      toast.error('Failed to open folder picker dialog.')
-      return false
-    } finally {
-      pickingRef.current = false
-      setIsPicking(false)
-    }
-  }
+  const handleOpenExisting = () => setBrowserMode('open')
 
-  const handleOpenExisting = async () => {
-    setMode('open')
-    const chose = await browsePicker((path) => {
+  const handleCreateNew = () => setBrowserMode('create')
+
+  /** Folder-browser selection: seed the inline form for the flow that opened
+   *  it. Everything downstream (Link / Create) is unchanged. */
+  const handleBrowseSelect = (path: string) => {
+    if (browserMode === 'open') {
+      setMode('open')
       setPickedPath(path)
       setProfileName(basenameOf(path))
-    })
-    // Picker dismissed with no selection — back to rest.
-    if (!chose) {
-      setPickedPath(null)
-      setProfileName('')
-      setMode(null)
+    } else if (browserMode === 'create') {
+      setMode('create')
+      setPickedPath(path)
     }
-  }
-
-  const handleCreateNew = async () => {
-    setMode('create')
-    const chose = await browsePicker((path) => setPickedPath(path))
-    if (!chose) {
-      setPickedPath(null)
-      setMode(null)
-    }
+    setBrowserMode(null)
   }
 
   const gitNote = (git: WorkspaceGitInfo | null | undefined): string | null => {
@@ -436,7 +404,7 @@ export function WorkspacesSettings({ settings, updateSettings, query }: { settin
     </div>
   )
 
-  const busy = isPicking || isWorking
+  const busy = isWorking
 
   // Manage-only rows: name + path + rename/delete actions. No selection —
   // switching lives in the sidebar switcher.
@@ -582,6 +550,14 @@ export function WorkspacesSettings({ settings, updateSettings, query }: { settin
           )}
         </section>
       </FilterSection>
+
+      {browserMode && (
+        <FolderBrowser
+          title={browserMode === 'open' ? 'Open existing workspace' : 'Choose a location for the new workspace'}
+          onSelect={handleBrowseSelect}
+          onClose={() => setBrowserMode(null)}
+        />
+      )}
 
       {liveEditProfile && (
         <WorkspaceEditDialog
