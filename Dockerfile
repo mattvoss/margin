@@ -34,6 +34,7 @@ COPY --from=build /build/.output ./.output
 COPY prompts ./prompts
 COPY sample-workspace ./sample-workspace
 COPY docker/entry.sh ./entry.sh
+RUN chmod +x ./entry.sh
 ENV NODE_ENV=production \
     PORT=3000 \
     MARGIN_DATA_DIR=/data \
