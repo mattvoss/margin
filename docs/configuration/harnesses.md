@@ -5,6 +5,7 @@ If you already pay for an AI coding helper, Margin can use it instead of an API 
 | Helper | Notes |
 |--------|-------|
 | **OpenCode** | Model list comes straight from the helper. |
+| **Pi** | Model list comes straight from the helper. Chat is read-only; Edit can write. |
 | **Claude Code** | Built-in model list[^1] — or type any model name by hand. |
 | **Codex** | Built-in model list[^1] — or type any model name by hand. |
 | **Antigravity** | Model list comes straight from the helper. |
@@ -20,13 +21,13 @@ Install the helper and sign in using its own instructions, in your own terminal.
 - `✓ Ready · <version>` — good to go.
 - `✕ Not installed` — install and sign in to its program, then reopen Settings and it should appear.
 
-If Margin can't find a helper you installed, enter its location by hand in the "Custom program" box for that helper.
+If Margin can't find a helper you installed, enter its location by hand in the "Custom program" box for that helper. Pi and OpenCode have no program to point at — Pi runs inside Margin, and OpenCode runs as a service — so they show their own sign-in guidance instead.
 
 ## Configuration
 
 - **Active helper**: pick it from the dropdown in the Assist panel (harness menu, next to the input); the inline bubble always follows the same choice. `None — use endpoint` (the normal setting — nothing changes) means requests go to the configured endpoint instead.
-- **Default model**: which model the helper should use. OpenCode and Antigravity show the list straight from the helper itself. Codex and Claude Code don't offer a list command, so Margin ships a built-in list for them[^1] — or just type any model name by hand.
-- **Custom program**: the helper's location on your computer, for installs Margin can't find on its own.
+- **Default model**: which model the helper should use. OpenCode, Pi, and Antigravity show the list straight from the helper itself. Codex and Claude Code don't offer a list command, so Margin ships a built-in list for them[^1] — or just type any model name by hand.
+- **Custom program**: the helper's location on your computer, for installs Margin can't find on its own. Pi doesn't use one.
 - **Ctx**: the helper model's context window, used only for the usage ring next to the input. Leave empty to hide the ring — the token count still shows.
 - **Harness Edit prompt**: the standing edit instructions (including the rule that changes land in files, not in the reply) are editable in **Settings > Context** — see [Prompts](./prompts.md).
 
@@ -34,7 +35,7 @@ If Margin can't find a helper you installed, enter its location by hand in the "
 
 ## Token counts
 
-The input bar always shows session token totals. All four helpers report real usage; if a run reports none, Margin estimates from text length (`len/4`) — treated as approximate. The `%` ring appears only when a context window is known (the Ctx field above).
+The input bar always shows session token totals. All helpers report real usage; if a run reports none, Margin estimates from text length (`len/4`) — treated as approximate. The `%` ring appears only when a context window is known (the Ctx field above).
 
 ## While it works
 
@@ -47,6 +48,8 @@ The input bar always shows session token totals. All four helpers report real us
 
 One Margin session maps to one helper conversation. The first request starts it; every follow-up in the same session continues it — the helper remembers prior turns, file reads, and tool results, so "try again" retries the real previous attempt and files aren't re-read from cold.
 
+With Pi, the conversation is stored by Pi itself under its own directory (`~/.pi/agent/sessions/`), not in your workspace, so transcripts stay out of the folder you keep under version control.
+
 - **New Chat** starts a fresh helper conversation.
 - Deleting a session also drops the link to its helper conversation.
 - If a run fails, the next attempt starts fresh rather than resuming the broken conversation.
@@ -57,5 +60,6 @@ One Margin session maps to one helper conversation. The first request starts it;
 | What you see | What to do |
 |---|---|
 | `<Name> not found` | Install the helper's program, or enter its location in Settings > Harnesses. |
+| `✕ No usable Pi model` | Pi is installed but has no model Margin can use. Set one up in `pi` first (sign in, or `/login llama.cpp` and load a model with `/llama`) — Margin reads Pi's saved catalog — or type a model name by hand in Settings > Harnesses. |
 | Sign-in / login errors | Sign in to the helper in your terminal and retry. |
-| The helper changed other files | Only the open file is merged and highlighted. Other files appear in the sidebar as the helper saves them — live for all four helpers. |
+| The helper changed other files | Only the open file is merged and highlighted. Other files appear in the sidebar as the helper saves them — live for every helper. |

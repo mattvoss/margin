@@ -49,7 +49,7 @@ The only "telemetry" is local:
 
 - **AI logs** stored in `outputs/ai_logs/` for debugging your own requests
 - **Image logs** stored in `outputs/image_logs/images.json` — every generation's prompt, seed, provider, and asset path; viewable in-app under History → Images
-- **Settings** saved in your platform's config directory — `~/.config/slm-writing-engine/settings.json` on Linux, `~/Library/Application Support/slm-writing-engine/settings.json` on macOS, `%APPDATA%\slm-writing-engine\settings.json` on Windows
+- **Settings** — split by scope: General, Workspaces and Appearance keys are **per-browser** (stored in that browser's local storage, so two clients of one server can differ). Everything that drives shared behaviour — endpoints, harnesses, context, images — lives in the server's `settings.json` (`$MARGIN_DATA_DIR/settings.json`, default `~/.margin/settings.json`), which also supplies the fallback defaults for the per-browser keys
 - **No crash reports, no usage stats, no pings home**
 
 Everything stays on your machine.

@@ -2,7 +2,7 @@
 
 Endpoints connect margin to an AI model. You can use local models (completely private, offline) or cloud APIs.
 
-> Prefer your agent subscription over an API key? See [Harnesses](./harnesses.md) — you can use OpenCode, Claude Code, Codex, or Antigravity instead.
+> Prefer your agent subscription over an API key? See [Harnesses](./harnesses.md) — you can use OpenCode, Pi, Claude Code, Codex, or Antigravity instead.
 
 ## Active Endpoint
 
@@ -93,6 +93,23 @@ When enabled, this injects a system prompt that instructs the model to use reaso
 If you see raw tags like `<think>...` or `<|channel|>...` in your output, the model is using reasoning tags that aren't being filtered. Check your endpoint's **Thinking Model** toggle and add any missing custom tags. If the toggle is on and you still see tags, add them as custom tags.
 
 > See [AI Assist > Reasoning & Thinking](../ai-assist.md#reasoning-amp-thinking) for how reasoning appears in the editor.
+
+## Prefix Caching (llama.cpp and compatible servers)
+
+llama.cpp reuses a slot's KV cache when the next request shares a token prefix with the previous one, skipping prefill for the matching head. margin structures every prompt for this: the `system` message is a frozen static head (base prompt file only), history ships as append-only message pairs, and all volatile content (context files, anchor window, instruction) goes last in the final user message. Context file order is sorted so planner output order can't bust the prefix.
+
+Each request also sends `cache_prompt: true` plus `n_keep` sized to the static head, so context overflow evicts the volatile tail instead of the system prompt. Watch the server log for `[prefix-cache]` lines (`system_hash` / `user_hash` identify the prefix; `prompt_ms` / `tokens_cached` confirm reuse) and the llama-server `kv cache rm [N, end)` lines showing suffix-only evaluation.
+
+Advanced settings (via `PATCH /api/settings`, server-side only):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llama_cache_prompt` | `true` | Set `false` to force full prefill (e.g. when comparing providers). |
+| `llama_n_keep` | estimated static-head tokens | Override the `n_keep` value sent per request. |
+| `llama_pin_slots` | `false` | Set `true` to pin each session to a stable `id_slot` for same-slot reuse. Only enable when your server's slot count (`-np`) is fixed. |
+| `llama_slot_count` | `4` | Slot count used to bound the derived `id_slot`. Match your server's `-np`. |
+
+> Keep the model, `prepend_thinking_preamble` flag, and pinned files stable within a session: any change to the static head invalidates the cached prefix from byte 0.
 
 ## Editing and Deleting Endpoints
 

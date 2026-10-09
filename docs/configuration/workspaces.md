@@ -17,7 +17,7 @@ Every linked folder is remembered as a named **profile** (name + absolute path),
 
 Both flows open an in-app browser (no native OS dialog) served by `GET /api/workspace/browse`. It opens at the folder margin was launched from, lists subfolders only, and walks up with `..` or back to the app folder with one click. System locations are off limits — `.ssh`, `.config`, `.aws`, `/etc`, `/usr` and friends are refused rather than listed.
 
-Profiles are stored in your platform config (`workspace_profiles` in `settings.json`) alongside `linked_workspace_dir` — never sent anywhere.
+Profiles and the linked workspace are per-browser: each client stores them in its own local storage (so you can point different browsers at different projects on one server). The server keeps a copy in its `settings.json` as the fallback default for clients that haven't picked one.
 
 ## Sidebar switcher and folder ops
 

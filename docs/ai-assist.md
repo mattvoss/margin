@@ -4,7 +4,7 @@ The AI Assist panel is your main interface for writing with AI. You can toggle b
 
 ## Agent Harnesses
 
-If you have a subscription to an agentic coding tool, you can run it directly from Margin instead of using an API endpoint. Supported harnesses: **OpenCode**, **Claude Code**, **Codex**, and **Antigravity**.
+If you have a subscription to an agentic coding tool, you can run it directly from Margin instead of using an API endpoint. Supported harnesses: **OpenCode**, **Pi**, **Claude Code**, **Codex**, and **Antigravity**.
 
 - **Setup**: install and authenticate each CLI in your own terminal first — Margin never handles harness credentials. Pick a default in **Settings > Harness**, or override per request with the harness dropdown in the Assist panel (the inline bubble always follows the default).
 - **How it works**: your instruction (plus any selected text) is sent to the agent, which runs in your workspace and edits files itself. Its output streams live in the panel as progress — it is never inserted into the document directly. Harness runs skip the endpoint Planner: the agent receives your instruction, any selected or cursor-anchored text, past conversation and recent edits (bounded by Session Memory), and pointers to the workspace index manifests, and works out everything else — including which files to change or create — by itself. The harnesses' standing edit instructions (including the rule that changes land in files, not in the reply) are editable in **Settings > Context** under *Agent Prompts*.

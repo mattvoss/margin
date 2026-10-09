@@ -14,25 +14,20 @@ Thanks for your interest in contributing! margin is open-source and community-dr
 
 ## Development
 
-### Backend (Python/FastAPI)
+### Full stack (TanStack Start — UI + API on :3000)
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn api.main:app --reload
-```
-
-### Frontend (React/Vite)
-
-```bash
-cd ui
 npm install
 npm run dev
 ```
 
+API routes live in `src/routes/api.*.ts`; server-only modules live in
+`src/server/`.
+Run the suite with `npm run test` and typecheck with
+`npx tsc --noEmit -p tsconfig.app.json` (all from the repo root).
+
 ### Code Style
 
-- **Python**: Follow [PEP 8](https://peps.python.org/pep-0008/). Run `ruff` before committing.
 - **TypeScript/React**: We use the existing project conventions. Keep components focused, prefer hooks over classes, and follow the patterns in the codebase.
 - No trailing whitespace, no unnecessary comments.
 
@@ -62,7 +57,7 @@ refactor: extract planner logic from writer
 
 - Use the [issue tracker](https://github.com/prxshetty/margin/issues).
 - Include steps to reproduce, expected behavior, and screenshots if applicable.
-- Mention your OS, Python version, and Node version.
+- Mention your OS and Node version.
 
 ## Code of Conduct
 

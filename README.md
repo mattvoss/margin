@@ -6,12 +6,12 @@
   </picture>
 
   [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-  [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
-  [![Node: 18+](https://img.shields.io/badge/Node-18+-green.svg)](https://nodejs.org/)
+  [![Node: 22+](https://img.shields.io/badge/Node-22+-green.svg)](https://nodejs.org/)
+  [![Docker](https://img.shields.io/badge/Docker-ready-blue.svg)](https://www.docker.com/)
 
   An AI writing workspace with smart context management and deep customization.
 
-  Now supports [OpenCode](docs/configuration/harnesses.md) · [Claude Code](docs/configuration/harnesses.md) · [Codex](docs/configuration/harnesses.md) · [Antigravity](docs/configuration/harnesses.md)
+  Now supports [OpenCode](docs/configuration/harnesses.md) · [Pi](docs/configuration/harnesses.md) · [Claude Code](docs/configuration/harnesses.md) · [Codex](docs/configuration/harnesses.md) · [Antigravity](docs/configuration/harnesses.md)
 </div>
 
 
@@ -29,7 +29,7 @@ Instead of treating AI as a chat window, Margin integrates it directly into the 
 * **Markdown-Native Writing Environment** — A distraction-free editor designed for long-form writing projects and documentation.
 * **Runs Locally** — Your manuscripts, notes, and context stay on your machine. No required cloud services or telemetry.
 * **Optimized for Smaller Models** — Works well with lightweight language models and supports Ollama, LM Studio, and OpenAI-compatible providers.
-* **Agent Harnesses** — Supports OpenCode, Claude Code, Codex, or Antigravity with your own subscription; see [Harnesses](./docs/configuration/harnesses.md).
+* **Agent Harnesses** — Supports OpenCode, Pi, Claude Code, Codex, or Antigravity with your own subscription; see [Harnesses](./docs/configuration/harnesses.md).
 * **Editable Prompts** — Tune the Writer, Planner, Chat, and Harness Edit instructions from Settings > Prompts; see [Prompts](./docs/configuration/prompts.md).
 * **Automatic Context Management** — Organize characters, lore, outlines, and style guides into folders. Margin automatically includes the relevant context for each task.
 * **Customizable AI Workflows** — Configure prompts, agents, and writing pipelines to match your process instead of adapting to rigid presets.
@@ -69,7 +69,7 @@ See the [Getting Started guide](docs/getting-started.md) for setup instructions,
 - [Configuration](docs/configuration/workspaces.md) — Workspaces, appearance, editor, endpoints, context, harness, images settings
 - [Workspaces](docs/configuration/workspaces.md) — Profiles, sidebar switcher, folder ops, Git init
 - [Images](docs/configuration/images.md) — Providers, styles, ComfyUI workflows, generation history
-- [Harnesses](docs/configuration/harnesses.md) — Use your OpenCode, Claude Code, Codex, or Antigravity subscription
+- [Harnesses](docs/configuration/harnesses.md) — Use your OpenCode, Pi, Claude Code, Codex, or Antigravity subscription
 - [Prompts](docs/configuration/prompts.md) — Edit the Writer, Planner, Chat, and Harness Edit instructions
 
 

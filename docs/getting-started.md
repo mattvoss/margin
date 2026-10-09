@@ -2,22 +2,16 @@
 
 ## Prerequisites
 
-margin has two parts: a **backend** (AI engine) and a **frontend** (editor interface). You'll need both running.
+margin is a single **TanStack Start** app (editor UI + `/api/*` served by one
+Node server). You run it with **Docker** (Linux), or with **Node.js** for local dev.
 
-### Backend (Python)
+### Docker (recommended)
 
-- Python 3.10 or newer
+- Docker Engine with Compose v2
 
-  ```bash
-  python --version      # macOS / Linux
-  python --version      # Windows (or python3 if using the Windows store alias)
-  ```
+### Local dev (optional)
 
-  If you don't have Python, download it from [python.org](https://python.org).
-
-### Frontend (Node.js)
-
-- Node.js 18 or newer
+- Node.js 22 or newer
 
   ```bash
   node --version
@@ -61,68 +55,26 @@ git clone https://github.com/prxshetty/margin.git
 cd margin
 ```
 
-### Step 2: Set up the backend
+### Step 2: Run margin
 
-margin includes startup scripts that handle everything automatically. Pick the right one for your OS:
-
-::: code-group
-
-```bash [macOS / Linux]
-./start.sh
-```
-
-```powershell [Windows]
-start.bat          # double-click, or run in cmd
-powershell -ExecutionPolicy Bypass -File start.ps1
-```
-
-:::
-
-The script will:
-1. Create a Python virtual environment (if one doesn't exist)
-2. Install Python dependencies
-3. Install frontend dependencies
-4. Launch both the API server and the editor UI in parallel
-
-#### Manual setup (optional)
-
-If you prefer to run things step by step:
-
-::: code-group
-
-```bash [macOS / Linux]
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-```powershell [Windows]
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-:::
-
-The backend will be available at `http://localhost:8000`.
-
-### Step 3: Set up the frontend
-
-If you used the startup script, this is already done. Otherwise, open a **new terminal window** and run:
+Pick one:
 
 ```bash
-cd ui
+# Docker (single process on :3000, data in the margin-data volume)
+cp .env.example .env
+docker compose up --build
+```
+
+```bash
+# Local dev (from the repo root, serves UI + /api on :3000)
 npm install
 npm run dev
 ```
 
-The editor will open at `http://localhost:5173`.
+The editor opens at `http://localhost:3000`. The first Docker boot seeds
+`/data/workspaces/default` from the bundled `sample-workspace/`.
 
-### Step 4: Configure your AI provider
+### Step 3: Configure your AI provider
 
 1. Open margin in your browser.
 2. Click the **gear icon** to open Settings.
@@ -132,7 +84,7 @@ The editor will open at `http://localhost:5173`.
 5. Click **Test Connection** to verify everything works.
 6. Pick your endpoint as active from the assistant panel's harness menu (**Endpoint** flyout).
 
-### Step 5: Start writing
+### Step 4: Start writing
 
 The default workspace (`sample-workspace`) is loaded automatically. It includes sample characters, a chapter, and style presets so you can start experimenting right away.
 

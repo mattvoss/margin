@@ -16,7 +16,7 @@ margin comes with a `sample-workspace` that has example files to help you get st
 
 To reset to the default sample workspace, pick `sample-workspace` in the file-sidebar switcher.
 
-::: tip Your workspace path is stored in your platform's config directory (`~/.config/slm-writing-engine/settings.json` on Linux, `~/Library/Application Support/slm-writing-engine/settings.json` on macOS, `%APPDATA%\slm-writing-engine\settings.json` on Windows) and never sent anywhere.
+::: tip This tab's settings are per-browser. Your workspace path, default mode, and verbosity live in each browser's own local storage, so every client of one margin server can be configured independently — they double as the server's fallback defaults. Server-synced settings (endpoints, harnesses, context, images) are saved to the server's `settings.json` (under `$MARGIN_DATA_DIR`, default `~/.margin`).
 :::
 
 ## Default Mode
