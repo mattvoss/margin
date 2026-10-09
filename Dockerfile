@@ -15,7 +15,6 @@ FROM node:22-bookworm-slim AS run
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl \
   && rm -rf /var/lib/apt/lists/* \
-  && useradd --create-home margin
 
   # ============================================================
 # OpenCode
@@ -42,5 +41,4 @@ ENV NODE_ENV=production \
     MARGIN_PROMPTS_DIR=/app/prompts
 VOLUME ["/data"]
 EXPOSE 3000
-USER margin
 ENTRYPOINT ["./entry.sh"]
