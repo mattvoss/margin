@@ -1,0 +1,16 @@
+node_modules/
+.output/
+dist/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.git/
+tests/
+.gitignore
+# Not needed to build the app image
+docs/
+screenshots/
+stats/
+.github/
+assets/*.mp4

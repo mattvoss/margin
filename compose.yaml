@@ -1,0 +1,17 @@
+services:
+  margin:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - margin-data:/data
+    env_file:
+      - .env
+    environment:
+      # Host-local LLM (e.g. LM Studio on the Docker host):
+      # LM_STUDIO_BASE_URL: http://host.docker.internal:1234/v1
+      PORT: "3000"
+    restart: unless-stopped
+
+volumes:
+  margin-data:
