@@ -15,18 +15,6 @@ FROM node:22-bookworm-slim AS run
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl \
   && rm -rf /var/lib/apt/lists/* \
-
-  # ============================================================
-# OpenCode
-# ============================================================
-RUN curl -fsSL https://opencode.ai/install | bash
-
-
-# ============================================================
-# Pi      
-# ============================================================
-RUN curl -fsSL https://pi.dev/install.sh | bash 
-
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -39,6 +27,17 @@ ENV NODE_ENV=production \
     PORT=3000 \
     MARGIN_DATA_DIR=/data \
     MARGIN_PROMPTS_DIR=/app/prompts
+
+# ============================================================
+# OpenCode
+# ============================================================
+RUN curl -fsSL https://opencode.ai/install | bash
+
+
+# ============================================================
+# Pi      
+# ============================================================
+RUN curl -fsSL https://pi.dev/install.sh | bash 
 VOLUME ["/data"]
 EXPOSE 3000
 ENTRYPOINT ["./entry.sh"]
