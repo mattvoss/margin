@@ -661,13 +661,52 @@ export function extractAnchorContext(
         }
       }
     }
-  } else if (cursorParagraphText) {
+  } else if (cursorParagraphText && cursorParagraphText.trim()) {
     const cursorText = cursorParagraphText.trim()
+    let found = false
     for (let i = 0; i < paragraphs.length; i++) {
       if (paragraphs[i].includes(cursorText.slice(0, 60))) {
         targetIdx = i
+        found = true
         break
       }
+    }
+    if (!found) {
+      if (paragraphs.length > 0) {
+        const lastParagraph = paragraphs[paragraphs.length - 1]
+        return {
+          paragraphBefore: lastParagraph,
+          targetParagraph: '',
+          paragraphAfter: '',
+          targetIdx: paragraphs.length,
+          replace: false,
+        }
+      }
+      return {
+        paragraphBefore: '',
+        targetParagraph: '',
+        paragraphAfter: '',
+        targetIdx: 0,
+        replace: false,
+      }
+    }
+  } else {
+    if (paragraphs.length > 0) {
+      const lastParagraph = paragraphs[paragraphs.length - 1]
+      return {
+        paragraphBefore: lastParagraph,
+        targetParagraph: '',
+        paragraphAfter: '',
+        targetIdx: paragraphs.length,
+        replace: false,
+      }
+    }
+    return {
+      paragraphBefore: '',
+      targetParagraph: '',
+      paragraphAfter: '',
+      targetIdx: 0,
+      replace: false,
     }
   }
 
