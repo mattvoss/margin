@@ -26,7 +26,7 @@ RUN chmod +x ./entry.sh
 ENV NODE_ENV=production \
     PORT=3000 \
     MARGIN_DATA_DIR=/data \
-    MARGIN_PROMPTS_DIR=/app/prompts
+    MARGIN_PROMPTS_DIR=/data/prompts
 
 # ============================================================
 # OpenCode
