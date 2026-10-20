@@ -1,8 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import {
+  assembleAssistMessages,
   buildChatHistoryMessages,
   buildGeneratorPrompts,
+  buildHarnessChatPrompt,
   buildHarnessEditPrompt,
   buildStaticSystem,
   cacheOptsForSession,
@@ -277,6 +279,55 @@ describe('harness edit prompt', () => {
     expect(built.user.indexOf('a.md')).toBeLessThan(built.user.indexOf('z.md'))
     expect(built.harnessPrompt).toBe(`${built.system}\n\n${built.user}`)
     expect(built.user.endsWith('idx'))
+  })
+
+  it('places the character block before the instruction', () => {
+    const built = buildHarnessEditPrompt({
+      instruction: 'write the next scene',
+      characterMessage: '```CHARACTERS:```\n{"characters":[]}',
+      systemPrompt: 'harness base',
+    })
+    expect(built.user.indexOf('```CHARACTERS:```')).toBeLessThan(
+      built.user.indexOf('INSTRUCTION:'),
+    )
+    expect(built.harnessPrompt).toContain('```CHARACTERS:```')
+  })
+})
+
+describe('assist message assembly', () => {
+  it('sends character context as a separate user role after files and before the instruction', () => {
+    const built = assembleAssistMessages(
+      'system',
+      [{ role: 'user', content: 'prior turn' }, { role: 'assistant', content: 'reply' }],
+      'referenced files',
+      'write a scene',
+      '```CHARACTERS:```\n{"characters":[]}',
+    )
+
+    expect(built.messages).toEqual([
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'prior turn' },
+      { role: 'assistant', content: 'reply' },
+      { role: 'user', content: 'referenced files' },
+      { role: 'user', content: '```CHARACTERS:```\n{"characters":[]}' },
+      { role: 'user', content: 'write a scene' },
+    ])
+    expect(built.fullUser).toBe(
+      'referenced files\n\n```CHARACTERS:```\n{"characters":[]}\n\nwrite a scene',
+    )
+  })
+
+  it('keeps the character block separate in the harness chat prompt', () => {
+    const built = buildHarnessChatPrompt({
+      system: 'chat system',
+      userMessage: 'hello',
+      characterMessage: '```CHARACTERS:```\n{"characters":[]}',
+    })
+    expect(built.user).toBe('```CHARACTERS:```\n{"characters":[]}\n\nhello')
+    expect(built.harnessPrompt).toContain('```CHARACTERS:```')
+    expect(built.harnessPrompt.indexOf('```CHARACTERS:```')).toBeLessThan(
+      built.harnessPrompt.indexOf('--- USER MESSAGE ---'),
+    )
   })
 })
 

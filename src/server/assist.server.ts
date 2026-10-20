@@ -132,6 +132,24 @@ export interface ChatMessage {
   content: string
 }
 
+/** Assemble system/history/files/character-context/final-user in role order. */
+export function assembleAssistMessages(
+  system: string,
+  history: ChatMessage[],
+  files: string | null,
+  user: string,
+  characterMessage?: string | null,
+): { messages: ChatMessage[]; fullUser: string } {
+  const messages: ChatMessage[] = [{ role: 'system', content: system }]
+  messages.push(...history)
+  if (files) messages.push({ role: 'user', content: files })
+  if (characterMessage) messages.push({ role: 'user', content: characterMessage })
+  messages.push({ role: 'user', content: user })
+
+  const fullUser = [files, characterMessage, user].filter(Boolean).join('\n\n')
+  return { messages, fullUser }
+}
+
 export interface PlannerPlan {
   context_needed: string[]
   refined_query: string
@@ -1150,6 +1168,7 @@ export interface HarnessEditPromptInput {
   selectedText?: string | null
   cursorParagraphText?: string | null
   taggedFiles?: string[]
+  characterMessage?: string | null
   instruction: string
   indexLine?: string
   /** Loaded harness-edit.md content (standing instructions). */
@@ -1162,7 +1181,7 @@ export interface HarnessEditPromptInput {
  * themselves, so planner/writer plumbing is deliberately omitted.
  *
  * Prefix-cache layout: frozen system head; fixed user order
- * ACTIVE_FILE → SELECTED/ANCHOR → TAGGED (sorted) → INSTRUCTION →
+ * ACTIVE_FILE → SELECTED/ANCHOR → TAGGED (sorted) → CHARACTERS → INSTRUCTION →
  * index line; fixed `system + "\n\n" + user` join so the head stays stable
  * for downstream prefix reuse.
  */
@@ -1182,6 +1201,7 @@ export function buildHarnessEditPrompt(input: HarnessEditPromptInput): {
   if (tagged.length > 0) {
     userParts.push(`TAGGED_FILES (user explicitly attached — read them):\n${tagged.join('\n')}`)
   }
+  if (input.characterMessage) userParts.push(input.characterMessage)
   userParts.push(`INSTRUCTION:\n${input.instruction}`)
   if (input.indexLine) userParts.push(input.indexLine)
   const user = userParts.join('\n\n')
@@ -1198,14 +1218,17 @@ export function buildHarnessEditPrompt(input: HarnessEditPromptInput): {
 export function buildHarnessChatPrompt(input: {
   system: string
   userMessage: string
+  characterMessage?: string | null
   indexLine?: string
 }): { system: string; user: string; harnessPrompt: string } {
   const system = normalizePromptText(input.system)
-  const user = `--- USER MESSAGE ---\n${input.userMessage}`
+  const userParts = [input.characterMessage, input.userMessage].filter(Boolean)
+  const userMessage = userParts.join('\n\n')
   const parts = [system]
   if (input.indexLine) parts.push(input.indexLine)
-  parts.push(user)
-  return { system, user: input.userMessage, harnessPrompt: parts.join('\n\n') }
+  if (input.characterMessage) parts.push(input.characterMessage)
+  parts.push(`--- USER MESSAGE ---\n${input.userMessage}`)
+  return { system, user: userMessage, harnessPrompt: parts.join('\n\n') }
 }
 
 /* ------------------------------------------------------------------ */

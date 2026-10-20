@@ -51,6 +51,25 @@ export interface CharacterDraft {
 
 export const CHARACTER_STATE_PATH = 'characters/ACTIVE_CHARACTERS.json'
 export const MAX_TRACKED_CHARACTERS = 40
+export const CHARACTER_PROMPT_MARKER = '```CHARACTERS:```'
+
+/** Format the workspace cast as a standalone user-message payload. */
+export function formatCharacterPrompt(state: CharacterState): string | null {
+  if (state.characters.length === 0) return null
+
+  const characters = state.characters.map((character) => ({
+    name: character.name,
+    aliases: character.aliases,
+    status: character.active ? 'active' : 'inactive',
+    role: character.role,
+    summary: character.summary,
+    clothes: character.clothes,
+    appearance: character.appearance,
+    accessories: character.accessories,
+  }))
+
+  return `${CHARACTER_PROMPT_MARKER}\n${JSON.stringify({ characters }, null, 2)}`
+}
 
 export function emptyAppearance(): CharacterAppearance {
   return { hair: '', eyes: '', face: '', height: '', build: '', skin: '' }

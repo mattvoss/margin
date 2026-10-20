@@ -2,6 +2,7 @@ import {
   buildGeneratorPrompts,
   buildHarnessChatPrompt,
   buildHarnessEditPrompt,
+  assembleAssistMessages,
   cacheOptsForSession,
   collectManifestSections,
   composeChatMessages,
@@ -17,6 +18,8 @@ import {
   type SimpleAssistRequest,
 } from './assist.server'
 import { LLMClient, loadLlmConfig } from './llm.server'
+import { readCharacterState } from './characters.server'
+import { formatCharacterPrompt } from '../lib/characters'
 import {
   HARNESS_DESCRIPTORS,
   isServiceTransport,
@@ -37,30 +40,6 @@ import {
 import { readWorkspaceFile, requestSettings, requestWorkspaceDir, writeWorkspaceFile } from './storage.server'
 import { errMsg, sse } from './http.server'
 
-interface PromptMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
-/**
- * Assemble the outgoing message array: frozen system head, append-only
- * history, the standalone referenced-files message (filename-explicit
- * sections, omitted when null), then the volatile user message.
- * `fullUser` joins files + user for ai_logs / prefix-hash continuity.
- */
-function assembleMessages(
-  system: string,
-  history: PromptMessage[],
-  files: string | null,
-  user: string,
-): { messages: PromptMessage[]; fullUser: string } {
-  const messages: PromptMessage[] = [{ role: 'system', content: system }]
-  messages.push(...history)
-  if (files) messages.push({ role: 'user', content: files })
-  messages.push({ role: 'user', content: user })
-  return { messages, fullUser: files ? `${files}\n\n${user}` : user }
-}
-
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
   const signal = ctrl.signal
@@ -74,6 +53,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
       try {
         const settings = await requestSettings(request)
         const ws = await requestWorkspaceDir(request)
+        const characterMessage = await readCharacterState(ws)
+          .then(formatCharacterPrompt)
+          .catch((error) => {
+            console.warn(`Character context unavailable: ${errMsg(error)}`)
+            return null
+          })
         const mode = payload.mode.trim().toLowerCase()
         const harness = payload.harness && payload.harness !== 'api' ? payload.harness : null
 
@@ -101,6 +86,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               selectedText: payload.selected_text,
               cursorParagraphText: payload.cursor_paragraph_text,
               taggedFiles: tagged,
+              characterMessage,
               instruction: payload.message,
               indexLine: idx || undefined,
               systemPrompt: await loadSimplePrompt('harness-edit.md').catch(() => ''),
@@ -123,10 +109,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             const built = buildHarnessChatPrompt({
               system: composed.system,
               userMessage: composed.files ? `${composed.files}\n\n${composed.user}` : composed.user,
+              characterMessage,
               indexLine: idx || undefined,
             })
             systemPrompt = built.system
-            userPrompt = composed.user
+            userPrompt = built.user
             harnessPrompt = built.harnessPrompt
             console.log(formatCacheInfo('harness_chat', systemPrompt, userPrompt))
           }
@@ -241,10 +228,18 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               plannerPrompt,
             })
             systemPrompt = planner.system
-            userPrompt = planner.user
+            const plannerMsgs = assembleAssistMessages(
+              systemPrompt,
+              [],
+              null,
+              planner.user,
+              characterMessage,
+            )
+            userPrompt = plannerMsgs.fullUser
+            const plannerUserPrompt = userPrompt
             const plannerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
             console.log(formatCacheInfo('planner', systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
-            const planRaw = await client.generateBlocking(systemPrompt, userPrompt, {
+            const planRaw = await client.generateBlockingWithMessages(plannerMsgs.messages, {
               temperature: 0.3,
               maxTokens: 800,
               signal,
@@ -284,7 +279,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               readFile,
             })
             systemPrompt = gen.system
-            const writerMsgs = assembleMessages(systemPrompt, [], gen.files, gen.user)
+            const writerMsgs = assembleAssistMessages(
+              systemPrompt,
+              [],
+              gen.files,
+              gen.user,
+              characterMessage,
+            )
             userPrompt = writerMsgs.fullUser
             const writerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
             console.log(formatCacheInfo('writer', systemPrompt, userPrompt, { slotId: writerCache.slotId }))
@@ -326,7 +327,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               thinking_output: client.lastThinking,
               edit_mode: editMode,
               planner_system_prompt: planner.system,
-              planner_user_prompt: planner.user,
+              planner_user_prompt: plannerUserPrompt,
               planner_output: planRaw,
               cursor_paragraph_index: anchor.targetIdx ?? null,
               model_used: client.lastModelUsed,
@@ -355,7 +356,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               readFile,
             })
             systemPrompt = gen.system
-            const writerMsgs = assembleMessages(systemPrompt, [], gen.files, gen.user)
+            const writerMsgs = assembleAssistMessages(
+              systemPrompt,
+              [],
+              gen.files,
+              gen.user,
+              characterMessage,
+            )
             userPrompt = writerMsgs.fullUser
             const writerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
             console.log(formatCacheInfo('writer', systemPrompt, userPrompt, { slotId: writerCache.slotId }))
@@ -412,7 +419,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             logs: chatLogs as never,
           })
           systemPrompt = composed.system
-          const chatMsgs = assembleMessages(systemPrompt, composed.history, composed.files, composed.user)
+          const chatMsgs = assembleAssistMessages(
+            systemPrompt,
+            composed.history,
+            composed.files,
+            composed.user,
+            characterMessage,
+          )
           userPrompt = chatMsgs.fullUser
           const chatCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
           console.log(formatCacheInfo('chat', systemPrompt, userPrompt, { slotId: chatCache.slotId }))
@@ -506,4 +519,3 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
     },
   })
 }
-
