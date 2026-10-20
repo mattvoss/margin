@@ -4,6 +4,7 @@ import { SimpleAssist } from '../components/SimpleAssist'
 import { FileSidebar } from '../components/FileSidebar'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useCharactersStore } from '../stores/charactersStore'
 import { toast } from '../stores/toastStore'
 import { SettingsModal } from '../components/SettingsModal'
 import { API_BASE, apiFetch } from '../lib/api'
@@ -26,9 +27,28 @@ function getStoredWidth(key: string, fallback: number): number {
 export default function SimpleEditor() {
   const { markFileClean, currentFilePath, content } = useEditorStore()
   const { showSettings, setShowSettings, settings } = useSettingsStore()
+  const rememberChapter = useCharactersStore((s) => s.rememberChapter)
+  const lastRememberedRef = useRef<{ path: string; dir: string | null } | null>(null)
 
   const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0
   const charCount = content.length
+
+  // Remember the last chapter this workspace focused, so Rescan still knows
+  // which document to reread after a reload. Support files (character sheets,
+  // style guides, prompts) are filtered out by rememberChapter. A workspace
+  // switch briefly leaves the old path open; skip that carry-over instead of
+  // filing it under the new workspace.
+  useEffect(() => {
+    if (!currentFilePath) {
+      lastRememberedRef.current = null
+      return
+    }
+    const dir = settings?.linked_workspace_dir ?? null
+    const previous = lastRememberedRef.current
+    if (previous && previous.path === currentFilePath && previous.dir !== dir) return
+    lastRememberedRef.current = { path: currentFilePath, dir }
+    rememberChapter(dir, currentFilePath)
+  }, [currentFilePath, settings?.linked_workspace_dir, rememberChapter])
 
   useEffect(() => {
     if (!settings?.theme) return

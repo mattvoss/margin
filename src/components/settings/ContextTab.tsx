@@ -241,6 +241,25 @@ export function ContextSettings({
           </SectionCard>
         </section>
       </FilterSection>
+
+      <FilterSection query={query} keywords="character characters cast tracker people active">
+        <section>
+          <SectionLabel description="Keep a per-workspace list of characters who are still part of the story, updated after each generation. Open it from the people icon in the input bar.">Character tracking</SectionLabel>
+          <SectionCard>
+            <Row
+              label="Track active characters automatically"
+              description="Generations update the cast list using the active endpoint. You can still rescan the last-focused chapter manually when this is off. Inactive characters stay available but de-emphasized."
+              control={
+                <Toggle
+                  checked={settings.character_tracking !== false}
+                  label="Track active characters automatically"
+                  onChange={(next) => updateSettings({ character_tracking: next })}
+                />
+              }
+            />
+          </SectionCard>
+        </section>
+      </FilterSection>
     </div>
   )
 }
@@ -250,6 +269,7 @@ const PROMPT_ENTRIES = [
   { id: 'planner', file: 'simple-planner.md', label: 'Planner', description: 'Picks context files and refines the instruction for the Writer — endpoint path only.' },
   { id: 'chat', file: 'simple-chat.md', label: 'Chat', description: 'Converses and answers — makes no edits, for endpoints and harnesses.' },
   { id: 'harness-edit', file: 'harness-edit.md', label: 'Harness Edit', description: 'Standing instructions for agent harnesses in Edit mode (OpenCode, Pi, Claude Code, Codex, Antigravity) — including the rule that changes land in files, not in the reply.' },
+  { id: 'character-tracker', file: 'character-tracker.md', label: 'Character Tracker', description: 'Extracts the active cast from new prose and chapter rescans. Returns JSON; does not write the manuscript.' },
 ]
 
 function PromptsSettings() {

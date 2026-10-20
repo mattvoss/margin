@@ -8,6 +8,12 @@ Context settings control what information the AI receives about your project. Th
 
 Edit the instructions each agent runs on (Writer, Planner, Chat, Harness Edit). Changes apply to the next request — see [Prompts](./prompts.md).
 
+## Character Tracking
+
+The character tracker keeps a per-workspace cast list of characters who are still part of the story. It is on by default and updates after each generation using the active endpoint; open it from the people icon in the input bar. **Rescan last chapter** rereads the last-focused chapter, using the open editor buffer when that chapter is the active file.
+
+Absence from a scene is never treated as an exit. A character becomes inactive only when the prose explicitly kills them, permanently removes them, or otherwise writes them out. Inactive characters stay in the dialog but are de-emphasized, and every field is editable. The list is stored in `characters/ACTIVE_CHARACTERS.json` in the linked workspace. Tracking never injects the cast into Writer or Planner prompts.
+
 ## Session Memory
 
 margin remembers your recent conversation turns (questions and AI responses) to keep the discussion coherent.

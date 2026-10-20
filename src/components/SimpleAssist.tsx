@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2 } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useCharactersStore } from '../stores/charactersStore'
+import { CharacterDialog } from './CharacterDialog'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { toDisplaySrc } from '../lib/media'
@@ -424,6 +426,14 @@ export function SimpleAssist() {
   const openedFiles = useEditorStore((s) => s.openedFiles)
   const currentFilePath = useEditorStore((s) => s.currentFilePath)
   const updateFileContent = useEditorStore((s) => s.updateFileContent)
+  const characterState = useCharactersStore((s) => s.state)
+  const charactersTracking = useCharactersStore((s) => s.tracking)
+  const charactersError = useCharactersStore((s) => s.error)
+  const setCharactersDialogOpen = useCharactersStore((s) => s.setDialogOpen)
+  const activeCharacterCount = useMemo(
+    () => (characterState?.characters ?? []).filter((character) => character.active).length,
+    [characterState],
+  )
   const [isWorking, setIsWorking] = useState(false)
   const [isPlanning, setIsPlanning] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -717,6 +727,10 @@ export function SimpleAssist() {
   }
 
   useEffect(() => {
+    useCharactersStore.getState().resetForWorkspace()
+  }, [linkedWorkspaceDir])
+
+  useEffect(() => {
     if (historyLogs.length > 0 || isWorking || errorText) {
       outputRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
@@ -905,6 +919,8 @@ export function SimpleAssist() {
       const startPos = localHasSelection && selectionInfo ? selectionInfo.from : anchorPosition
       let currentEndPos = localHasSelection && selectionInfo ? selectionInfo.to : anchorPosition
       let isStreaming = false
+      let characterTracked = false
+      const workspaceAtStart = useSettingsStore.getState().selectedWorkspaceDir()
       const previousContent = useEditorStore.getState().content
 
       await streamSSE(
@@ -970,6 +986,15 @@ export function SimpleAssist() {
                 } else if (conflicts > 0) {
                   setNoticeText(`${conflicts} paragraph${conflicts > 1 ? 's were' : ' was'} changed by both you and ${harnessLabel(harness)} — kept your version.`)
                 }
+                if (!deleted && !wasAbortedRef.current) {
+                  const mergedText = useEditorStore.getState().content
+                  void useCharactersStore.getState().trackAfterGeneration({
+                    text: mergedText.slice(-20000),
+                    filePath: useEditorStore.getState().currentFilePath,
+                    sessionId: activeSessionId,
+                    workspaceDir: workspaceAtStart,
+                  })
+                }
                 setPendingEditSelection(null)
               })
               .catch((e) => setErrorText('Error: ' + (e as Error).message))
@@ -1028,6 +1053,19 @@ export function SimpleAssist() {
               }
             }
             setPendingEditSelection(null)
+
+            if (!characterTracked) {
+              characterTracked = true
+              const pathAtApply = useEditorStore.getState().currentFilePath
+              const mergedText = useEditorStore.getState().content
+              const generatedText = typeof output === 'string' ? output : ''
+              void useCharactersStore.getState().trackAfterGeneration({
+                text: generatedText.trim() ? generatedText : mergedText.slice(-12000),
+                filePath: pathAtApply,
+                sessionId: activeSessionId,
+                workspaceDir: workspaceAtStart,
+              })
+            }
           }
         },
         abortRef.current.signal
@@ -1487,6 +1525,46 @@ export function SimpleAssist() {
 
         {/* Context Ring and Action Button Group */}
         <div className="flex items-center gap-2 -mr-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => setCharactersDialogOpen(true)}
+                  className="relative flex items-center justify-center w-6 h-6 shrink-0 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  title="Active characters"
+                  aria-label="Open active characters"
+                >
+                  <Users
+                    size={14}
+                    className={charactersTracking ? 'animate-pulse' : ''}
+                  />
+                  {activeCharacterCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[13px] h-[13px] px-[3px] rounded-full bg-[var(--accent-brown)] text-[var(--text-inverse)] text-[8px] leading-[13px] text-center font-medium tabular-nums">
+                      {activeCharacterCount}
+                    </span>
+                  )}
+                  {charactersError && (
+                    <span className="absolute -bottom-0.5 -left-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                  )}
+                </button>
+              }
+            />
+            <TooltipContent
+              side="top"
+              align="end"
+              className="max-w-[280px] whitespace-normal bg-[var(--bg-elevated)] border-[var(--border)] text-[10.5px]"
+            >
+              {charactersTracking
+                ? 'Updating active cast…'
+                : charactersError
+                  ? `Character tracker: ${charactersError}`
+                  : activeCharacterCount > 0
+                    ? `${activeCharacterCount} active character${activeCharacterCount === 1 ? '' : 's'} — view cast`
+                    : 'Active characters'}
+            </TooltipContent>
+          </Tooltip>
+
           {/* Circular Context Ring (hidden when no window is known) */}
           {activeContextWindow ? (
           <Tooltip>
@@ -2128,6 +2206,8 @@ export function SimpleAssist() {
       {selectedImage && (
         <ImageDetailPopup log={selectedImage} onClose={() => setSelectedImage(null)} />
       )}
+
+      <CharacterDialog />
     </div>
   )
 }
