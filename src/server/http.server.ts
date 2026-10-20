@@ -1,5 +1,3 @@
-import { resolve } from 'node:path'
-
 export function json(data: unknown, status = 200): Response {
   return Response.json(data, { status })
 }
@@ -33,20 +31,3 @@ export function dec(s: string): string {
   }
 }
 
-export function promptsDir(): string {
-  const env = process.env.MARGIN_PROMPTS_DIR?.trim()
-  if (env) return env
-  return resolve(process.cwd(), 'prompts')
-}
-
-export async function resolvePrompts(): Promise<string> {
-  const { existsSync } = await import('node:fs')
-  for (const c of [promptsDir(), '/app/prompts']) {
-    try {
-      if (existsSync(c)) return c
-    } catch {
-      continue
-    }
-  }
-  return promptsDir()
-}

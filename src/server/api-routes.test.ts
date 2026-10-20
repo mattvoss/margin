@@ -283,6 +283,14 @@ describe('assist', () => {
     expect(typeof (one.data as { content: string }).content).toBe('string')
   })
 
+  it('lists prompts through the splat child for the bare path', async () => {
+    // The `$` child shadows the parent route at runtime; empty splat must list.
+    const l = await invoke(PromptsSplatRoute, 'GET', 'assist/prompts', undefined, { _splat: '' })
+    expect(l.status).toBe(200)
+    expect(Array.isArray(l.data)).toBe(true)
+    expect((l.data as { name: string }[]).map((p) => p.name)).toContain('simple-writer.md')
+  })
+
   it('rejects empty message', async () => {
     const r = await invoke(AssistSimpleRoute, 'POST', 'assist/simple', { mode: 'chat', message: '  ' })
     expect(r.status).toBe(400)

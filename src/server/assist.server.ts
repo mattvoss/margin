@@ -38,9 +38,10 @@
  * - buildContextBlock/injectContextFile . api/services/context_injector.py:4-28
  * - THINKING_PREAMBLE ................... config.py:25-33
  */
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { DATA_ROOT } from './env.server.ts'
+import { primaryPromptsDir, readPrompt } from './prompts.server'
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -321,27 +322,13 @@ export function formatCacheInfo(
 /* ------------------------------------------------------------------ */
 
 /**
- * Resolve the prompts directory: MARGIN_PROMPTS_DIR first, then
- * <DATA_ROOT>/prompts (Docker volume installs seed prompts there), then the
- * repo `prompts/` directory relative to the process working directory.
- * Returns the first candidate that exists as a directory.
+ * Resolve the prompts directory used for writes: MARGIN_PROMPTS_DIR first,
+ * then the repo `prompts/` directory relative to the working directory, then
+ * <DATA_ROOT>/prompts. Reads fall back through every candidate — see
+ * `readPrompt` in prompts.server.ts.
  */
 export async function resolvePromptsDir(dataRoot: string = DATA_ROOT): Promise<string> {
-  const fromEnv = process.env.MARGIN_PROMPTS_DIR?.trim()
-  const candidates = [
-    fromEnv ? fromEnv : '',
-    join(dataRoot, 'prompts'),
-    resolve(process.cwd(), 'prompts'),
-  ].filter((c) => c.length > 0)
-  for (const dir of candidates) {
-    try {
-      const st = await stat(dir)
-      if (st.isDirectory()) return dir
-    } catch {
-      /* try next candidate */
-    }
-  }
-  return join(dataRoot, 'prompts')
+  return primaryPromptsDir(dataRoot)
 }
 
 /**
@@ -350,8 +337,10 @@ export async function resolvePromptsDir(dataRoot: string = DATA_ROOT): Promise<s
  */
 export async function loadSimplePrompt(filename: string, promptsDir?: string): Promise<string> {
   try {
-    const dir = promptsDir ?? (await resolvePromptsDir())
-    return (await readFile(join(dir, filename), 'utf-8')).trim()
+    const content = promptsDir
+      ? await readFile(join(promptsDir, filename), 'utf-8')
+      : await readPrompt(filename)
+    return content.trim()
   } catch (e) {
     console.error(`Error loading prompt ${filename}: ${String(e)}`)
     return ''
