@@ -23,6 +23,7 @@ export const CLIENT_ONLY_KEYS = [
   'theme_family',
   'text_style',
   'editor_stats',
+  'character_tracking',
 ] as const
 
 /** localStorage key holding the settings blob (zustand `persist`). */
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   text_style: 'system',
   editor_stats: 'both',
   planner_include_outline: false,
+  character_tracking: true,
   linked_workspace_dir: null,
   workspace_profiles: [],
   history_turns: 5,

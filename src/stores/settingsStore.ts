@@ -36,6 +36,8 @@ export interface AppSettings {
   text_style?: 'system' | 'editorial' | 'manuscript' | 'technical' | 'warm'
   editor_stats?: 'words' | 'characters' | 'both' | 'none'
   planner_include_outline?: boolean
+  /** Keep the active-cast tracker updated after each generation. Browser-owned. */
+  character_tracking?: boolean
   linked_workspace_dir?: string | null
   workspace_profiles?: { id: string; name: string; path: string }[]
   history_turns?: number
