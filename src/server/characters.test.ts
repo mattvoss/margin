@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 process.env.MARGIN_TEST_DIR = mkdtempSync(join(tmpdir(), 'margin-characters-test-'))
 
@@ -11,6 +11,7 @@ import {
   CharacterStateError,
   CharacterValidationError,
   applyManualAction,
+  extractAndMergeCharacters,
   mergeExtraction,
   parseExtraction,
   planCharacterChunks,
@@ -36,6 +37,21 @@ afterAll(() => {
   rmSync(process.env.MARGIN_TEST_DIR!, { recursive: true, force: true })
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function requestBody(init?: RequestInit): Record<string, unknown> {
+  return JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+}
 
 type CharacterOverrides = Omit<Partial<TrackedCharacter>, 'aliases' | 'appearance'> & {
   aliases?: string[]
@@ -454,5 +470,126 @@ describe('planCharacterChunks', () => {
   it('returns an empty list for blank text', () => {
     const settings = { active_endpoint: null, endpoints: {} } as unknown as AssistSettings
     expect(planCharacterChunks('   ', settings, makeState([]))).toEqual([])
+  })
+})
+
+describe('extractAndMergeCharacters', () => {
+  const settings = {
+    active_endpoint: 'mock',
+    endpoints: {
+      mock: {
+        url: 'http://mock.local/v1',
+        model: 'mock',
+        context_window: 8192,
+        is_thinking: true,
+      },
+    },
+  } as unknown as AssistSettings
+
+  it('retries with thinking disabled when the first response is empty', async () => {
+    const bodies: Record<string, unknown>[] = []
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(requestBody(init))
+        call += 1
+        if (call === 1) {
+          return jsonResponse({
+            choices: [
+              {
+                message: { content: '', reasoning_content: 'deliberation' },
+                finish_reason: 'length',
+              },
+            ],
+          })
+        }
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                content:
+                  '{"characters":[{"name":"Elara","active":true,"clothes":"blue coat"}]}',
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        })
+      }),
+    )
+
+    const state = await extractAndMergeCharacters({
+      mode: 'rescan',
+      text: 'Elara crossed the bridge in her blue coat.',
+      filePath: 'chapters/07.md',
+      sessionId: null,
+      prior: makeState([]),
+      settings,
+    })
+
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0].chat_template_kwargs).toBeUndefined()
+    expect(bodies[1].chat_template_kwargs).toEqual({ enable_thinking: false })
+    expect(bodies[1].max_tokens).toBe(4096)
+    expect(state.characters).toHaveLength(1)
+    expect(state.characters[0].name).toBe('Elara')
+    expect(state.characters[0].clothes).toBe('blue coat')
+  })
+
+  it('accepts valid JSON even when finish_reason is length', async () => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(requestBody(init))
+        return jsonResponse({
+          choices: [
+            {
+              message: { content: '{"characters":[{"name":"Elara"}]}' },
+              finish_reason: 'length',
+            },
+          ],
+        })
+      }),
+    )
+
+    const state = await extractAndMergeCharacters({
+      mode: 'passage',
+      text: 'Elara crossed the bridge.',
+      filePath: 'chapters/07.md',
+      sessionId: null,
+      prior: makeState([]),
+      settings,
+    })
+
+    expect(bodies).toHaveLength(1)
+    expect(state.characters.map((character) => character.name)).toEqual(['Elara'])
+  })
+
+  it('surfaces finish reason and reasoning size when both attempts are empty', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          choices: [
+            {
+              message: { content: '', reasoning_content: 'deliberation' },
+              finish_reason: 'content_filter',
+            },
+          ],
+        }),
+      ),
+    )
+
+    await expect(
+      extractAndMergeCharacters({
+        mode: 'passage',
+        text: 'A short passage.',
+        filePath: 'chapters/07.md',
+        sessionId: null,
+        prior: makeState([]),
+        settings,
+      }),
+    ).rejects.toThrow(/finish_reason=content_filter/)
   })
 })

@@ -49,6 +49,11 @@ export interface PayloadOptions {
    * absent) to let the server's `-sps` similarity routing choose.
    */
   slotId?: number;
+  /**
+   * Ask the chat template to disable model-side thinking. llama.cpp and
+   * template-aware servers accept this as `chat_template_kwargs`.
+   */
+  enableThinking?: boolean;
 }
 
 export interface GenerateOptions {
@@ -61,6 +66,13 @@ export interface GenerateOptions {
   nKeep?: number;
   /** See PayloadOptions.slotId (llama.cpp `id_slot`). */
   slotId?: number;
+  /** See PayloadOptions.enableThinking. */
+  enableThinking?: boolean;
+  /**
+   * When `message.content` is empty, use `reasoning_content` as the answer.
+   * Intended for structured utility calls; prose callers should leave this off.
+   */
+  fallbackToReasoning?: boolean;
 }
 
 interface ChatPayload {
@@ -73,6 +85,7 @@ interface ChatPayload {
   cache_prompt?: boolean;
   n_keep?: number;
   id_slot?: number;
+  chat_template_kwargs?: Record<string, unknown>;
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:1234/v1';
@@ -163,8 +176,12 @@ export class LLMClient {
   readonly customOpeningTags: string[];
   readonly customClosingTags: string[];
   lastUsage: TokenUsage | null = null;
-  /** Reasoning text captured during the last streaming call (isThinking mode). */
+  /** Reasoning text captured during the last call (streaming or blocking). */
   lastThinking: string | null = null;
+  /** `finish_reason` from the last blocking response, when the server sent one. */
+  lastFinishReason: string | null = null;
+  /** Length of `message.content` from the last blocking response. */
+  lastContentChars: number | null = null;
   /** llama.cpp `timings` object from the last call (null on OpenAI servers). */
   lastTimings: LlmTimings | null = null;
   /** Prefix-reused prompt tokens reported by the server, when available. */
@@ -211,6 +228,9 @@ export class LLMClient {
     if (opts.cachePrompt != null) payload.cache_prompt = opts.cachePrompt;
     if (opts.nKeep != null) payload.n_keep = opts.nKeep;
     if (opts.slotId != null) payload.id_slot = opts.slotId;
+    if (opts.enableThinking === false) {
+      payload.chat_template_kwargs = { enable_thinking: false };
+    }
     return payload;
   }
 
@@ -232,6 +252,9 @@ export class LLMClient {
     if (opts.cachePrompt != null) payload.cache_prompt = opts.cachePrompt;
     if (opts.nKeep != null) payload.n_keep = opts.nKeep;
     if (opts.slotId != null) payload.id_slot = opts.slotId;
+    if (opts.enableThinking === false) {
+      payload.chat_template_kwargs = { enable_thinking: false };
+    }
     return payload;
   }
 
@@ -295,6 +318,9 @@ export class LLMClient {
   ): AsyncGenerator<string> {
     this.lastTimings = null;
     this.lastTokensCached = null;
+    this.lastFinishReason = null;
+    this.lastThinking = null;
+    this.lastContentChars = null;
     const payload = this.payloadWithMessages(messages, true, opts);
     yield* this.runStream(payload, opts.signal);
   }
@@ -325,7 +351,9 @@ export class LLMClient {
         signal,
       });
     } catch (e) {
-      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`, {
+        cause: e,
+      });
     }
     if (!resp.ok || !resp.body) {
       const detail = await resp.text().catch(() => '');
@@ -448,6 +476,10 @@ export class LLMClient {
   ): Promise<string> {
     this.lastTimings = null;
     this.lastTokensCached = null;
+    this.lastUsage = null;
+    this.lastThinking = null;
+    this.lastFinishReason = null;
+    this.lastContentChars = null;
     const payload = this.payloadWithMessages(messages, false, opts);
     let resp: Response;
     try {
@@ -458,7 +490,9 @@ export class LLMClient {
         signal: opts.signal,
       });
     } catch (e) {
-      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`, {
+        cause: e,
+      });
     }
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');
@@ -468,15 +502,41 @@ export class LLMClient {
     }
     const data = (await resp.json()) as {
       model?: string;
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        message?: {
+          content?: unknown;
+          reasoning_content?: unknown;
+          reasoning?: unknown;
+        };
+        finish_reason?: unknown;
+      }>;
     };
     this.rememberUsage(data);
     if (!this.lastUsage) {
       this.lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     }
     this.lastModelUsed = data.model ?? this.model;
-    const content = data.choices?.[0]?.message?.content ?? '';
-    return this.cleanReasoning(content);
+
+    const choice = data.choices?.[0];
+    const content = contentText(choice?.message?.content);
+    this.lastContentChars = content.length;
+    const reasoning =
+      contentText(choice?.message?.reasoning_content) ||
+      contentText(choice?.message?.reasoning);
+    this.lastThinking = reasoning || null;
+    this.lastFinishReason =
+      typeof choice?.finish_reason === 'string' ? choice.finish_reason : null;
+
+    const source = content.trim()
+      ? content
+      : opts.fallbackToReasoning
+        ? reasoning
+        : '';
+    if (!source.trim()) return '';
+    const cleaned = this.cleanReasoning(source);
+    // cleanReasoning can erase a channel-tagged answer. If the model did send
+    // content, prefer that over reporting a misleading empty response.
+    return cleaned.trim() ? cleaned : source.trim();
   }
 
   /** Strip thinking-model reasoning blocks (mirrors `_clean_reasoning`). */
@@ -501,11 +561,32 @@ export class LLMClient {
       if (close) text = text.replace(new RegExp(`${open}.*?${close}`, 'gs'), '');
       text = text.replace(new RegExp(`${open}.*`, 'gs'), '');
     }
-    text = text.replace(/<\|?channel\|?>.*?<[\|/]?channel[\|/>]/gs, '');
-    text = text.replace(/<[\|/]?channel[\|>][^<]*/gs, '');
-    text = text.trim().replace(/^[\*\-\+]\s*\n?/, '');
+    text = text.replace(/<\|?channel\|?>.*?<[|/]?channel[|/>]/gs, '');
+    text = text.replace(/<[|/]?channel[|>][^<]*/gs, '');
+    text = text.trim().replace(/^[*+-]\s*\n?/, '');
     return text.trim();
   }
+}
+
+function contentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object') {
+          const text = (part as { text?: unknown }).text;
+          if (typeof text === 'string') return text;
+        }
+        return '';
+      })
+      .join('');
+  }
+  if (content && typeof content === 'object') {
+    const text = (content as { text?: unknown }).text;
+    if (typeof text === 'string') return text;
+  }
+  return '';
 }
 
 function escapeRegExp(s: string): string {

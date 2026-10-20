@@ -53,7 +53,7 @@ const FIELD_LIMITS = {
 const MAX_ALIASES = 12
 const MAX_SCAN_CHUNKS = 8
 const EXTRACTION_TEMPERATURE = 0.2
-const EXTRACTION_MAX_TOKENS = 1600
+const EXTRACTION_MAX_TOKENS = 4096
 const EXTRACTION_STATIC_OVERHEAD_TOKENS = 1200
 const APPEARANCE_KEYS = ['hair', 'eyes', 'face', 'height', 'build', 'skin'] as const
 
@@ -706,6 +706,15 @@ function buildExtractionPrompt(
   return lines.join('\n')
 }
 
+function extractionResponseDetail(client: LLMClient): string {
+  const parts: string[] = []
+  if (client.lastFinishReason) parts.push(`finish_reason=${client.lastFinishReason}`)
+  if (client.lastContentChars != null) parts.push(`content_chars=${client.lastContentChars}`)
+  if (client.lastUsage) parts.push(`completion_tokens=${client.lastUsage.completion_tokens}`)
+  if (client.lastThinking) parts.push(`reasoning_chars=${client.lastThinking.length}`)
+  return parts.length ? ` (${parts.join(', ')})` : ''
+}
+
 export async function extractAndMergeCharacters(
   options: CharacterExtractionOptions,
 ): Promise<CharacterState> {
@@ -739,6 +748,7 @@ export async function extractAndMergeCharacters(
       i,
       chunks.length,
     )
+
     let raw: string
     try {
       raw = await client.generateBlocking(systemPrompt, prompt, {
@@ -750,7 +760,59 @@ export async function extractAndMergeCharacters(
       throw new CharacterExtractionError(`Character tracker request failed: ${errMsg(e)}`)
     }
 
-    state = mergeExtraction(state, parseExtraction(raw), {
+    const firstAttemptDetail = extractionResponseDetail(client)
+    let parsed: ExtractedCharacter[] | null = null
+    if (raw.trim()) {
+      try {
+        parsed = parseExtraction(raw)
+      } catch {
+        // Fall through to the non-thinking retry below.
+      }
+    }
+
+    if (!parsed) {
+      try {
+        // Extraction is mechanical. If the model spent its budget thinking
+        // (or returned no usable content), retry with the template's thinking
+        // mode disabled and allow reasoning_content as a last-resort answer.
+        raw = await client.generateBlocking(systemPrompt, prompt, {
+          temperature: EXTRACTION_TEMPERATURE,
+          maxTokens: EXTRACTION_MAX_TOKENS,
+          signal: options.signal,
+          enableThinking: false,
+          fallbackToReasoning: true,
+        })
+      } catch (e) {
+        throw new CharacterExtractionError(
+          `Character tracker retry failed${firstAttemptDetail}: ${errMsg(e)}`,
+        )
+      }
+
+      if (!raw.trim()) {
+        throw new CharacterExtractionError(
+          `Character tracker returned an empty response${extractionResponseDetail(client)}.`,
+        )
+      }
+
+      try {
+        parsed = parseExtraction(raw)
+      } catch (e) {
+        if (e instanceof CharacterExtractionError) {
+          throw new CharacterExtractionError(
+            `${e.message}${extractionResponseDetail(client)}`,
+          )
+        }
+        throw e
+      }
+    }
+
+    if (!parsed) {
+      throw new CharacterExtractionError(
+        `Character tracker returned invalid JSON${extractionResponseDetail(client)}.`,
+      )
+    }
+
+    state = mergeExtraction(state, parsed, {
       mode: options.mode,
       sourcePath: options.filePath,
       sourceSession: options.sessionId,
