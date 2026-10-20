@@ -335,6 +335,7 @@ export function defaultSettings(): Settings {
     text_style: 'system',
     editor_stats: 'both',
     planner_include_outline: false,
+    character_tracking: true,
     history_turns: 5,
     image_endpoints: {},
     active_image_endpoint: null,
@@ -834,6 +835,42 @@ export async function writeWorkspaceFile(
   }
   await writeFile(full, content ?? '', 'utf-8');
   return true;
+}
+
+/**
+ * Create or replace any workspace text file (not just markdown).
+ *
+ * `writeWorkspaceFile` deliberately refuses missing files and
+ * `createWorkspaceFile` appends `.md`, so character state
+ * (`characters/ACTIVE_CHARACTERS.json`) needs its own helper. Writes are
+ * staged to a sibling temp file and renamed so a crash cannot leave a
+ * half-written state file behind.
+ */
+export async function writeWorkspaceTextFile(
+  relPath: string,
+  content: string,
+  workspaceDir?: string,
+): Promise<boolean> {
+  const ws = await resolveWorkspace(workspaceDir);
+  const full = await resolveWorkspacePath(ws, relPath);
+  await mkdir(dirname(full), { recursive: true });
+  const body = content ?? '';
+  const tmp = `${full}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await writeFile(tmp, body, 'utf-8');
+    try {
+      await rename(tmp, full);
+    } catch {
+      // Windows can refuse to replace an existing target; fall back to a
+      // direct write after removing the staged file.
+      await writeFile(full, body, 'utf-8');
+      await rm(tmp, { force: true });
+    }
+    return true;
+  } catch (e) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw e;
+  }
 }
 
 export async function deleteWorkspaceFile(

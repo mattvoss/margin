@@ -70,6 +70,13 @@ describe('prompt resolution', () => {
     expect(names).toContain('simple-planner.md')
     expect(names).toContain('simple-chat.md')
     expect(names).toContain('harness-edit.md')
+    expect(names).toContain('character-tracker.md')
+  })
+
+  it('ships a readable character tracker prompt', async () => {
+    const content = await readPrompt('character-tracker.md')
+    expect(content).toContain('ACTIVE STATUS')
+    expect(content).toContain('Absence is not evidence')
   })
 
   it('rejects directory traversal and empty names', async () => {

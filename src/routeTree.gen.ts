@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHarnessesRouteImport } from './routes/api.harnesses'
 import { Route as ApiSettingsRouteImport } from './routes/api.settings'
+import { Route as ApiAssistCharactersRouteImport } from './routes/api.assist.characters'
 import { Route as ApiAssistPromptsRouteImport } from './routes/api.assist.prompts'
 import { Route as ApiAssistSimpleRouteImport } from './routes/api.assist.simple'
 import { Route as ApiImagesGenerateRouteImport } from './routes/api.images.generate'
@@ -59,6 +60,11 @@ const ApiHarnessesRoute = ApiHarnessesRouteImport.update({
 const ApiSettingsRoute = ApiSettingsRouteImport.update({
   id: '/api/settings',
   path: '/api/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAssistCharactersRoute = ApiAssistCharactersRouteImport.update({
+  id: '/api/assist/characters',
+  path: '/api/assist/characters',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAssistPromptsRoute = ApiAssistPromptsRouteImport.update({
@@ -236,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
+  '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -274,6 +281,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
+  '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -313,6 +321,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
+  '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -353,6 +362,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/harnesses'
     | '/api/settings'
+    | '/api/assist/characters'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -391,6 +401,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/harnesses'
     | '/api/settings'
+    | '/api/assist/characters'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -429,6 +440,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/harnesses'
     | '/api/settings'
+    | '/api/assist/characters'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -468,6 +480,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiHarnessesRoute: typeof ApiHarnessesRouteWithChildren
   ApiSettingsRoute: typeof ApiSettingsRouteWithChildren
+  ApiAssistCharactersRoute: typeof ApiAssistCharactersRoute
   ApiAssistPromptsRoute: typeof ApiAssistPromptsRouteWithChildren
   ApiAssistSimpleRoute: typeof ApiAssistSimpleRouteWithChildren
   ApiImagesGenerateRoute: typeof ApiImagesGenerateRoute
@@ -511,6 +524,13 @@ declare module '@tanstack/react-router' {
       path: '/api/settings'
       fullPath: '/api/settings'
       preLoaderRoute: typeof ApiSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/assist/characters': {
+      id: '/api/assist/characters'
+      path: '/api/assist/characters'
+      fullPath: '/api/assist/characters'
+      preLoaderRoute: typeof ApiAssistCharactersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/assist/prompts': {
@@ -853,6 +873,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiHarnessesRoute: ApiHarnessesRouteWithChildren,
   ApiSettingsRoute: ApiSettingsRouteWithChildren,
+  ApiAssistCharactersRoute: ApiAssistCharactersRoute,
   ApiAssistPromptsRoute: ApiAssistPromptsRouteWithChildren,
   ApiAssistSimpleRoute: ApiAssistSimpleRouteWithChildren,
   ApiImagesGenerateRoute: ApiImagesGenerateRoute,
