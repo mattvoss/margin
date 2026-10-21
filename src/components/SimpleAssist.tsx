@@ -21,6 +21,12 @@ import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import {
   Command,
   CommandEmpty,
   CommandItem,
@@ -2014,38 +2020,42 @@ export function SimpleAssist() {
                       )
                     })()}
 
-                    <div className={`text-xs font-sans leading-relaxed select-text mt-1 ${log.success === false ? 'text-[var(--danger)] font-medium whitespace-pre-wrap' : 'text-[var(--text)]'} relative group`}>
-                      {log.success === false ? log.output : renderMarkdown(log.output)}
-                      {log.success !== false && log.output && (
-                        <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col gap-0.5 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] shadow-lg z-10 p-0.5 min-w-[120px]">
-                          <button
-                            onClick={() => {
-                              const editor = useEditorStore.getState().editor
-                              if (editor && !editor.isDestroyed) {
-                                editor.chain().focus().insertContent(log.output).run()
-                              }
-                            }}
-                            className="px-2 py-1 text-[10px] text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-heading)] rounded-[4px] transition-colors cursor-pointer"
-                            title="Insert raw markdown at cursor"
-                          >
-                            Insert at cursor
-                          </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(log.output)
-                                toast.success('Copied to clipboard')
-                              } catch (err) {
-                                console.error('Failed to copy', err)
-                                toast.error('Could not copy to clipboard.')
-                              }
-                            }}
-                            className="px-2 py-1 text-[10px] text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-heading)] rounded-[4px] transition-colors cursor-pointer"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      )}
+                    <div className={`text-xs font-sans leading-relaxed select-text mt-1 ${log.success === false ? 'text-[var(--danger)] font-medium whitespace-pre-wrap' : 'text-[var(--text)]'}`}>
+                      {log.success === false ? log.output : log.output ? (
+                        <ContextMenu>
+                          <ContextMenuTrigger className="block select-text">
+                            {renderMarkdown(log.output)}
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-40 bg-[var(--bg-elevated)] border-[var(--border)]">
+                            <ContextMenuItem
+                              onClick={() => {
+                                const editor = useEditorStore.getState().editor
+                                if (editor && !editor.isDestroyed) {
+                                  editor.chain().focus().insertContent(log.output).run()
+                                }
+                              }}
+                              className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                              title="Insert raw markdown at cursor"
+                            >
+                              Insert at cursor
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(log.output)
+                                  toast.success('Copied to clipboard')
+                                } catch (err) {
+                                  console.error('Failed to copy', err)
+                                  toast.error('Could not copy to clipboard.')
+                                }
+                              }}
+                              className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                            >
+                              Copy
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ) : null}
                     </div>
                   </div>
                 </div>
