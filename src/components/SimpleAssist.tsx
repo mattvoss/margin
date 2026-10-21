@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -1435,7 +1435,7 @@ export function SimpleAssist() {
               }`}
             title={mode === 'edit' ? 'Switch to Chat mode' : 'Switch to Plan mode'}
           >
-            <PlanModeIcon />
+            {mode === 'edit' ? <SquareChartGantt size={12} /> : <ListTodo size={12} />}
           </button>
           {/* Harness selector: logo only, name in tooltip + dropdown */}
           <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
