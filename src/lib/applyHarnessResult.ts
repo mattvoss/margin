@@ -1,61 +1,15 @@
 import { API_BASE, apiFetch } from './api'
 import { useEditorStore } from '../stores/editorStore'
 import type { Editor } from '@tiptap/core'
+import { opcodes, splitParas, type Opcode } from './textDiff'
 
 // ─── Paragraph three-way merge ───────────────────────────────────────────────
 // v1 scope: paragraph-oriented (blank-line separated), exact-match identity.
 // Maps cleanly onto the existing single-range AiDiffHighlight.
+// `splitParas` / `opcodes` live in textDiff.ts so the server can detect
+// post-processing hunks with the same logic; re-exported here for tests.
 
-type Tag = 'equal' | 'replace' | 'delete' | 'insert'
-interface Opcode { tag: Tag; i1: number; i2: number; j1: number; j2: number }
-
-export function splitParas(text: string): string[] {
-  return text.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0)
-}
-
-// LCS-based opcodes, difflib-style. Docs are small; O(n*m) is fine.
-export function opcodes(a: string[], b: string[]): Opcode[] {
-  const n = a.length, m = b.length
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
-    }
-  }
-  const ops: Opcode[] = []
-  let i = 0, j = 0
-  const push = (tag: Tag, i1: number, i2: number, j1: number, j2: number) => {
-    const last = ops[ops.length - 1]
-    if (last && last.tag === tag && last.i2 === i1 && last.j2 === j1) {
-      last.i2 = i2; last.j2 = j2
-    } else {
-      ops.push({ tag, i1, i2, j1, j2 })
-    }
-  }
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      const i1 = i, j1 = j
-      while (i < n && j < m && a[i] === b[j]) { i++; j++ }
-      push('equal', i1, i, j1, j)
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      push('delete', i, i + 1, j, j); i++
-    } else {
-      push('insert', i, i, j, j + 1); j++
-    }
-  }
-  if (i < n) push('delete', i, n, j, j)
-  if (j < m) push('insert', i, i, j, m)
-  // Merge adjacent delete+insert pairs into replace
-  const merged: Opcode[] = []
-  for (const op of ops) {
-    const last = merged[merged.length - 1]
-    if (last && ((last.tag === 'delete' && op.tag === 'insert') || (last.tag === 'insert' && op.tag === 'delete')) && last.i2 === op.i1) {
-      last.tag = 'replace'
-      last.i2 = Math.max(last.i2, op.i2); last.j2 = Math.max(last.j2, op.j2)
-    } else merged.push({ ...op })
-  }
-  return merged
-}
+export { splitParas, opcodes } from './textDiff'
 
 export interface MergeResult {
   merged: string[]
