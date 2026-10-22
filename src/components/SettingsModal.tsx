@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Search, SlidersHorizontal, Folder, Palette, Image as ImageIcon, BookOpen, SquareTerminal } from 'lucide-react'
+import { X, Search, SlidersHorizontal, Folder, Palette, Image as ImageIcon, BookOpen, SquareTerminal, Sparkles } from 'lucide-react'
 import { useSettingsStore, type SettingsTabId } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
@@ -13,6 +13,7 @@ import { GeneralSettings } from './settings/GeneralTab'
 import { WorkspacesSettings } from './settings/WorkspacesTab'
 import { AppearanceSettings } from './settings/AppearanceTab'
 import { ContextSettings } from './settings/ContextTab'
+import { PostProcessingSettings } from './settings/PostProcessingTab'
 import { EndpointsSettings } from './settings/EndpointsTab'
 import { HarnessesSettings } from './settings/HarnessTab'
 import { ImagesSettings } from './settings/ImagineTab'
@@ -26,6 +27,7 @@ const TABS: { id: SettingsTabId; label: string; icon: React.ComponentType<{ size
   { id: 'appearance', label: 'Appearance', icon: Palette, title: 'Appearance', keywords: 'appearance theme light dark system color font text style stats palette' },
   { id: 'images', label: 'Imagine', icon: ImageIcon, title: 'Imagine', keywords: 'images image imagine provider comfyui comfy styles style model key' },
   { id: 'context', label: 'Context', icon: BookOpen, title: 'Context', keywords: 'context agent prompt prompts memory session files reference outline' },
+  { id: 'post-processing', label: 'Post-processing', icon: Sparkles, title: 'Post-processing', keywords: 'post-processing post processing pipeline passes prose polish rewrite review grounding character rhythm repetition' },
   { id: 'endpoints', label: 'Endpoints', icon: EndpointLogo, title: 'Endpoints', keywords: 'endpoints endpoint api provider model url key' },
   { id: 'harnesses', label: 'Harness', icon: SquareTerminal, title: 'Harness', keywords: 'harness terminal executable model context agent' },
 ]
@@ -113,6 +115,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 {activeTab === 'appearance' && <AppearanceSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'images' && <ImagesSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'context' && <ContextSettings settings={settings} updateSettings={updateSettings} availableFiles={availableFiles} query={query} />}
+                {activeTab === 'post-processing' && <PostProcessingSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'endpoints' && <EndpointsSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'harnesses' && <HarnessesSettings settings={settings} updateSettings={updateSettings} query={query} />}
               </div>
