@@ -62,6 +62,25 @@ interface SimpleLogEntry {
   planner_system_prompt?: string
   planner_user_prompt?: string
   planner_output?: string
+  raw_output?: string | null
+  post_processing?: {
+    source?: string
+    skipped?: boolean
+    reason?: string | null
+    passes?: Array<{
+      id: string
+      name: string
+      status: string
+      model?: string | null
+      hunk?: number
+      error?: string
+      prompt_tokens?: number
+      completion_tokens?: number
+    }>
+    snapshots?: string[]
+    hunks?: number
+    skipped_hunks?: number
+  } | null
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number
@@ -193,14 +212,6 @@ function appendSelectionChipText(chip: HTMLElement, length: number) {
   chip.appendChild(divider)
   chip.appendChild(labelEl)
   chip.appendChild(removeButton)
-}
-
-function PlanModeIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path fill="currentColor" d="M2 2h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm4.655 8.595a.75.75 0 0 1 0 1.06L4.03 14.28a.75.75 0 0 1-1.06 0l-1.5-1.5a.749.749 0 0 1 .326-1.275a.749.749 0 0 1 .734.215l.97.97l2.095-2.095a.75.75 0 0 1 1.06 0ZM9.75 2.5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm-7.25-9v3h3v-3Z" />
-    </svg>
-  )
 }
 
 function getTextBeforeCaret(el: HTMLElement): string {
@@ -446,6 +457,7 @@ export function SimpleAssist() {
   const [plannerContextFiles, setPlannerContextFiles] = useState<string[]>([])
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
+  const [postProcessStatus, setPostProcessStatus] = useState<{ index: number; total: number; name?: string } | null>(null)
   const [instructionText, setInstructionText] = useState('')
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
@@ -727,6 +739,7 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveHarness('none')
     setNoticeText('')
@@ -860,6 +873,7 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
     const currentRefFiles = Array.from(new Set(refPaths))
@@ -945,6 +959,24 @@ export function SimpleAssist() {
             setIsGenerating(true)
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
+          } else if (status === 'post_processing_start') {
+            setPostProcessStatus({ index: 0, total: Number(data.total) || 0 })
+          } else if (status === 'post_processing_pass') {
+            setPostProcessStatus({
+              index: Number(data.index) || 0,
+              total: Number(data.total) || 0,
+              name: String(data.name || ''),
+            })
+          } else if (status === 'post_processing_pass_done') {
+            setPostProcessStatus(prev => prev ? { ...prev, index: Number(data.index) || prev.index } : prev)
+            if (data.result_status === 'failed') {
+              setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
+            }
+          } else if (status === 'post_processing_skipped') {
+            const reason = String(data.reason || '')
+            if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
+              setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
+            }
           } else if (status === 'chunk') {
             setIsPlanning(false)
             setIsGenerating(true)
@@ -985,6 +1017,10 @@ export function SimpleAssist() {
             setIsPlanning(false)
             setIsGenerating(false)
             scheduleFileRefresh(0)
+            const postInfo = data.post_processing as { skipped_hunks?: number } | null | undefined
+            if (postInfo?.skipped_hunks) {
+              setNoticeText(`${postInfo.skipped_hunks} changed paragraph${postInfo.skipped_hunks === 1 ? ' was' : 's were'} left unprocessed (cap or minimum length).`)
+            }
             applyHarnessResult(harnessBaseRef.current, harness)
               .then(({ conflicts, deleted }) => {
                 if (deleted) {
@@ -1028,14 +1064,23 @@ export function SimpleAssist() {
                   setContent(storage.markdown.getMarkdown())
                 }
               } else {
+                const review = data.review !== false
                 const setAiPendingEdit = useEditorStore.getState().setAiPendingEdit
                 const beforeSize = liveEditor.state.doc.content.size
 
-                setAiPendingEdit({
-                  previousContent,
-                  selectionRange: localHasSelection && selectionInfo ? { from: selectionInfo.from, to: selectionInfo.to } : null,
-                  highlightFrom: startPos
-                })
+                if (review) {
+                  setAiPendingEdit({
+                    previousContent,
+                    selectionRange: localHasSelection && selectionInfo ? { from: selectionInfo.from, to: selectionInfo.to } : null,
+                    highlightFrom: startPos
+                  })
+                } else {
+                  // Post-processing opted out of review: insert and persist the
+                  // final text directly. Autosave writes `previousContent` while
+                  // a review is pending, so this path must save explicitly.
+                  setAiPendingEdit(null)
+                  liveEditor.commands.clearAiHighlight()
+                }
 
                 let chain = liveEditor.chain()
                 chain = chain.deleteRange({ from: startPos, to: currentEndPos })
@@ -1045,8 +1090,10 @@ export function SimpleAssist() {
                 const afterSize = liveEditor.state.doc.content.size
                 const endPos = currentEndPos + (afterSize - beforeSize)
 
-                if (endPos > startPos) {
+                if (review && endPos > startPos) {
                   liveEditor.commands.setAiHighlight(startPos, endPos)
+                  liveEditor.commands.setTextSelection(endPos)
+                } else if (endPos > startPos) {
                   liveEditor.commands.setTextSelection(endPos)
                 }
 
@@ -1055,6 +1102,9 @@ export function SimpleAssist() {
                   const md = storage.markdown.getMarkdown()
                   setContent(md)
                   updateFileContent(filePathAtApply, md)
+                  if (!review) {
+                    void useEditorStore.getState().saveFile(filePathAtApply, md)
+                  }
                 }
               }
             }
@@ -1092,6 +1142,7 @@ export function SimpleAssist() {
       setIsGenerating(false)
       setPlannerContextFiles([])
       setActiveHarness('none')
+      setPostProcessStatus(null)
       if (!wasAbortedRef.current) {
         setStreamingThinkingText('')
         setStreamingChatText('')
@@ -1117,6 +1168,7 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
     const currentRefFiles = Array.from(new Set(refPaths))
@@ -1176,6 +1228,24 @@ export function SimpleAssist() {
             setIsGenerating(true)
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
+          } else if (status === 'post_processing_start') {
+            setPostProcessStatus({ index: 0, total: Number(data.total) || 0 })
+          } else if (status === 'post_processing_pass') {
+            setPostProcessStatus({
+              index: Number(data.index) || 0,
+              total: Number(data.total) || 0,
+              name: String(data.name || ''),
+            })
+          } else if (status === 'post_processing_pass_done') {
+            setPostProcessStatus(prev => prev ? { ...prev, index: Number(data.index) || prev.index } : prev)
+            if (data.result_status === 'failed') {
+              setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
+            }
+          } else if (status === 'post_processing_skipped') {
+            const reason = String(data.reason || '')
+            if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
+              setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
+            }
           } else if (status === 'chunk') {
             setIsPlanning(false)
             setIsGenerating(true)
@@ -1193,10 +1263,17 @@ export function SimpleAssist() {
             if (data.model_used) {
               useEditorStore.getState().setActiveModel(data.model_used as string)
             }
+            if (typeof data.output === 'string') {
+              setStreamingChatText(data.output)
+            }
           } else if (status === 'harness_done') {
             setIsPlanning(false)
             setIsGenerating(false)
             scheduleFileRefresh(0)
+            const postInfo = data.post_processing as { skipped_hunks?: number } | null | undefined
+            if (postInfo?.skipped_hunks) {
+              setNoticeText(`${postInfo.skipped_hunks} changed paragraph${postInfo.skipped_hunks === 1 ? ' was' : 's were'} left unprocessed (cap or minimum length).`)
+            }
             applyHarnessResult(harnessBaseRef.current, harness)
               .then(({ conflicts, deleted }) => {
                 if (deleted) {
@@ -1225,6 +1302,7 @@ export function SimpleAssist() {
       setIsGenerating(false)
       setPlannerContextFiles([])
       setActiveHarness('none')
+      setPostProcessStatus(null)
       if (!wasAbortedRef.current) {
         setStreamingThinkingText('')
         setStreamingChatText('')
@@ -1976,6 +2054,30 @@ export function SimpleAssist() {
                           <div><strong>System:</strong> {log.system_prompt}</div>
                           <div className="mt-1"><strong>User:</strong> {log.user_prompt}</div>
                         </div>
+                        {log.post_processing && (
+                          <div className="flex flex-col gap-1 border-t border-[var(--border)] pt-2 mt-1">
+                            <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">Post-processing</span>
+                            {log.post_processing.skipped ? (
+                              <div>Skipped ({log.post_processing.reason || 'not applicable'})</div>
+                            ) : (
+                              <>
+                                {(log.post_processing.passes || []).map((pass, i) => (
+                                  <div key={`pp-${i}`} className="flex items-center gap-1.5">
+                                    <span className="text-[var(--text-muted)]">{pass.hunk ? `hunk ${pass.hunk} · ` : ''}{pass.name}</span>
+                                    <span className={pass.status === 'ok' ? 'text-green-600 dark:text-green-400' : pass.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}>
+                                      {pass.status}
+                                    </span>
+                                    {pass.model && <span className="text-[var(--text-muted)]">{pass.model}</span>}
+                                    {pass.error && <span className="text-[var(--danger)]">{pass.error}</span>}
+                                  </div>
+                                ))}
+                                {log.post_processing.skipped_hunks ? (
+                                  <div className="text-[var(--text-muted)]">{log.post_processing.skipped_hunks} hunk(s) not post-processed (cap or minimum length)</div>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                     {/* Thinking dropdown — visible when thinking output exists */}
@@ -2157,7 +2259,9 @@ export function SimpleAssist() {
                     <div className={`status-indicator-inner ${isGenerating ? 'animate-orbit' : ''}`} />
                   </div>
                   <span className="animate-shimmer">
-                    {activeHarness !== 'none' && isWorking ? `${harnessLabel(activeHarness)} working…` : isPlanning ? 'Planning...' : isGenerating ? 'Generating...' : 'Thinking about the edit...'}
+                    {postProcessStatus
+                      ? `Post-processing${postProcessStatus.name ? ` · ${postProcessStatus.name}` : ''}${postProcessStatus.total ? ` (${Math.min(postProcessStatus.index + 1, postProcessStatus.total)}/${postProcessStatus.total})` : ''}…`
+                      : activeHarness !== 'none' && isWorking ? `${harnessLabel(activeHarness)} working…` : isPlanning ? 'Planning...' : isGenerating ? 'Generating...' : 'Thinking about the edit...'}
                   </span>
                 </div>
               </div>

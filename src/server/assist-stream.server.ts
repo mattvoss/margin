@@ -39,6 +39,14 @@ import {
 } from './sessions.server'
 import { readWorkspaceFile, requestSettings, requestWorkspaceDir, writeWorkspaceFile } from './storage.server'
 import { errMsg, sse } from './http.server'
+import {
+  runHarnessPostProcess,
+  runPostProcessPipeline,
+  stripCodeFences,
+  type HarnessPostProcessResult,
+  type PostProcessEvent,
+} from './post-process.server'
+import { normalizePostProcessing } from '../lib/postProcessing'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -61,6 +69,47 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           })
         const mode = payload.mode.trim().toLowerCase()
         const harness = payload.harness && payload.harness !== 'api' ? payload.harness : null
+        const readFile = (p: string) => readWorkspaceFile(p, ws).catch(() => null)
+        const maxToks = pickWriterMaxTokens(settings as never)
+        const postConfig = normalizePostProcessing(settings.post_processing)
+        const sendPostEvent = (event: PostProcessEvent) => {
+          if (event.type === 'start') {
+            send({ status: 'post_processing_start', source: event.source, total: event.total })
+          } else if (event.type === 'pass_start') {
+            send({
+              status: 'post_processing_pass',
+              source: event.source,
+              index: event.index,
+              total: event.total,
+              id: event.id,
+              name: event.name,
+            })
+          } else if (event.type === 'pass_done') {
+            send({
+              status: 'post_processing_pass_done',
+              source: event.source,
+              index: event.index,
+              total: event.total,
+              id: event.id,
+              name: event.name,
+              result_status: event.status,
+              detail: event.error,
+            })
+          } else if (event.type === 'skipped') {
+            send({ status: 'post_processing_skipped', source: event.source, reason: event.reason })
+          }
+        }
+        const postBase = {
+          settings: settings as never,
+          workspaceDir: ws,
+          sessionId: payload.session_id ?? null,
+          characterMessage,
+          availableFiles: payload.available_files,
+          readFile,
+          defaultMaxTokens: maxToks,
+          signal,
+          onEvent: sendPostEvent,
+        }
 
         if (harness && harness !== 'none') {
           send({ status: 'generating' })
@@ -174,6 +223,39 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (!usageCompletion && fullOutput) usageCompletion = Math.max(1, Math.floor(fullOutput.length / 4))
           if (outcome.sessionId && payload.session_id) await setHarnessSession(payload.session_id, harness, outcome.sessionId)
           const runOk = !sawErrorText
+          let harnessPost: HarnessPostProcessResult | null = null
+          if (mode === 'edit' && activePath && runOk && !signal.aborted) {
+            try {
+              const after = (await readWorkspaceFile(activePath, ws)) ?? ''
+              if (after && after !== payload.content) {
+                harnessPost = await runHarnessPostProcess({
+                  ...postBase,
+                  before: payload.content,
+                  after,
+                  filePath: activePath,
+                })
+                if (!signal.aborted && !harnessPost.skipped && harnessPost.text !== after) {
+                  await writeWorkspaceFile(activePath, harnessPost.text, ws)
+                }
+              }
+            } catch (error) {
+              console.warn(`Harness post-processing failed for ${activePath}: ${errMsg(error)}`)
+            }
+          }
+          const harnessPostLog =
+            harnessPost &&
+            !(harnessPost.skipped && ['disabled', 'no_passes'].includes(harnessPost.reason ?? ''))
+              ? {
+                  source: 'harness',
+                  file: activePath,
+                  skipped: harnessPost.skipped,
+                  reason: harnessPost.reason ?? null,
+                  hunks: harnessPost.hunks,
+                  skipped_hunks: harnessPost.skippedHunks,
+                  passes: harnessPost.passes,
+                  snapshots: harnessPost.snapshots,
+                }
+              : null
           await saveSimpleAiLog({
             mode: mode === 'chat' ? 'chat' : 'edit_write',
             session_id: payload.session_id,
@@ -195,15 +277,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             model_used: `${harness}:${String(overrides[harness]?.model ?? 'default')}`,
             system_hash: prefixHash(systemPrompt),
             user_hash: prefixHash(harnessPrompt),
+            post_processing: harnessPostLog,
           }, ws)
-          send({ status: 'harness_done', harness })
+          send({ status: 'harness_done', harness, post_processing: harnessPostLog })
           c.close()
           return
         }
 
         const client = loadLlmConfig(settings as never)
-        const maxToks = pickWriterMaxTokens(settings as never)
-        const readFile = (p: string) => readWorkspaceFile(p, ws).catch(() => null)
 
         if (mode === 'edit') {
           if (!payload.skip_planner) {
@@ -303,20 +384,33 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 tokensCached: client.lastTokensCached,
               }),
             )
-            let clean = fullRaw.trim()
-            if (clean.startsWith('```')) {
-              const lines = clean.split('\n')
-              if (lines[0]?.startsWith('```')) lines.shift()
-              if (lines.length && lines[lines.length - 1]?.startsWith('```')) lines.pop()
-              clean = lines.join('\n').trim()
-            }
+            const clean = stripCodeFences(fullRaw)
+            const post = await runPostProcessPipeline({
+              ...postBase,
+              text: clean,
+              mode: 'edit',
+              anchor,
+            })
+            const finalOutput = post.text
+            const review = post.skipped ? true : postConfig.review
             const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
             await saveSimpleAiLog({
               mode: 'edit_write',
               session_id: payload.session_id,
               system_prompt: systemPrompt,
               user_prompt: userPrompt,
-              output: fullRaw,
+              output: finalOutput,
+              raw_output: fullRaw,
+              post_processing:
+                post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
+                  ? null
+                  : {
+                      source: 'edit',
+                      skipped: post.skipped,
+                      reason: post.reason ?? null,
+                      passes: post.passes,
+                      snapshots: post.snapshots,
+                    },
               instruction: payload.message,
               selected_text: payload.selected_text,
               ref_files: null,
@@ -337,7 +431,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               tokens_cached: client.lastTokensCached,
               slot_id: writerCache.slotId ?? null,
             }, ws)
-            send({ status: 'applied', output: clean, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
+            send({ status: 'applied', output: finalOutput, review, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
           } else {
             const tagged = taggedPaths(payload)
             send({ status: 'context_resolved', context_needed: tagged })
@@ -380,13 +474,33 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 tokensCached: client.lastTokensCached,
               }),
             )
+            const clean = stripCodeFences(fullRaw)
+            const post = await runPostProcessPipeline({
+              ...postBase,
+              text: clean,
+              mode: 'edit',
+              anchor,
+            })
+            const finalOutput = post.text
+            const review = post.skipped ? true : postConfig.review
             const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
             await saveSimpleAiLog({
               mode: 'edit_write',
               session_id: payload.session_id,
               system_prompt: systemPrompt,
               user_prompt: userPrompt,
-              output: fullRaw,
+              output: finalOutput,
+              raw_output: fullRaw,
+              post_processing:
+                post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
+                  ? null
+                  : {
+                      source: 'edit',
+                      skipped: post.skipped,
+                      reason: post.reason ?? null,
+                      passes: post.passes,
+                      snapshots: post.snapshots,
+                    },
               instruction: payload.message,
               selected_text: payload.selected_text,
               ref_files: null,
@@ -404,8 +518,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               tokens_cached: client.lastTokensCached,
               slot_id: writerCache.slotId ?? null,
             }, ws)
-            const clean = fullRaw.trim()
-            send({ status: 'applied', output: clean, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
+            send({ status: 'applied', output: finalOutput, review, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
           }
         } else {
           send({ status: 'generating' })
@@ -448,12 +561,39 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             }),
           )
           const usage = llm.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          const chatAnchor =
+            payload.selected_text || payload.cursor_paragraph_text
+              ? extractAnchorContext(
+                  payload.content,
+                  payload.selected_text,
+                  payload.cursor_paragraph_text,
+                )
+              : null
+          const post = await runPostProcessPipeline({
+            ...postBase,
+            logs: chatLogs,
+            text: fullChat,
+            mode: 'chat',
+            anchor: chatAnchor,
+          })
+          const finalChat = post.text
           await saveSimpleAiLog({
             mode: 'chat',
             session_id: payload.session_id,
             system_prompt: systemPrompt,
             user_prompt: userPrompt,
-            output: fullChat,
+            output: finalChat,
+            raw_output: fullChat,
+            post_processing:
+              post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
+                ? null
+                : {
+                    source: 'chat',
+                    skipped: post.skipped,
+                    reason: post.reason ?? null,
+                    passes: post.passes,
+                    snapshots: post.snapshots,
+                  },
             instruction: payload.message,
             selected_text: payload.selected_text,
             ref_files: null,
@@ -469,7 +609,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokens_cached: llm.lastTokensCached,
             slot_id: chatCache.slotId ?? null,
           }, ws)
-          send({ status: 'chat', output: fullChat, model_used: llm.lastModelUsed })
+          send({ status: 'chat', output: finalChat, model_used: llm.lastModelUsed })
         }
         c.close()
       } catch (e) {
