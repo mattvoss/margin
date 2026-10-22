@@ -10,6 +10,7 @@ import {
   splitSettingsUpdate,
 } from '../lib/settingsScope'
 import { toast } from './toastStore'
+import type { PostProcessingSettings } from '../lib/postProcessing'
 
 export interface AppSettings {
   default_mode: string
@@ -41,6 +42,8 @@ export interface AppSettings {
   linked_workspace_dir?: string | null
   workspace_profiles?: { id: string; name: string; path: string }[]
   history_turns?: number
+  /** Ordered, independently toggleable post-processing passes. Server-synced. */
+  post_processing?: PostProcessingSettings
   image_endpoints: Record<string, {
     provider: string
     base_url: string
@@ -86,7 +89,7 @@ interface SettingsState {
   selectedWorkspaceDir: () => string | null
 }
 
-export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'endpoints' | 'harnesses' | 'images'
+export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'post-processing' | 'endpoints' | 'harnesses' | 'images'
 
 /** First paint before localStorage is consulted: legacy builds cached only the
     workspace dir, so migrate that and otherwise start from defaults (a fresh

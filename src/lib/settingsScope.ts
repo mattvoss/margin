@@ -13,6 +13,7 @@
  */
 
 import type { AppSettings } from '../stores/settingsStore'
+import { createDefaultPostProcessing } from './postProcessing'
 
 /** Browser-owned keys. The server allowlists exactly these when it overlays
  *  a request's client settings onto its own blob. */
@@ -56,6 +57,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   linked_workspace_dir: null,
   workspace_profiles: [],
   history_turns: 5,
+  post_processing: createDefaultPostProcessing(),
   image_endpoints: {},
   active_image_endpoint: null,
   image_default_style: null,

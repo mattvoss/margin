@@ -103,6 +103,7 @@ import {
   ensureDataDirs,
 } from './env.server.js';
 import { CLIENT_ONLY_KEYS, CLIENT_SETTINGS_HEADER } from '../lib/settingsScope';
+import { createDefaultPostProcessing } from '../lib/postProcessing';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -337,6 +338,7 @@ export function defaultSettings(): Settings {
     planner_include_outline: false,
     character_tracking: true,
     history_turns: 5,
+    post_processing: createDefaultPostProcessing(),
     image_endpoints: {},
     active_image_endpoint: null,
     image_default_style: null,
