@@ -621,8 +621,12 @@ export interface LlmSettingsLike {
  * LM_STUDIO_* env config instead so server-side callers (CLI harnesses,
  * scripts) keep working without stored settings.
  */
-export function loadLlmConfig(settings?: LlmSettingsLike | null): LLMClient {
-  const epId = settings?.active_endpoint;
+export function loadLlmConfig(
+  settings?: LlmSettingsLike | null,
+  endpointId?: string | null,
+): LLMClient {
+  const requested = endpointId ? settings?.endpoints?.[endpointId] : undefined;
+  const epId = requested ? endpointId : settings?.active_endpoint;
   const ep = (epId && settings?.endpoints?.[epId]) || undefined;
   if (ep) {
     const tags = Array.isArray(ep.custom_thinking_tags) ? ep.custom_thinking_tags : [];

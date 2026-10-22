@@ -20,6 +20,10 @@ export interface AiLogEntry {
   system_prompt: string
   user_prompt: string
   output: string
+  /** Writer/chat output before post-processing, when a pipeline ran. */
+  raw_output?: string | null
+  /** Post-processing summary: passes, models, usage, snapshots. */
+  post_processing?: unknown
   instruction: string
   selected_text?: string | null
   text_before?: string | null
@@ -143,7 +147,7 @@ export async function saveSimpleAiLog(
   const dir = await logsDir(workspaceDir)
   const key = String(entry.session_id ?? 'default')
   const p = join(dir, `${key}.json`)
-  let logs: AiLogEntry[] = []
+  let logs: AiLogEntry[]
   try {
     logs = JSON.parse(await readFile(p, 'utf-8')) as AiLogEntry[]
     if (!Array.isArray(logs)) logs = []

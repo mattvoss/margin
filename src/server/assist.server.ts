@@ -180,6 +180,10 @@ export interface SimpleAssistLogEntry {
   system_prompt: string
   user_prompt: string
   output: string
+  /** Writer/chat output before post-processing, when a pipeline ran. */
+  raw_output?: string | null
+  /** Post-processing summary: passes, models, usage, snapshots. */
+  post_processing?: Array<Record<string, unknown>> | Record<string, unknown> | null
   instruction: string
   selected_text?: string | null
   text_before?: string | null
@@ -1275,6 +1279,8 @@ export interface SimpleAssistLogInput {
   totalTokens?: number
   thinkingOutput?: string | null
   toolCalls?: Array<Record<string, unknown>> | null
+  rawOutput?: string | null
+  postProcessing?: Array<Record<string, unknown>> | Record<string, unknown> | null
 }
 
 /** Mirror of `_log_simple_assist`'s entry assembly (assist.py:601-659). */
@@ -1305,6 +1311,8 @@ export function buildSimpleAssistLogEntry(input: SimpleAssistLogInput): SimpleAs
   if (input.plannerOutput != null) entry.planner_output = input.plannerOutput
   if (input.cursorParagraphIndex != null) entry.cursor_paragraph_index = input.cursorParagraphIndex
   if (input.modelUsed != null) entry.model_used = input.modelUsed
+  if (input.rawOutput != null) entry.raw_output = input.rawOutput
+  if (input.postProcessing != null) entry.post_processing = input.postProcessing
   return entry
 }
 
