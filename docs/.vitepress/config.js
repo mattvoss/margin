@@ -24,6 +24,7 @@ export default {
                             { text: 'Appearance', link: '/configuration/appearance' },
                             { text: 'Editor', link: '/configuration/editor' },
                             { text: 'Context', link: '/configuration/context' },
+                            { text: 'Post-processing', link: '/configuration/post-processing' },
                             { text: 'Endpoints', link: '/configuration/endpoints' },
                             { text: 'Harnesses', link: '/configuration/harnesses' },
                             { text: 'Prompts', link: '/configuration/prompts' }

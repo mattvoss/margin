@@ -31,6 +31,7 @@ Instead of treating AI as a chat window, Margin integrates it directly into the 
 * **Optimized for Smaller Models** — Works well with lightweight language models and supports Ollama, LM Studio, and OpenAI-compatible providers.
 * **Agent Harnesses** — Supports OpenCode, Pi, Claude Code, Codex, or Antigravity with your own subscription; see [Harnesses](./docs/configuration/harnesses.md).
 * **Editable Prompts** — Tune the Writer, Planner, Chat, and Harness Edit instructions from Settings > Prompts; see [Prompts](./docs/configuration/prompts.md).
+* **Post-processing Passes** — Run ordered, individually toggleable prose rewrites after endpoint or harness output; see [Post-processing](./docs/configuration/post-processing.md).
 * **Automatic Context Management** — Organize characters, lore, outlines, and style guides into folders. Margin automatically includes the relevant context for each task.
 * **Customizable AI Workflows** — Configure prompts, agents, and writing pipelines to match your process instead of adapting to rigid presets.
 * **Interactive Diff Review** — Review AI-generated edits with clear inline diffs before accepting or rejecting changes.
@@ -66,11 +67,12 @@ See the [Getting Started guide](docs/getting-started.md) for setup instructions,
 
 - [AI Assist](docs/ai-assist.md) — Edit and Chat modes, context window, reasoning
 - [Writing Guide](docs/writing-guide.md) — Dual-agent system, manifests, character profiles, workspace demo.
-- [Configuration](docs/configuration/workspaces.md) — Workspaces, appearance, editor, endpoints, context, harness, images settings
+- [Configuration](docs/configuration/workspaces.md) — Workspaces, appearance, editor, endpoints, context, post-processing, harness, images settings
 - [Workspaces](docs/configuration/workspaces.md) — Profiles, sidebar switcher, folder ops, Git init
 - [Images](docs/configuration/images.md) — Providers, styles, ComfyUI workflows, generation history
 - [Harnesses](docs/configuration/harnesses.md) — Use your OpenCode, Pi, Claude Code, Codex, or Antigravity subscription
 - [Prompts](docs/configuration/prompts.md) — Edit the Writer, Planner, Chat, and Harness Edit instructions
+- [Post-processing](docs/configuration/post-processing.md) — Ordered passes that polish Writer or harness output
 
 
 
