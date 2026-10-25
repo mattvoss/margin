@@ -60,7 +60,7 @@ Use Chat mode for brainstorming, asking questions, or discussing your content wi
 
 ## Post-processing
 
-When enabled in **Settings > Post-processing**, Margin can run ordered rewrite passes after endpoint Edit/Chat output or after a harness changes the active file. Passes see only the previous pass's text, can use their own endpoint and context options, and fail independently — a bad pass keeps the previous text. The four starter passes ship disabled.
+When enabled in **Settings > Post-processing**, Margin can run ordered rewrite passes after endpoint Edit/Chat output or after a harness changes the active file. Each pass receives the upstream system instructions and your original request along with the previous pass's text. Those instructions take precedence over a pass's editing goal, and passes are directed to make only small, voice-preserving changes. Passes can use their own endpoint and context options, and fail independently — a bad pass keeps the previous text. The four starter passes ship disabled.
 
 Endpoint Edit output still goes through the normal accept/reject review unless you turn **Review before applying** off. Harness output always keeps its three-way paragraph merge review, and only changed hunks in the active file are post-processed.
 

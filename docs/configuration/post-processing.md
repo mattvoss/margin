@@ -8,12 +8,12 @@ Open **Settings > Post-processing** to configure it.
 
 A preset contains an ordered list of passes. Each pass:
 
-- receives only the previous pass's text — never your original instruction or the Writer prompt
+- receives the previous pass's text plus the upstream system instructions and your original request; these constraints take precedence over a pass's generic editing goal
 - can use its own endpoint, prompt, temperature, and token limit
 - can optionally receive character context, recent scene turns, pinned reference files, or a document window
 - is independent: disabling or reordering one pass never rewrites another pass's prompt
 
-If a pass fails or returns empty output, Margin keeps the previous text and continues. A failed pass never discards the generation.
+Passes are instructed to preserve the established voice, meaning, events, dialogue intent, POV, tense, and level of detail, and to make only the smallest safe improvement. If a pass fails or returns empty output, Margin keeps the previous text and continues. A failed pass never discards the generation.
 
 ## Starter passes
 

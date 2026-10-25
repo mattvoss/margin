@@ -230,6 +230,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               if (after && after !== payload.content) {
                 harnessPost = await runHarnessPostProcess({
                   ...postBase,
+                  upstreamSystemPrompt: systemPrompt,
+                  upstreamInstruction: payload.message,
                   before: payload.content,
                   after,
                   filePath: activePath,
@@ -387,6 +389,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             const clean = stripCodeFences(fullRaw)
             const post = await runPostProcessPipeline({
               ...postBase,
+              upstreamSystemPrompt: systemPrompt,
+              upstreamInstruction: payload.message,
+              upstreamRefinedInstruction: query,
               text: clean,
               mode: 'edit',
               anchor,
@@ -477,6 +482,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             const clean = stripCodeFences(fullRaw)
             const post = await runPostProcessPipeline({
               ...postBase,
+              upstreamSystemPrompt: systemPrompt,
+              upstreamInstruction: payload.message,
               text: clean,
               mode: 'edit',
               anchor,
@@ -572,6 +579,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const post = await runPostProcessPipeline({
             ...postBase,
             logs: chatLogs,
+            upstreamSystemPrompt: systemPrompt,
+            upstreamInstruction: payload.message,
             text: fullChat,
             mode: 'chat',
             anchor: chatAnchor,

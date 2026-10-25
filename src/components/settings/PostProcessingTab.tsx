@@ -82,7 +82,7 @@ export function PostProcessingSettings({
     <div className="flex flex-col gap-6">
       <FilterSection query={query} keywords="post-processing post processing pipeline passes prose polish rewrite review">
         <section>
-          <SectionLabel description="Ordered passes that rewrite Writer or Chat output before it reaches you. Each pass only sees the previous pass's text. Disabled by default.">
+          <SectionLabel description="Ordered passes that make conservative edits to Writer or Chat output. Every pass also receives the upstream instructions so it can preserve the requested task and voice. Disabled by default.">
             Pipeline
           </SectionLabel>
           <SectionCard>
@@ -201,7 +201,7 @@ export function PostProcessingSettings({
 
       <FilterSection query={query} keywords="passes pass prompt grounding character prose repetition rhythm editor">
         <section>
-          <SectionLabel description="Run in order. A pass receives the previous pass's output; it never sees your original instruction. Drag-free reordering uses the arrows.">
+          <SectionLabel description="Run in order. Each pass receives the previous pass's output and the original generation instructions. Drag-free reordering uses the arrows.">
             Passes
           </SectionLabel>
           <div className="flex flex-col gap-3">

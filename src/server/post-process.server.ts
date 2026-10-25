@@ -2,9 +2,9 @@
  * Post-processing pipeline — server side.
  *
  * Ports the core idea of closuretxt/recast-post-processing (AGPL-3.0): after a
- * generation, run an ordered list of independent passes. Each pass gets only
- * the previous pass's text plus optional context; it never sees the original
- * instruction or prompt. Failures are non-fatal and keep the previous text.
+ * generation, run an ordered list of independent passes. Each pass gets the
+ * previous pass's text plus upstream generation instructions and optional
+ * context. Failures are non-fatal and keep the previous text.
  *
  * Endpoint Edit/Chat call `runPostProcessPipeline`. Harness runs call
  * `runHarnessPostProcess`, which post-processes only the paragraph hunks the
@@ -79,6 +79,12 @@ export interface PostProcessContext {
   characterMessage: string | null
   availableFiles: Array<{ name: string; path: string }>
   readFile: AssistFileReader
+  /** Upstream prompt constraints that every pass must preserve. */
+  upstreamSystemPrompt?: string | null
+  /** User's original instruction for the generation being post-processed. */
+  upstreamInstruction?: string | null
+  /** Planner-refined instruction, when the writer used one. */
+  upstreamRefinedInstruction?: string | null
   anchor?: AnchorContext | null
   /** Pre-fetched session logs; loaded on demand when omitted. */
   logs?: AiLogEntry[] | null
@@ -117,6 +123,18 @@ export interface HarnessPostProcessResult extends PostProcessResult {
 
 const MAX_CONTEXT_CHARS = 12_000
 const MAX_SCENE_ENTRY_CHARS = 2_000
+const MAX_UPSTREAM_SYSTEM_CHARS = 8_000
+const MAX_UPSTREAM_INSTRUCTION_CHARS = 4_000
+
+const PASS_GUARDRAILS = `You are a conservative prose editor making a limited refinement to existing text.
+
+Priority and preservation rules:
+- The upstream generation instructions and user's request included with the text are binding constraints. They take precedence over this pass's specific editing goal whenever they conflict.
+- Improve the existing prose; do not reinterpret or broaden the task. Make only the smallest changes needed for this pass.
+- Preserve the established voice, diction, tone, meaning, facts, events, dialogue intent, point of view, tense, and level of detail unless the upstream instructions explicitly request a change.
+- Do not invent or remove actions, reactions, lore, imagery, explanations, or other content. Do not add transition beats or change dialogue unless explicitly requested upstream or strictly necessary to satisfy the upstream request.
+- If a change is not clearly required and safe, keep the original wording. If no improvement is needed, return the input text unchanged.
+- Return only the resulting text. No explanations, notes, or commentary.`
 
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -165,6 +183,31 @@ function buildDocumentBlock(anchor?: AnchorContext | null): string | null {
   return `<document_context>\n${truncate(lines.join('\n\n'), MAX_CONTEXT_CHARS)}\n</document_context>`
 }
 
+function buildUpstreamInstructionsBlock(ctx: PostProcessContext): string | null {
+  const parts: string[] = []
+  const system = ctx.upstreamSystemPrompt?.trim()
+  const instruction = ctx.upstreamInstruction?.trim()
+  const refined = ctx.upstreamRefinedInstruction?.trim()
+  if (system) {
+    parts.push(
+      `UPSTREAM SYSTEM INSTRUCTIONS:\n${truncate(system, MAX_UPSTREAM_SYSTEM_CHARS)}`,
+    )
+  }
+  if (instruction) {
+    parts.push(
+      `USER'S ORIGINAL REQUEST:\n${truncate(instruction, MAX_UPSTREAM_INSTRUCTION_CHARS)}`,
+    )
+  }
+  if (refined && refined !== instruction) {
+    parts.push(
+      `PLANNER-REFINED REQUEST:\n${truncate(refined, MAX_UPSTREAM_INSTRUCTION_CHARS)}`,
+    )
+  }
+  return parts.length > 0
+    ? `<upstream_generation_instructions>\n${parts.join('\n\n')}\n</upstream_generation_instructions>`
+    : null
+}
+
 async function buildPinnedRefsBlock(
   pass: PostProcessPass,
   ctx: PostProcessContext,
@@ -201,8 +244,11 @@ export async function buildPassMessages(
   text: string,
   ctx: PostProcessContext,
 ): Promise<{ system: string; user: string; messages: ChatMessage[] }> {
-  const system = pass.prompt.trim()
+  const system = `${PASS_GUARDRAILS}\n\nPASS-SPECIFIC EDITING GOAL:\n${pass.prompt.trim()}`
   const parts: string[] = []
+
+  const upstreamInstructions = buildUpstreamInstructionsBlock(ctx)
+  if (upstreamInstructions) parts.push(upstreamInstructions)
 
   if (pass.include_character && ctx.characterMessage?.trim()) {
     parts.push(
@@ -254,8 +300,9 @@ function skippedResult(
 }
 
 /**
- * Run the enabled passes in order. A pass receives only the previous pass's
- * output. Failed/empty passes keep the previous text and are reported.
+ * Run the enabled passes in order. A pass receives the previous pass's output
+ * and the original generation constraints. Failed/empty passes keep the
+ * previous text and are reported.
  */
 export async function runPostProcessPipeline(
   input: RunPostProcessInput,

@@ -3,8 +3,9 @@
  *
  * Concepts adapted from closuretxt/recast-post-processing (AGPL-3.0): an
  * ordered list of independent, individually toggleable passes, each with its
- * own prompt, model/endpoint, and context options. A pass receives only the
- * previous pass's text and never the original generation prompt.
+ * own prompt, model/endpoint, and context options. A pass receives the
+ * previous pass's text and the upstream generation instructions so it can
+ * improve prose without drifting from the requested task or voice.
  *
  * Kept in `lib/` so the settings UI, the server pipeline and the harness hook
  * all share one shape. Settings are server-synced (`post_processing`), not
@@ -55,56 +56,40 @@ export const MAX_HARNESS_HUNKS = 6
 /** And at most this many characters across those hunks. */
 export const MAX_HARNESS_CHARS = 20_000
 
-const GROUNDING_PROMPT = `You are a prose editor. Edit <text_to_transform> so it feels rooted in the story's world and consistent with its rules, tone, setting, and the way things work there. Make the text belong to this specific world. Do not invent new lore or guesswork.
+const GROUNDING_PROMPT = `You are a conservative continuity and grounding proofreader. Make only small, local corrections when wording in <text_to_transform> clearly conflicts with supplied story facts, terminology, or setting context.
 
-When a character announces an action and then immediately executes it, or time passes abruptly, add one short beat between the two so the reader does not feel like they blinked and missed the transition. It can be a reaction, a half-second, anything that confirms time moved.
+Do not add lore, explanations, imagery, actions, reactions, transition beats, or other details. Do not make prose more atmospheric or change its voice. If there is no clear contradiction, leave the text unchanged.
 
-Return only the rewritten text. No explanations, no notes, no commentary.`
+Return only the resulting text.`
 
-const VALIDATOR_PROMPT = `You are a character consistency editor. Your only job is to fix dialogue and actions in <text_to_transform> that are not in character. Do not improve prose. Do not fix grammar. Do not restructure sentences.
+const VALIDATOR_PROMPT = `You are a conservative character-consistency proofreader. Make a minimal correction only when dialogue or an action in <text_to_transform> clearly contradicts explicit character information or examples provided in context.
 
-Priority order for character signals: example dialogue > personality traits > general description > scene context.
+Use this evidence order: example dialogue > explicit personality traits > general description > scene context. Do not infer unstated feelings or intentions.
 
-Fix text if it:
-- Uses phrasing that contradicts the character's established voice
-- Has the character act warmer, cooler, more helpful, or more dramatic than their character defines
-- Responds only to the surface of what was said, ignoring what the other character is visibly feeling
-- States emotion directly instead of showing it through behavior or word choice
-- Resolves tension the character would hold
+Do not otherwise alter voice, emotional delivery, dialogue, pacing, or sentence structure. Do not add or remove actions or details. If there is no clear contradiction, leave the text unchanged.
 
-Return only the corrected text. No explanations, no commentary.`
+Return only the resulting text.`
 
-const PROSE_PROMPT = `You are a prose editor. Your only job is to improve how <text_to_transform> reads without changing what it says.
+const PROSE_PROMPT = `You are a conservative line editor. Improve readability in <text_to_transform> with small, local edits while preserving the author's established voice and wording wherever possible.
 
 Rules:
-- Do not change any dialogue. Not a single word.
-- Do not change what happens, what characters do, or the order of events
-- Do not add new actions, reactions, or details that were not there
-- Do not remove actions, reactions, or details that were there
-- Keep the original verb tense and grammatical person
-- Avoid repeating descriptive words; rephrase or remove repetition
+- Preserve meaning, dialogue, events, details, point of view, and tense.
+- Do not add or remove actions, reactions, imagery, or other content.
+- Keep the author's diction and sentence patterns unless a local change clearly improves clarity or removes accidental awkwardness.
+- Avoid changing dialogue; only correct an obvious typo or follow an explicit upstream request.
 
-What you may change:
-- Sentence length variation; break up monotonous rhythm
-- Eliminate repeated sentence structures, especially consecutive sentences starting the same way
-- Convert telling to showing; replace emotion labels with physical behavior or action
-- Cut filler phrases that carry no meaning
-- Tighten wordy constructions without losing meaning
-- Prefer flowing sentences connected by conjunctions over short stopped ones
+You may fix clear awkward phrasing, accidental repetition, or a sentence-level clarity issue. Do not impose a new rhythm or style. If the prose is already clear, leave it unchanged.
 
-Use the scene context only to match the established prose tone and register. Do not drift from the style already set.
+Return only the resulting text.`
 
-Return only the rewritten text. No explanations, no notes, no commentary.`
-
-const REPETITION_PROMPT = `Simplify <text_to_transform> by removing repeated words, phrases, and repeated dialogue beats.
+const REPETITION_PROMPT = `Proofread <text_to_transform> for clear, accidental repetition and remove only the redundant instance with the smallest possible edit.
 
 Rules:
-- Remove only words that can be removed without breaking the sentence
-- Change wording only when the text still makes sense
-- Prioritize removing repetition that is closest to the recent scene context
-- Do not add new content
+- Preserve intentional emphasis, motifs, parallel phrasing, and repeated dialogue beats.
+- Do not restructure sentences, change the voice, or replace the author's wording unnecessarily.
+- Do not add content. If repetition is not clearly accidental, leave it unchanged.
 
-Return only the rewritten text. No explanations, no notes, no commentary.`
+Return only the resulting text.`
 
 /** Four starter passes, all disabled until the user opts in. */
 export const STARTER_PASSES: readonly PostProcessPass[] = [

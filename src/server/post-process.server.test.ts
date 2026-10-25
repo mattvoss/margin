@@ -243,6 +243,9 @@ describe('buildPassMessages', () => {
       ...baseContext,
       settings: settingsFor(config),
       characterMessage: 'Mara is terse.',
+      upstreamSystemPrompt: 'Keep the narrator in close third person and preserve the restrained voice.',
+      upstreamInstruction: 'Tighten the paragraph, but do not change the dialogue.',
+      upstreamRefinedInstruction: 'Make a light edit to improve clarity; retain all dialogue verbatim.',
       anchor: {
         paragraphBefore: 'before paragraph',
         targetParagraph: 'target text',
@@ -253,7 +256,13 @@ describe('buildPassMessages', () => {
       logs,
     })
 
-    expect(built.system).toBe(pass.prompt)
+    expect(built.system).toContain('PASS-SPECIFIC EDITING GOAL:')
+    expect(built.system).toContain(pass.prompt)
+    expect(built.system).toContain('binding constraints')
+    expect(built.user).toContain('<upstream_generation_instructions>')
+    expect(built.user).toContain('UPSTREAM SYSTEM INSTRUCTIONS:\nKeep the narrator in close third person and preserve the restrained voice.')
+    expect(built.user).toContain("USER'S ORIGINAL REQUEST:\nTighten the paragraph, but do not change the dialogue.")
+    expect(built.user).toContain('PLANNER-REFINED REQUEST:\nMake a light edit to improve clarity; retain all dialogue verbatim.')
     expect(built.user).toContain('<characters>\nMara is terse.\n</characters>')
     expect(built.user).toContain('<scene_context>')
     expect(built.user).toContain('USER: previous question')
@@ -262,7 +271,7 @@ describe('buildPassMessages', () => {
     expect(built.user).toContain('before paragraph')
     expect(built.user).toContain('<text_to_transform>\ntarget text\n</text_to_transform>')
     expect(built.messages).toEqual([
-      { role: 'system', content: pass.prompt },
+      { role: 'system', content: built.system },
       { role: 'user', content: built.user },
     ])
   })
