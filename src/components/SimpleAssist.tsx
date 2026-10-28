@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2 } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -10,6 +10,7 @@ import { toDisplaySrc } from '../lib/media'
 import { streamSSE } from '../lib/stream-sse'
 import { applyHarnessResult } from '../lib/applyHarnessResult'
 import { scheduleFileRefresh } from '../lib/refreshFiles'
+import { splitPromptMentions, type MentionTarget } from '../lib/promptMentions'
 import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -185,6 +186,30 @@ function appendChipText(chip: HTMLElement, label: string, removeDataset: Record<
   chip.appendChild(divider)
   chip.appendChild(labelEl)
   chip.appendChild(removeButton)
+}
+
+/** Build a removable `@file` chip identical to the ones the @ menu inserts. */
+function createFileChip(file: { name: string; path: string }): HTMLSpanElement {
+  const chip = document.createElement('span')
+  chip.contentEditable = 'false'
+  chip.className = 'inline-chip'
+  chip.dataset.path = file.path
+  chip.dataset.name = file.name
+  appendChipText(chip, file.name, { path: file.path })
+  return chip
+}
+
+/** Restore prompt text with resolvable `@file` mentions rebuilt as chips. */
+function buildPromptFragment(text: string, targets: MentionTarget[]): DocumentFragment {
+  const fragment = document.createDocumentFragment()
+  for (const segment of splitPromptMentions(text, targets)) {
+    if (segment.type === 'text') {
+      fragment.appendChild(document.createTextNode(segment.value))
+    } else {
+      fragment.appendChild(createFileChip(segment.target))
+    }
+  }
+  return fragment
 }
 
 function appendSelectionChipText(chip: HTMLElement, length: number) {
@@ -540,6 +565,52 @@ export function SimpleAssist() {
   const abortRef = useRef<AbortController | null>(null)
   const wasAbortedRef = useRef(false)
 
+  // Pre-fill the input box with a previous prompt so it can be edited and
+  // re-sent. `@file` mentions become real chips again when the file can be
+  // resolved (from the log, or from the currently open files); anything
+  // unresolvable stays plain text rather than a chip that tags nothing.
+  const handlePromptToInput = (log: SimpleLogEntry) => {
+    const textToUse = log.instruction || log.user_prompt || cleanUserPrompt(log)
+    const el = inputRef.current
+    if (!el) return
+    try {
+      // Log entries win over opened files: they carry the paths that were
+      // actually tagged when the prompt ran.
+      const targets: MentionTarget[] = []
+      for (const file of log.ref_files ?? []) {
+        if (file?.name && file?.path) targets.push({ name: file.name, path: file.path })
+      }
+      for (const file of openedFiles) {
+        targets.push({ name: file.name, path: file.path })
+      }
+
+      const fragment = buildPromptFragment(textToUse, targets)
+
+      // The editor selection is separate context, not prompt text — keep the
+      // pending chip instead of silently dropping it.
+      const selectionChip = el.querySelector<HTMLElement>('[data-role="selection"]')
+      if (selectionChip) fragment.prepend(selectionChip)
+
+      el.replaceChildren(fragment)
+      // Read the text back so chip mentions serialize exactly as typing would.
+      setInstructionText(getInputData(el).text)
+      setShowFileDropdown(false)
+
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+      el.focus()
+    } catch (err) {
+      console.error('Failed to copy prompt to input:', err)
+      toast.error('Could not copy prompt to input.')
+    }
+  }
+
   const handleStop = async () => {
     if (abortRef.current) {
       abortRef.current.abort()
@@ -826,12 +897,7 @@ export function SimpleAssist() {
     range.setEnd(textNode, mentionEnd)
     range.deleteContents()
 
-    const chip = document.createElement('span')
-    chip.contentEditable = 'false'
-    chip.className = 'inline-chip'
-    chip.dataset.path = file.path
-    chip.dataset.name = file.name
-    appendChipText(chip, file.name, { path: file.path })
+    const chip = createFileChip(file)
 
     const isEditorContent = file.name === 'editorcontent.ts'
     const zwsp = document.createTextNode(isEditorContent ? '\u200B ' : '\u200B')
@@ -1961,24 +2027,35 @@ export function SimpleAssist() {
               return (
                 <div key={log.id} className="flex flex-col gap-3">
                   {/* User Speech Capsule Bubble */}
-                  <div className="self-end max-w-[85%] bg-[var(--bg-bubble)] border border-[var(--border)] rounded-[16px] rounded-tr-[4px] px-3.5 py-2.5 font-sans text-xs text-[var(--text)] shadow-none leading-relaxed select-text flex flex-wrap items-center gap-1 animate-scale-in relative group pr-8">
+                  <div className="self-end max-w-[85%] bg-[var(--bg-bubble)] border border-[var(--border)] rounded-[16px] rounded-tr-[4px] px-3.5 py-2.5 font-sans text-xs text-[var(--text)] shadow-none leading-relaxed select-text flex flex-wrap items-center gap-1 animate-scale-in relative group pr-12">
                     <span>{renderUserPrompt(cleanUserPrompt(log))}</span>
-                    <button
-                      onClick={() => handleCopyPrompt(log)}
-                      className="absolute bottom-1.5 right-1.5 p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-all cursor-pointer opacity-0 group-hover:opacity-100 duration-200"
-                      title="Copy prompt"
-                    >
-                      {copiedId === log.id ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-600 dark:text-green-400">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                        </svg>
-                      )}
-                    </button>
+                    <div className="absolute bottom-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                      <button
+                        onClick={() => handlePromptToInput(log)}
+                        className="p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-all cursor-pointer"
+                        title="Copy prompt to input"
+                        aria-label="Copy prompt to input"
+                      >
+                        <Undo2 className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => handleCopyPrompt(log)}
+                        className="p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-all cursor-pointer"
+                        title="Copy prompt"
+                        aria-label="Copy prompt"
+                      >
+                        {copiedId === log.id ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-600 dark:text-green-400">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {/* AI Assistant Plain Text Response */}
