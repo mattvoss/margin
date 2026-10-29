@@ -261,7 +261,6 @@ export function FileSidebar({
   const [showSwitcher, setShowSwitcher] = useState(false)
 
   const setCurrentFilePath = useEditorStore((s) => s.setCurrentFilePath)
-  const updateFileContent = useEditorStore((s) => s.updateFileContent)
   const removeFile = useEditorStore((s) => s.removeFile)
   const currentFilePath = useEditorStore((s) => s.currentFilePath)
 
@@ -348,51 +347,11 @@ export function FileSidebar({
   }, [effectiveWorkspaceDir, clearFiles, addFile, setWorkspaceDir])
 
   const handleFileClick = useCallback(async (path: string) => {
-    const store = useEditorStore.getState()
-    if (store.aiPendingEdit && store.currentFilePath) {
-      const previous = store.aiPendingEdit.previousContent
-      store.editor?.commands.clearAiHighlight()
-      store.setContent(previous)
-      store.setAiPendingEdit(null)
-    }
-
-    await store.flushSave()
     if (onSaveCurrentFile) {
       await onSaveCurrentFile()
     }
-    const updatedStore = useEditorStore.getState()
-    const { currentFilePath, content } = updatedStore
-    if (currentFilePath) {
-      updateFileContent(currentFilePath, content)
-    }
-    
-    let file = openedFiles.find((f) => f.path === path)
-    if (file) {
-      // Lazy load content if it hasn't been fetched yet
-      if (!file.content && !file.originalContent) {
-        try {
-          const res = await apiFetch(`${API_BASE}/api/workspace/files/${encodeURIComponent(path)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(
-              workspacePayload(useSettingsStore.getState().selectedWorkspaceDir()),
-            ),
-          })
-          if (res.ok) {
-            const data = await res.json()
-            useEditorStore.getState().loadFileContent(path, data.content)
-            file = { ...file, content: data.content, originalContent: data.content }
-          }
-        } catch (err) {
-          console.error("Failed to fetch file content", err)
-          toast.error(`Could not open "${path}" — showing last known content.`)
-        }
-      }
-
-      setContent(file.content || '')
-      setCurrentFilePath(path)
-    }
-  }, [openedFiles, setContent, setCurrentFilePath, updateFileContent, onSaveCurrentFile])
+    await useEditorStore.getState().openFile(path)
+  }, [onSaveCurrentFile])
 
   const handleCreateFile = useCallback(async (folder: string) => {
     const trimmed = await promptDialog({

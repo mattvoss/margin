@@ -128,6 +128,76 @@ describe('autosave while a review is pending', () => {
   })
 })
 
+describe('openFile', () => {
+  it('is a no-op when the path is already current', async () => {
+    apiFetchMock.mockResolvedValue(okResponse())
+    useEditorStore.setState({
+      currentFilePath: 'a.md',
+      content: 'edited',
+      openedFiles: [
+        { name: 'a.md', path: 'a.md', content: 'edited', originalContent: 'original' },
+      ],
+    })
+
+    await useEditorStore.getState().openFile('a.md')
+
+    expect(apiFetchMock).not.toHaveBeenCalled()
+  })
+
+  it('saves the current document before switching', async () => {
+    apiFetchMock.mockResolvedValue(okResponse())
+    useEditorStore.setState({
+      currentFilePath: 'a.md',
+      content: 'edited',
+      openedFiles: [
+        { name: 'a.md', path: 'a.md', content: 'edited', originalContent: 'original' },
+        { name: 'b.md', path: 'b.md', content: 'B', originalContent: 'B' },
+      ],
+    })
+
+    await useEditorStore.getState().openFile('b.md')
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = apiFetchMock.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toBe('/api/workspace/files')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      filename: 'a.md',
+      content: 'edited',
+    })
+    expect(useEditorStore.getState().currentFilePath).toBe('b.md')
+    expect(useEditorStore.getState().content).toBe('B')
+  })
+
+  it('fetches lazily listed content on first open', async () => {
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      statusText: 'OK',
+      json: async () => ({ content: 'remote body' }),
+    } as unknown as Response)
+    useEditorStore.setState({
+      currentFilePath: 'a.md',
+      content: 'A',
+      openedFiles: [
+        { name: 'a.md', path: 'a.md', content: 'A', originalContent: 'A' },
+        { name: 'c.md', path: 'c.md', content: '', originalContent: '' },
+      ],
+    })
+
+    await useEditorStore.getState().openFile('c.md')
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = apiFetchMock.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toBe('/api/workspace/files/c.md')
+    expect(init.method).toBe('POST')
+    expect(useEditorStore.getState().currentFilePath).toBe('c.md')
+    expect(useEditorStore.getState().content).toBe('remote body')
+    expect(
+      useEditorStore.getState().openedFiles.find((f) => f.path === 'c.md')?.content,
+    ).toBe('remote body')
+  })
+})
+
 describe('autosave while streaming', () => {
   function seedStreaming() {
     useEditorStore.setState({

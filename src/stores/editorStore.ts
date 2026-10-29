@@ -59,6 +59,7 @@ interface EditorState {
   autoSaveTimer: ReturnType<typeof setTimeout> | null
   cancelAutoSave: () => void
   flushSave: () => void
+  openFile: (path: string) => Promise<void>
   saveFile: (path: string, content: string) => Promise<void>
 }
 
@@ -282,6 +283,56 @@ export const useEditorStore = create<EditorState>()(
     } finally {
       set({ isSaving: false })
     }
+  },
+  openFile: async (path: string) => {
+    const state = useEditorStore.getState()
+    if (state.currentFilePath === path) return
+
+    // Switching away discards a pending AI review, matching the sidebar's
+    // long-standing behavior.
+    if (state.aiPendingEdit && state.currentFilePath) {
+      const previous = state.aiPendingEdit.previousContent
+      state.editor?.commands.clearAiHighlight()
+      state.setContent(previous)
+      state.setAiPendingEdit(null)
+    }
+
+    await useEditorStore.getState().flushSave()
+
+    const afterSave = useEditorStore.getState()
+    // Keep the in-memory copy of the file we are leaving current (flushSave
+    // only writes to disk).
+    if (afterSave.currentFilePath) {
+      afterSave.updateFileContent(afterSave.currentFilePath, afterSave.content)
+    }
+
+    let file = afterSave.openedFiles.find((f) => f.path === path)
+    if (!file) return
+
+    // Workspace files are listed lazily; fetch the first open on demand.
+    if (!file.content && !file.originalContent) {
+      try {
+        const res = await apiFetch(`${API_BASE}/api/workspace/files/${encodeURIComponent(path)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            workspacePayload(useSettingsStore.getState().selectedWorkspaceDir()),
+          ),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          useEditorStore.getState().loadFileContent(path, data.content)
+          file = { ...file, content: data.content, originalContent: data.content }
+        }
+      } catch (err) {
+        console.error('Failed to fetch file content', err)
+        toast.error(`Could not open "${path}" — showing last known content.`)
+      }
+    }
+
+    const latest = useEditorStore.getState()
+    latest.setContent(file.content || '')
+    latest.setCurrentFilePath(path)
   },
   saveFile: async (path: string, content: string) => {
     try {
