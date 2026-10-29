@@ -1104,6 +1104,69 @@ body {
   text-underline-offset: 2px;
 }
 
+/* ── `@file` reference chips ─────────── */
+
+.file-mention {
+  background: var(--assist-pill-bg);
+  color: var(--assist-pill-text);
+  border: 1px solid var(--assist-pill-border);
+  border-radius: 5px;
+  padding: 0 4px;
+  font-family: var(--font-ui);
+  font-size: 0.82em;
+  font-weight: 500;
+  line-height: 1.55;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.file-mention::before {
+  content: '';
+  display: inline-block;
+  width: 0.72em;
+  height: 0.72em;
+  margin-right: 0.3em;
+  vertical-align: -0.02em;
+  background-color: var(--assist-pill-glyph);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V8z'/%3E%3Cpath%20d='M14%202v6h6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V8z'/%3E%3Cpath%20d='M14%202v6h6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.file-mention:hover {
+  border-color: var(--assist-pill-glyph);
+}
+
+/* Remove affordance: always present (reserved width avoids layout shift),
+   brightening on hover. Keeping it visible also works when the chip sits
+   inside a link, where a sibling hover selector couldn't reach it. */
+.file-mention__remove {
+  display: inline-block;
+  width: 0.75em;
+  height: 1em;
+  margin-left: -0.15em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--assist-pill-text);
+  font-family: var(--font-ui);
+  font-size: 0.78em;
+  line-height: 1;
+  vertical-align: -0.02em;
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.file-mention__remove:focus-visible {
+  opacity: 1;
+}
+
+.file-mention__remove:hover {
+  opacity: 1;
+}
+
 /* ── Slash menu ──────────────────────── */
 
 .slash-menu {
@@ -1113,6 +1176,11 @@ body {
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+}
+
+/* File names plus their folder need a little more room than slash actions. */
+.file-mention-menu {
+  width: 17rem;
 }
 
 .slash-menu__list {

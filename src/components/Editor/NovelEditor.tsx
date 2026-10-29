@@ -1,7 +1,6 @@
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor } from '@tiptap/core'
 import { createPortal } from 'react-dom'
-import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom'
 import StarterKit from '@tiptap/starter-kit'
 import { useEditorStore } from '../../stores/editorStore'
 import { useEffect, useRef, useState } from 'react'
@@ -12,6 +11,12 @@ import { ImageGenerateDialogHost } from './ImageGenerateDialog'
 import { SlashMenuView } from './SlashMenu'
 import { computeSlash } from './slashQuery'
 import type { SlashMenuHandle } from './SlashMenu'
+import { FileMentionMenu } from './FileMentionMenu'
+import type { FileMentionMenuHandle } from './FileMentionMenu'
+import { computeFileMention } from './fileMentionQuery'
+import { FileMentionExtension } from './FileMentionExtension'
+import { useCursorMenuPosition } from './useCursorMenuPosition'
+import { mentionTextFor, type ReferenceFile } from '../../lib/fileMentions'
 import { AiDiffHighlightExtension } from './AiDiffHighlightExtension'
 import { reapplyHarnessHighlight } from '../../lib/applyHarnessResult'
 import {
@@ -25,7 +30,7 @@ import {
 import { EditorState } from '@tiptap/pm/state'
 import { toast } from '../../stores/toastStore'
 
-interface SlashState {
+interface SuggestionState {
   query: string
   range: { from: number; to: number }
 }
@@ -82,14 +87,19 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
   const setAnchorPosition = useEditorStore(state => state.setAnchorPosition)
   const aiPendingEdit = useEditorStore(state => state.aiPendingEdit)
   const setAiPendingEdit = useEditorStore(state => state.setAiPendingEdit)
+  const openedFiles = useEditorStore(state => state.openedFiles)
+  const currentFilePath = useEditorStore(state => state.currentFilePath)
   const lastContentRef = useRef('')
   // Flag: true while we are programmatically calling setContent so onUpdate
   // doesn't echo the change back into Zustand and cause an infinite loop.
   const isProgrammaticUpdateRef = useRef(false)
   const editorRef = useRef<Editor | null>(null)
   const slashRef = useRef<SlashMenuHandle>(null)
-  const [slash, setSlash] = useState<SlashState | null>(null)
+  const [slash, setSlash] = useState<SuggestionState | null>(null)
   const slashElRef = useRef<HTMLDivElement | null>(null)
+  const mentionRef = useRef<FileMentionMenuHandle>(null)
+  const [fileMention, setFileMention] = useState<SuggestionState | null>(null)
+  const mentionElRef = useRef<HTMLDivElement | null>(null)
 
   const refreshSlash = (editor: Editor) => {
     const found = computeSlash(editor)
@@ -98,6 +108,25 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
       return
     }
     setSlash((prev) => {
+      if (
+        prev &&
+        prev.query === found.query &&
+        prev.range.from === found.range.from &&
+        prev.range.to === found.range.to
+      ) {
+        return prev
+      }
+      return found
+    })
+  }
+
+  const refreshFileMention = (editor: Editor) => {
+    const found = computeFileMention(editor)
+    if (!found) {
+      setFileMention((prev) => (prev === null ? prev : null))
+      return
+    }
+    setFileMention((prev) => {
       if (
         prev &&
         prev.query === found.query &&
@@ -127,6 +156,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
       MarginImage,
       Markdown.configure({ html: false, tightLists: true }),
       AiDiffHighlightExtension,
+      FileMentionExtension,
     ],
     // Feed raw markdown — the Markdown extension parses it natively
     content: content || '',
@@ -148,6 +178,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
         setContent(newMarkdown)
       }
       refreshSlash(editor)
+      refreshFileMention(editor)
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to, empty } = editor.state.selection
@@ -161,12 +192,14 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
         setSelectionRange({ from, to })
       }
       refreshSlash(editor)
+      refreshFileMention(editor)
     },
     editorProps: {
       attributes: {
         class: 'prose prose-slate relative max-w-none focus:outline-none min-h-[500px] px-8 py-6',
       },
       handleKeyDown: (_view, event) => {
+        if (mentionRef.current?.onKeyDown(event)) return true
         if (slashRef.current?.onKeyDown(event)) return true
         return false
       },
@@ -208,12 +241,35 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
     }
   }, [editor, setEditor])
 
+  // Chips are view-only decorations computed from the store. When the
+  // workspace file list arrives (or changes), an empty transaction forces a
+  // fresh decoration pass so existing `@name` text lights up without an edit.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.view.dispatch(editor.state.tr.setMeta('fileMentionRefresh', true))
+  }, [editor, openedFiles, currentFilePath])
+
+  // Clicking outside the editor (sidebar, assistant) closes both menus.
+  useEffect(() => {
+    if (!editor) return
+    const dismiss = () => {
+      setSlash(null)
+      setFileMention(null)
+    }
+    editor.on('blur', dismiss)
+    return () => {
+      editor.off('blur', dismiss)
+    }
+  }, [editor])
+
   // Sync external content changes (e.g. doc switch, streaming) into the editor.
   // Pass raw markdown — tiptap-markdown parses it, no html intermediary needed.
   useEffect(() => {
     if (editor && content !== undefined) {
       if (content !== lastContentRef.current) {
         lastContentRef.current = content
+        setSlash(null)
+        setFileMention(null)
         isProgrammaticUpdateRef.current = true
         editor.commands.setContent(content || '')
         // prosemirror-history does not export clearHistory.
@@ -236,51 +292,27 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
     }
   }, [content, editor])
 
-  // Floating-UI positioning for the slash menu: flips above the cursor near
-  // the viewport bottom, shifts inside horizontal edges, constrains height
-  // to available space, and repositions on scroll/resize via autoUpdate.
-  // Coordinates are re-read from the live cursor on every update (not cached
-  // in state) so the menu tracks while the query is typed.
-  useEffect(() => {
-    if (!editor || !slash) return
-    const el = slashElRef.current
-    if (!el) return
-    const anchor = {
-      getBoundingClientRect: () => {
-        try {
-          const c = editor.view.coordsAtPos(slash.range.to)
-          return {
-            x: c.left, y: c.bottom, width: 0, height: 0,
-            top: c.bottom, left: c.left, bottom: c.bottom, right: c.left,
-            toJSON: () => ({}),
-          } as DOMRect
-        } catch {
-          return new DOMRect(-9999, -9999, 0, 0)
-        }
-      },
+  // Both menus anchor to the live caret; the shared hook handles flip, shift,
+  // height constraints, and scroll/resize tracking.
+  useCursorMenuPosition(editor, slash?.range ?? null, slashElRef)
+  useCursorMenuPosition(editor, fileMention?.range ?? null, mentionElRef)
+
+  const selectFileMention = (file: ReferenceFile) => {
+    if (!editor || !fileMention) return
+    const text = `${mentionTextFor(file, openedFiles, currentFilePath)} `
+    const { from, to } = fileMention.range
+    setFileMention(null)
+    editor.view
+      .dispatch(editor.state.tr.insertText(text, from, to).scrollIntoView())
+    editor.commands.focus()
+  }
+
+  const cancelFileMention = () => {
+    if (editor && fileMention) {
+      editor.chain().focus().deleteRange(fileMention.range).run()
     }
-    const update = () => {
-      void computePosition(anchor, el, {
-        placement: 'bottom-start',
-        middleware: [
-          offset(6),
-          flip({ padding: 8 }),
-          shift({ padding: 8 }),
-          size({
-            padding: 8,
-            apply({ availableHeight, elements }) {
-              elements.floating.style.maxHeight = `${Math.max(160, Math.min(320, availableHeight))}px`
-            },
-          }),
-        ],
-      }).then(({ x, y }) => {
-        el.style.left = `${x}px`
-        el.style.top = `${y}px`
-      })
-    }
-    update()
-    return autoUpdate(anchor, el, update)
-  }, [editor, slash])
+    setFileMention(null)
+  }
 
   return (
     <div className="bg-[var(--bg)] relative">
@@ -297,6 +329,20 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
             editor={editor}
             query={slash.query}
             range={slash.range}
+          />
+        </div>,
+        document.body,
+      )}
+      {editor && fileMention && createPortal(
+        <div ref={mentionElRef} className="fixed left-0 top-0 z-[10001]">
+          <FileMentionMenu
+            ref={mentionRef}
+            query={fileMention.query}
+            range={fileMention.range}
+            files={openedFiles}
+            currentPath={currentFilePath}
+            onSelect={selectFileMention}
+            onCancel={cancelFileMention}
           />
         </div>,
         document.body,
