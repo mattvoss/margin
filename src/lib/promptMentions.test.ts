@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPromptMentions, type MentionTarget } from './promptMentions'
+import { restorePromptMentions, splitPromptMentions, type MentionTarget } from './promptMentions'
 
 const notes: MentionTarget = { name: 'notes.md', path: 'drafts/notes.md' }
 const characters: MentionTarget = { name: 'characters.md', path: 'world/characters.md' }
@@ -40,6 +40,19 @@ describe('splitPromptMentions', () => {
   it('does not match a longer filename by prefix', () => {
     expect(texts('use @notes.md.bak here', [notes])).toEqual([
       { type: 'text', value: 'use @notes.md.bak here' },
+    ])
+  })
+
+  it('matches mentions before sentence punctuation', () => {
+    expect(splitPromptMentions('rewrite @notes.md.', [notes])).toEqual([
+      { type: 'text', value: 'rewrite ' },
+      { type: 'mention', target: notes },
+      { type: 'text', value: '.' },
+    ])
+    expect(splitPromptMentions('read @notes.md, then stop', [notes])).toEqual([
+      { type: 'text', value: 'read ' },
+      { type: 'mention', target: notes },
+      { type: 'text', value: ', then stop' },
     ])
   })
 
@@ -96,5 +109,70 @@ describe('splitPromptMentions', () => {
     expect(
       splitPromptMentions('@notes.md', [{ name: 'notes.md', path: '' }]),
     ).toEqual([{ type: 'text', value: '@notes.md' }])
+  })
+})
+
+describe('restorePromptMentions', () => {
+  const intro: MentionTarget = { name: 'intro.md', path: 'drafts/intro.md' }
+
+  it('passes plain text through when nothing was attached', () => {
+    expect(restorePromptMentions('  tighten this  ', [])).toEqual([
+      { type: 'text', value: 'tighten this' },
+    ])
+  })
+
+  it('prepends refs that are missing from the prompt text', () => {
+    expect(restorePromptMentions('tighten this', [notes])).toEqual([
+      { type: 'mention', target: notes },
+      { type: 'text', value: ' tighten this' },
+    ])
+  })
+
+  it('keeps a ref that already appears in the text exactly once, in place', () => {
+    expect(restorePromptMentions('rewrite @notes.md please', [notes])).toEqual([
+      { type: 'text', value: 'rewrite ' },
+      { type: 'mention', target: notes },
+      { type: 'text', value: ' please' },
+    ])
+  })
+
+  it('prepends only the refs missing from a partially tagged prompt', () => {
+    expect(
+      restorePromptMentions('rewrite @notes.md please', [intro, notes]),
+    ).toEqual([
+      { type: 'mention', target: intro },
+      { type: 'text', value: ' rewrite ' },
+      { type: 'mention', target: notes },
+      { type: 'text', value: ' please' },
+    ])
+  })
+
+  it('prefers the attached path over a workspace file with the same name', () => {
+    const workspaceNotes: MentionTarget = { name: 'notes.md', path: 'other/notes.md' }
+    expect(
+      restorePromptMentions('@notes.md', [notes], [workspaceNotes]),
+    ).toEqual([{ type: 'mention', target: notes }])
+  })
+
+  it('resolves text mentions from workspace files even when not attached', () => {
+    expect(restorePromptMentions('@intro.md', [], [intro])).toEqual([
+      { type: 'mention', target: intro },
+    ])
+  })
+
+  it('dedupes attached refs and ignores malformed entries', () => {
+    expect(
+      restorePromptMentions('', [notes, notes, { name: 'notes.md', path: '' }]),
+    ).toEqual([{ type: 'mention', target: notes }])
+  })
+
+  it('still drops selection tokens while keeping attached refs', () => {
+    expect(
+      restorePromptMentions('@selection(1,234 ch) rewrite @notes.md', [notes, intro]),
+    ).toEqual([
+      { type: 'mention', target: intro },
+      { type: 'text', value: ' rewrite ' },
+      { type: 'mention', target: notes },
+    ])
   })
 })

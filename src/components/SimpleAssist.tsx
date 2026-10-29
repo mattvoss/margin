@@ -10,7 +10,7 @@ import { toDisplaySrc } from '../lib/media'
 import { streamSSE } from '../lib/stream-sse'
 import { applyHarnessResult } from '../lib/applyHarnessResult'
 import { scheduleFileRefresh } from '../lib/refreshFiles'
-import { splitPromptMentions, type MentionTarget } from '../lib/promptMentions'
+import { restorePromptMentions, type MentionTarget } from '../lib/promptMentions'
 import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -199,10 +199,18 @@ function createFileChip(file: { name: string; path: string }): HTMLSpanElement {
   return chip
 }
 
-/** Restore prompt text with resolvable `@file` mentions rebuilt as chips. */
-function buildPromptFragment(text: string, targets: MentionTarget[]): DocumentFragment {
+/**
+ * Restore prompt text with `@file` mentions rebuilt as chips. Mentions already
+ * in the text keep their place; refs attached to the log are prepended when the
+ * stored text doesn't contain them, so no reference is lost.
+ */
+function buildPromptFragment(
+  text: string,
+  workspaceFiles: MentionTarget[],
+  attached: MentionTarget[],
+): DocumentFragment {
   const fragment = document.createDocumentFragment()
-  for (const segment of splitPromptMentions(text, targets)) {
+  for (const segment of restorePromptMentions(text, attached, workspaceFiles)) {
     if (segment.type === 'text') {
       fragment.appendChild(document.createTextNode(segment.value))
     } else {
@@ -566,25 +574,27 @@ export function SimpleAssist() {
   const wasAbortedRef = useRef(false)
 
   // Pre-fill the input box with a previous prompt so it can be edited and
-  // re-sent. `@file` mentions become real chips again when the file can be
-  // resolved (from the log, or from the currently open files); anything
-  // unresolvable stays plain text rather than a chip that tags nothing.
+  // re-sent. Every file the log tagged comes back as a chip: mentions already
+  // in the prompt keep their place, and refs missing from the stored text are
+  // prepended. Anything without a resolvable path stays plain text rather than
+  // a chip that tags nothing. Any pending editor-selection chip is kept.
   const handlePromptToInput = (log: SimpleLogEntry) => {
     const textToUse = log.instruction || log.user_prompt || cleanUserPrompt(log)
     const el = inputRef.current
     if (!el) return
     try {
-      // Log entries win over opened files: they carry the paths that were
+      // Log entries win over workspace files: they carry the paths that were
       // actually tagged when the prompt ran.
-      const targets: MentionTarget[] = []
+      const attached: MentionTarget[] = []
       for (const file of log.ref_files ?? []) {
-        if (file?.name && file?.path) targets.push({ name: file.name, path: file.path })
+        if (file?.name && file?.path) attached.push({ name: file.name, path: file.path })
       }
-      for (const file of openedFiles) {
-        targets.push({ name: file.name, path: file.path })
-      }
+      const workspaceFiles: MentionTarget[] = openedFiles.map((file) => ({
+        name: file.name,
+        path: file.path,
+      }))
 
-      const fragment = buildPromptFragment(textToUse, targets)
+      const fragment = buildPromptFragment(textToUse, workspaceFiles, attached)
 
       // The editor selection is separate context, not prompt text — keep the
       // pending chip instead of silently dropping it.
