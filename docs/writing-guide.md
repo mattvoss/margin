@@ -132,6 +132,20 @@ Your chapter or manuscript files go in a folder of your choice (commonly `chapte
 
 Links stay editable: clicking a link places the cursor so you can edit it, while ⌘/Ctrl+Click follows it in a new tab.
 
+## Referencing files
+
+Type `@` at the start of a line or after a space to reference another workspace file. The menu lists every markdown file in the workspace except the current document; pick one and it's inserted as a chip:
+
+```markdown
+As established in @characters/elara.md, the river froze early that year.
+```
+
+- **Click** a reference to open that file (the current document is saved first).
+- Click the **×** on a chip, or press **Backspace**, to remove it.
+- If two files share a name, margin inserts the relative path (`@lore/notes.md`) so the chip can never resolve to the wrong file.
+
+Underneath, a reference is ordinary Markdown text. It survives undo, copy/paste, and git, and the AI reads exactly what you see. If the referenced file is renamed or deleted, the chip quietly turns back into plain text — your sentence is never altered.
+
 ## Images
 
 Chapters can include images — maps, mood boards, character sketches, scene references. **Paste** an image or an image URL, **drag and drop** a file into the editor, or type `/image` and pick **Upload image** from the menu to choose a file from your device — margin files it into your workspace's `assets/` folder, no separate upload step, and no upload size limit. The `/` menu only appears at the start of an empty line, and it filters as you type — prefix matching across names and keywords finds the action without scrolling.
