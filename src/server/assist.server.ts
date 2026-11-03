@@ -42,6 +42,7 @@ import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DATA_ROOT } from './env.server.ts'
 import { primaryPromptsDir, readPrompt } from './prompts.server'
+import { expandMentionedFiles } from './mentions.server'
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -1082,6 +1083,11 @@ export interface ComposeChatDeps {
   message?: string
   logs?: SimpleAssistLogEntry[]
   includeHistory?: boolean
+  /**
+   * Precomputed `@mention` expansion (the stream expands once and reuses it).
+   * When omitted, `composeChatMessages` expands the request's ref_files itself.
+   */
+  expandedTagged?: string[]
 }
 
 /**
@@ -1104,7 +1110,15 @@ export async function composeChatMessages(
   const settings = deps.settings
   const system = buildStaticSystem(deps.chatPrompt, settings)
 
-  const tagged = sortUniquePaths(taggedPaths(req))
+  const tagged = deps.expandedTagged
+    ? sortUniquePaths(deps.expandedTagged)
+    : await expandMentionedFiles({
+        roots: taggedPaths(req),
+        text: message,
+        availableFiles: req.available_files,
+        readFile: deps.readFile,
+        ignoredRefFiles: settings.ignored_ref_files,
+      })
   const fileParts: string[] = []
   if (tagged.length > 0) {
     const ignored = new Set(settings.ignored_ref_files ?? [])

@@ -47,6 +47,7 @@ import {
   type PostProcessEvent,
 } from './post-process.server'
 import { normalizePostProcessing } from '../lib/postProcessing'
+import { expandMentionedFiles } from './mentions.server'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -70,6 +71,16 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         const mode = payload.mode.trim().toLowerCase()
         const harness = payload.harness && payload.harness !== 'api' ? payload.harness : null
         const readFile = (p: string) => readWorkspaceFile(p, ws).catch(() => null)
+        // Expand prompt @mentions once: every branch (planner, writer, harness,
+        // chat) sees the same transitive reference set, and context_resolved
+        // reports what was actually included.
+        const tagged = await expandMentionedFiles({
+          roots: taggedPaths(payload),
+          text: payload.message,
+          availableFiles: payload.available_files,
+          readFile,
+          ignoredRefFiles: (settings as { ignored_ref_files?: string[] }).ignored_ref_files,
+        })
         const maxToks = pickWriterMaxTokens(settings as never)
         const postConfig = normalizePostProcessing(settings.post_processing)
         const sendPostEvent = (event: PostProcessEvent) => {
@@ -125,7 +136,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               }
             }
           }
-          const tagged = taggedPaths(payload)
           let harnessPrompt = ''
           if (mode === 'edit') {
             send({ status: 'context_resolved', context_needed: [] })
@@ -152,6 +162,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               readFile: (p: string) => readWorkspaceFile(p, ws).catch(() => null),
               message: payload.message,
               includeHistory: false,
+              expandedTagged: tagged,
             }
             const composed = await composeChatMessages(req as never, deps as never)
             const idx = await workspaceIndexLine(ws).catch(() => '')
@@ -291,7 +302,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         if (mode === 'edit') {
           if (!payload.skip_planner) {
             send({ status: 'planning' })
-            const tagged = taggedPaths(payload)
             const plannerPrompt = await loadSimplePrompt('simple-planner.md').catch(() => '')
             const historyLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
             const manifests = await collectManifestSections(
@@ -438,7 +448,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             }, ws)
             send({ status: 'applied', output: finalOutput, review, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
           } else {
-            const tagged = taggedPaths(payload)
             send({ status: 'context_resolved', context_needed: tagged })
             send({ status: 'generating' })
             const anchor = extractAnchorContext(payload.content, payload.selected_text, payload.cursor_paragraph_text)
@@ -537,6 +546,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             readFile,
             message: payload.message,
             logs: chatLogs as never,
+            expandedTagged: tagged,
           })
           systemPrompt = composed.system
           const chatMsgs = assembleAssistMessages(

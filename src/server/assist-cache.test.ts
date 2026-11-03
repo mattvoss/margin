@@ -226,6 +226,45 @@ describe('chat prompt layout', () => {
     expect(built.user.endsWith('summarize'))
   })
 
+  it('follows @mentions inside referenced documents', async () => {
+    const contents: Record<string, string> = {
+      'chapters/c1.md': 'Elara appears here: @elara.md.',
+      'characters/elara.md': 'She lives near @locations/river.md.',
+      'locations/river.md': 'A river.',
+    }
+    const built = await composeChatMessages(
+      {
+        content: '',
+        message: 'summarize @chapters/c1.md',
+        mode: 'chat',
+        session_id: null,
+        history: [],
+        selected_text: null,
+        cursor_paragraph_text: null,
+        ref_files: null,
+        available_files: [
+          { path: 'chapters/c1.md', name: 'c1.md' },
+          { path: 'characters/elara.md', name: 'elara.md' },
+          { path: 'locations/river.md', name: 'river.md' },
+        ],
+        active_filename: null,
+        skip_planner: true,
+        harness: 'api',
+      },
+      {
+        settings,
+        chatPrompt: 'chat base',
+        readFile: async (p: string) => contents[p] ?? null,
+        message: 'summarize @chapters/c1.md',
+        includeHistory: false,
+      },
+    )
+
+    expect(built.files).toContain('--- FILE: chapters/c1.md ---')
+    expect(built.files).toContain('--- FILE: characters/elara.md ---')
+    expect(built.files).toContain('--- FILE: locations/river.md ---')
+  })
+
   it('puts pinned files in the files message with PINNED markers', async () => {
     const built = await composeChatMessages(
       {
