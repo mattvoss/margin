@@ -11,6 +11,8 @@ import { streamSSE } from '../lib/stream-sse'
 import { applyHarnessResult } from '../lib/applyHarnessResult'
 import { scheduleFileRefresh } from '../lib/refreshFiles'
 import { restorePromptMentions, type MentionTarget } from '../lib/promptMentions'
+import { filterMentionFiles, mentionTextFor, type ReferenceFile } from '../lib/fileMentions'
+import { parseMentionQuery } from '../lib/mentionQuery'
 import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -189,32 +191,44 @@ function appendChipText(chip: HTMLElement, label: string, removeDataset: Record<
 }
 
 /** Build a removable `@file` chip identical to the ones the @ menu inserts. */
-function createFileChip(file: { name: string; path: string }): HTMLSpanElement {
+function createFileChip(
+  file: { name: string; path: string },
+  mentionText?: string,
+): HTMLSpanElement {
+  const mention = mentionText ?? `@${file.name}`
   const chip = document.createElement('span')
   chip.contentEditable = 'false'
   chip.className = 'inline-chip'
   chip.dataset.path = file.path
   chip.dataset.name = file.name
-  appendChipText(chip, file.name, { path: file.path })
+  chip.dataset.mention = mention
+  appendChipText(chip, mention.replace(/^@/, ''), { path: file.path })
   return chip
 }
 
 /**
  * Restore prompt text with `@file` mentions rebuilt as chips. Mentions already
  * in the text keep their place; refs attached to the log are prepended when the
- * stored text doesn't contain them, so no reference is lost.
+ * stored text doesn't contain them, so no reference is lost. Duplicate
+ * basenames serialize as relative paths, matching the @ menu.
  */
 function buildPromptFragment(
   text: string,
   workspaceFiles: MentionTarget[],
   attached: MentionTarget[],
+  currentPath?: string | null,
 ): DocumentFragment {
   const fragment = document.createDocumentFragment()
   for (const segment of restorePromptMentions(text, attached, workspaceFiles)) {
     if (segment.type === 'text') {
       fragment.appendChild(document.createTextNode(segment.value))
     } else {
-      fragment.appendChild(createFileChip(segment.target))
+      fragment.appendChild(
+        createFileChip(
+          segment.target,
+          mentionTextFor(segment.target, workspaceFiles, currentPath),
+        ),
+      )
     }
   }
   return fragment
@@ -306,7 +320,8 @@ function getInputData(el: HTMLElement): {
       const textNode = document.createTextNode(`@selection(${formatCharacterCount(len)})`)
       chip.replaceWith(textNode)
     } else if (chip.dataset.name) {
-      const textNode = document.createTextNode(`@${chip.dataset.name}`)
+      const mention = chip.dataset.mention || `@${chip.dataset.name}`
+      const textNode = document.createTextNode(mention)
       chip.replaceWith(textNode)
     } else {
       chip.remove()
@@ -594,7 +609,12 @@ export function SimpleAssist() {
         path: file.path,
       }))
 
-      const fragment = buildPromptFragment(textToUse, workspaceFiles, attached)
+      const fragment = buildPromptFragment(
+        textToUse,
+        workspaceFiles,
+        attached,
+        currentFilePath,
+      )
 
       // The editor selection is separate context, not prompt text — keep the
       // pending chip instead of silently dropping it.
@@ -852,8 +872,9 @@ export function SimpleAssist() {
 
 
 
-  const filteredFiles = openedFiles.filter((f) =>
-    fileQuery === '' || f.name.toLowerCase().includes(fileQuery.toLowerCase())
+  const filteredFiles = useMemo(
+    () => filterMentionFiles(openedFiles, fileQuery, currentFilePath),
+    [openedFiles, fileQuery, currentFilePath],
   )
 
 
@@ -869,22 +890,18 @@ export function SimpleAssist() {
       setPendingEditSelection(null)
     }
 
-    const atIndex = textBefore.lastIndexOf('@')
-    if (atIndex === -1 || (atIndex > 0 && textBefore[atIndex - 1] !== ' ' && textBefore[atIndex - 1] !== '\n')) {
+    const parsed = parseMentionQuery(textBefore)
+    if (!parsed) {
       setShowFileDropdown(false)
       return
     }
 
-    const afterAt = textBefore.slice(atIndex + 1)
-    const spaceIndex = afterAt.search(/[\s\n]/)
-    const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex)
-
-    setFileQuery(query)
+    setFileQuery(parsed.query)
     setHighlightedIndex(0)
     setShowFileDropdown(true)
   }, [pendingEditSelection, setPendingEditSelection])
 
-  const handleSelectFile = useCallback((file: FileEntry) => {
+  const handleSelectFile = useCallback((file: ReferenceFile) => {
     const div = inputRef.current
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount || !div) return
@@ -895,19 +912,22 @@ export function SimpleAssist() {
 
     const text = textNode.textContent ?? ''
     const caretOffset = range.startOffset
-    const textBeforeCaret = text.slice(0, caretOffset)
-    const atIndex = textBeforeCaret.lastIndexOf('@')
-    if (atIndex === -1) return
+    const parsed = parseMentionQuery(text.slice(0, caretOffset))
+    if (!parsed) return
 
-    const afterAt = text.slice(atIndex + 1)
-    const spaceIndex = afterAt.search(/[\s\n]/)
-    const mentionEnd = spaceIndex === -1 ? text.length : atIndex + 1 + spaceIndex
+    const atIndex = parsed.atIndex
+    const mentionEnd = caretOffset
 
     range.setStart(textNode, atIndex)
     range.setEnd(textNode, mentionEnd)
     range.deleteContents()
 
-    const chip = createFileChip(file)
+    const mention = mentionTextFor(
+      file,
+      useEditorStore.getState().openedFiles,
+      useEditorStore.getState().currentFilePath,
+    )
+    const chip = createFileChip(file, mention)
 
     const isEditorContent = file.name === 'editorcontent.ts'
     const zwsp = document.createTextNode(isEditorContent ? '\u200B ' : '\u200B')
