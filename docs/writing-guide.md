@@ -146,6 +146,8 @@ As established in @characters/elara.md, the river froze early that year.
 
 Underneath, a reference is ordinary Markdown text. It survives undo, copy/paste, and git, and the AI reads exactly what you see. If the referenced file is renamed or deleted, the chip quietly turns back into plain text — your sentence is never altered.
 
+References also work in AI Assist prompts. When a referenced document is included, Margin follows the `@mentions` inside it as well — so referencing a chapter can also bring in the characters, locations, and lore that chapter references. Expansion is recursive, so those documents' own references are followed too; repeats and cycles are included once, and hidden, non-markdown, and `prompts/` files are never followed automatically.
+
 ## Images
 
 Chapters can include images — maps, mood boards, character sketches, scene references. **Paste** an image or an image URL, **drag and drop** a file into the editor, or type `/image` and pick **Upload image** from the menu to choose a file from your device — margin files it into your workspace's `assets/` folder, no separate upload step, and no upload size limit. The `/` menu only appears at the start of an empty line, and it filters as you type — prefix matching across names and keywords finds the action without scrolling.

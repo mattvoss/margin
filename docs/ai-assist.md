@@ -81,7 +81,9 @@ The AI Assist panel uses different context strategies depending on the mode:
 
 ### Input Bar Context
 
-The `@filename` chips and selection tag in the input area serve as a user reference visible in history logs. File content is resolved independently by each agent.
+The `@filename` chips and selection tag in the input area tell Margin which documents to attach. Referenced documents are read and sent with the request, and Margin follows `@mentions` inside those documents too: referencing a chapter also pulls in the characters, locations, or lore it references, recursively. Cycles and repeated references are deduped by path, and non-markdown, hidden, and `prompts/` files are never followed automatically.
+
+File content is resolved independently by each agent; the chips remain a user reference visible in history logs.
 
 ### Edit Mode (Planner + Writer)
 
