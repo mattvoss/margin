@@ -105,6 +105,15 @@ describe('splitPromptMentions', () => {
     ])
   })
 
+  it('resolves a workspace-relative path mention', () => {
+    const scoped: MentionTarget = { name: 'notes.md', path: 'lore/notes.md' }
+    expect(splitPromptMentions('read @lore/notes.md next', [notes, scoped])).toEqual([
+      { type: 'text', value: 'read ' },
+      { type: 'mention', target: scoped },
+      { type: 'text', value: ' next' },
+    ])
+  })
+
   it('ignores targets missing a name or path', () => {
     expect(
       splitPromptMentions('@notes.md', [{ name: 'notes.md', path: '' }]),
@@ -132,6 +141,17 @@ describe('restorePromptMentions', () => {
     expect(restorePromptMentions('rewrite @notes.md please', [notes])).toEqual([
       { type: 'text', value: 'rewrite ' },
       { type: 'mention', target: notes },
+      { type: 'text', value: ' please' },
+    ])
+  })
+
+  it('matches a path mention without prepending a duplicate chip', () => {
+    const scoped: MentionTarget = { name: 'notes.md', path: 'lore/notes.md' }
+    expect(
+      restorePromptMentions('rewrite @lore/notes.md please', [scoped]),
+    ).toEqual([
+      { type: 'text', value: 'rewrite ' },
+      { type: 'mention', target: scoped },
       { type: 'text', value: ' please' },
     ])
   })

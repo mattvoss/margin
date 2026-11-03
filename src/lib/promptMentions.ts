@@ -2,11 +2,17 @@
  * Turns a stored prompt back into input-box segments, reviving `@file`
  * mentions as chips when the referenced file can be resolved.
  *
- * The server only tags files that arrive in `ref_files`, so a mention is only
- * revived when a matching name/path pair is known. Anything else stays plain
- * text — a chip without a path would look right but tag nothing. Refs the log
- * attached without embedding them in the prompt text are restored too.
+ * Matching is shared with the editor's document references: an alias is either
+ * a unique basename or the workspace-relative path. Attached `ref_files` are
+ * registered first, so they win when the same name resolves to different
+ * paths. Anything else stays plain text — a chip without a path would look
+ * right but tag nothing. Refs the log attached without embedding them in the
+ * prompt text are restored too.
  */
+import {
+  createMentionMatcher,
+  type MentionAlias,
+} from './fileMentions'
 
 export interface MentionTarget {
   name: string
@@ -20,25 +26,35 @@ export type PromptSegment =
 /** `@selection(1,234 ch)` — offsets live in the editor, so they can't be restored. */
 const SELECTION_TOKEN = /[ \t]*@selection\([^)]*\)[ \t]*/g
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/**
+ * Register names and paths in order. The first target for an alias wins, so
+ * `restorePromptMentions` can put log-attached refs ahead of workspace files.
+ * Ambiguous names are kept (first wins) for stored history compatibility; the
+ * matcher also registers every path so `@lore/notes.md` always resolves.
+ */
+function buildPromptAliases(targets: MentionTarget[]): MentionAlias[] {
+  const seen = new Set<string>()
+  const aliases: MentionAlias[] = []
+  for (const target of targets) {
+    if (!target?.name || !target?.path) continue
+    for (const alias of [target.name, target.path]) {
+      if (!alias || seen.has(alias)) continue
+      seen.add(alias)
+      aliases.push({ alias, target: { name: target.name, path: target.path } })
+    }
+  }
+  return aliases.sort((a, b) => b.alias.length - a.alias.length)
 }
 
 /**
- * Split `text` into plain-text and mention segments. Only names present in
- * `targets` become mentions; longest name wins when names overlap, and the
- * first target registered for a name wins on duplicates.
+ * Split `text` into plain-text and mention segments. Only names/paths present
+ * in `targets` become mentions; longest alias wins, and the first target
+ * registered for an alias wins on duplicates.
  */
 export function splitPromptMentions(
   text: string,
   targets: MentionTarget[],
 ): PromptSegment[] {
-  const byName = new Map<string, MentionTarget>()
-  for (const target of targets) {
-    if (!target?.name || !target?.path) continue
-    if (!byName.has(target.name)) byName.set(target.name, target)
-  }
-
   // Selection chips can't be rebuilt (no editor offsets in the log) and the
   // backend strips the token anyway — drop it instead of leaving dead text.
   const cleaned = text
@@ -46,37 +62,28 @@ export function splitPromptMentions(
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
 
-  if (byName.size === 0) {
+  const aliases = buildPromptAliases(targets)
+  if (aliases.length === 0) {
     return cleaned ? [{ type: 'text', value: cleaned }] : []
   }
 
-  const names = Array.from(byName.keys()).sort((a, b) => b.length - a.length)
-  // `(?<![\w@])` keeps emails like `name@example.com` from matching. The
-  // trailing lookahead stops `@notes.md` from matching inside `@notes.md.bak`
-  // while still allowing sentence punctuation: `Rewrite @notes.md.`
-  const mentionRe = new RegExp(
-    `(?<![\\w@])@(${names.map(escapeRegExp).join('|')})(?![\\w-]|\\.\\w)`,
-    'g',
-  )
+  const matches = createMentionMatcher(aliases).findRanges(cleaned)
+  if (matches.length === 0) {
+    return cleaned ? [{ type: 'text', value: cleaned }] : []
+  }
 
   const segments: PromptSegment[] = []
   let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  const pushText = (value: string) => {
-    if (value) segments.push({ type: 'text', value })
+  for (const match of matches) {
+    if (match.from > lastIndex) {
+      segments.push({ type: 'text', value: cleaned.slice(lastIndex, match.from) })
+    }
+    segments.push({ type: 'mention', target: match.target })
+    lastIndex = match.to
   }
-
-  while ((match = mentionRe.exec(cleaned)) !== null) {
-    const target = byName.get(match[1])
-    if (!target) continue
-
-    pushText(cleaned.slice(lastIndex, match.index))
-    segments.push({ type: 'mention', target })
-    lastIndex = match.index + match[0].length
+  if (lastIndex < cleaned.length) {
+    segments.push({ type: 'text', value: cleaned.slice(lastIndex) })
   }
-
-  pushText(cleaned.slice(lastIndex))
   return segments
 }
 
@@ -86,7 +93,8 @@ export function splitPromptMentions(
  * position; attached refs missing from the text are prepended as chips.
  *
  * `attached` (the log's `ref_files`) takes priority over `targets` (workspace
- * files) when the same name resolves to different paths.
+ * files) when the same alias resolves to different paths. Dedupe is by path so
+ * a path mention and its `ref_files` entry produce one chip, not two.
  */
 export function restorePromptMentions(
   text: string,
@@ -97,15 +105,15 @@ export function restorePromptMentions(
 
   const matched = new Set<string>()
   for (const segment of segments) {
-    if (segment.type === 'mention') matched.add(segment.target.name)
+    if (segment.type === 'mention') matched.add(segment.target.path)
   }
 
   const missing: MentionTarget[] = []
   const seen = new Set<string>()
   for (const ref of attached) {
     if (!ref?.name || !ref?.path) continue
-    if (matched.has(ref.name) || seen.has(ref.name)) continue
-    seen.add(ref.name)
+    if (matched.has(ref.path) || seen.has(ref.path)) continue
+    seen.add(ref.path)
     missing.push(ref)
   }
 
