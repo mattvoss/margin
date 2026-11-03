@@ -1,27 +1,11 @@
 import type { Editor } from '@tiptap/core'
+import { parseMentionQuery } from '../../lib/mentionQuery'
+
+export { parseMentionQuery }
 
 export interface FileMentionQuery {
   query: string
   range: { from: number; to: number }
-}
-
-/**
- * `@` starts a reference at the beginning of a block or after whitespace /
- * opening punctuation. Filename queries never contain spaces, so typing one
- * simply closes the menu and leaves the typed text alone.
- */
-const TRIGGER_BEFORE = /(?:^|[\s([{"'“‘])@([\w./-]*)$/
-
-/** Extract a query from the text before the caret (pure; used by tests). */
-export function parseMentionQuery(
-  textBefore: string,
-): { query: string; atIndex: number } | null {
-  const match = TRIGGER_BEFORE.exec(textBefore)
-  if (!match) return null
-  return {
-    query: match[1],
-    atIndex: textBefore.length - match[1].length - 1,
-  }
 }
 
 /** The `@query` immediately before a collapsed cursor, if any. */
