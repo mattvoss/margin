@@ -26,13 +26,19 @@ function fakeClient(replies: FakeReply[]) {
     lastUsage: null as { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null,
     lastModelUsed: null as string | null,
     lastThinking: null as string | null,
-    generateBlockingWithMessages: vi.fn(async () => {
-      const reply = replies[index++]
-      client.lastUsage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
-      client.lastModelUsed = `model-${index}`
-      if (reply instanceof Error) throw reply
-      return reply
-    }),
+    lastFinishReason: null as string | null,
+    generateBlockingWithMessages: vi.fn(
+      async (_messages: unknown, _opts?: { signal?: AbortSignal }) => {
+        void _messages
+        void _opts
+        const reply = replies[index++]
+        client.lastUsage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+        client.lastModelUsed = `model-${index}`
+        client.lastFinishReason = 'stop'
+        if (reply instanceof Error) throw reply
+        return reply
+      },
+    ),
   }
   return client
 }
@@ -156,6 +162,52 @@ describe('runPostProcessPipeline', () => {
     expect(result.text).toBe('after empty')
     expect(result.passes[0].status).toBe('empty')
     expect(result.snapshots).toEqual(['original text that is long enough', 'after empty'])
+  })
+
+  it('keeps the previous text when the endpoint truncates a pass', async () => {
+    const config = configFor(['starter_grounding'])
+    const client = fakeClient(['partial rewrite'])
+    client.generateBlockingWithMessages.mockImplementationOnce(async () => {
+      client.lastFinishReason = 'length'
+      return 'partial rewrite'
+    })
+    vi.mocked(loadLlmConfig).mockReturnValue(client as never)
+
+    const result = await runPostProcessPipeline({
+      ...baseContext,
+      settings: settingsFor(config),
+      text: 'original text that is long enough',
+      mode: 'edit',
+    })
+
+    expect(result.text).toBe('original text that is long enough')
+    expect(result.passes[0].status).toBe('failed')
+    expect(result.passes[0].error).toContain('token limit')
+    expect(result.snapshots).toEqual(['original text that is long enough'])
+  })
+
+  it('abandons a pass that exceeds the wall-clock limit', async () => {
+    const config = configFor(['starter_grounding'])
+    const client = fakeClient([])
+    client.generateBlockingWithMessages.mockImplementationOnce(
+      (_messages, opts) =>
+        new Promise<string>((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        }),
+    )
+    vi.mocked(loadLlmConfig).mockReturnValue(client as never)
+
+    const result = await runPostProcessPipeline({
+      ...baseContext,
+      settings: settingsFor(config),
+      text: 'original text that is long enough',
+      mode: 'edit',
+      passTimeoutMs: 25,
+    })
+
+    expect(result.text).toBe('original text that is long enough')
+    expect(result.passes[0].status).toBe('failed')
+    expect(result.passes[0].error).toContain('timed out')
   })
 
   it('skips disabled pipelines without calling the endpoint', async () => {

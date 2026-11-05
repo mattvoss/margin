@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  LEGACY_FIX_SLOP_PROMPT,
   MAX_POST_PROCESS_PASSES,
   POST_PROCESSING_VERSION,
   STARTER_PASSES,
@@ -149,6 +150,52 @@ describe('starter pass migration', () => {
     })
 
     expect(config.presets[0].passes.map((p) => p.id)).toEqual([STARTER_PASSES[0].id])
+  })
+
+  it('upgrades the original Fix Slop prompt once', () => {
+    const config = normalizePostProcessing({
+      version: 2,
+      presets: [
+        {
+          id: 'default',
+          name: 'Default',
+          passes: [
+            {
+              id: 'starter_fix_slop',
+              name: 'Fix Slop',
+              enabled: true,
+              prompt: LEGACY_FIX_SLOP_PROMPT,
+            },
+          ],
+        },
+      ],
+    })
+
+    const expected = STARTER_PASSES.find((p) => p.id === 'starter_fix_slop')?.prompt
+    expect(config.presets[0].passes[0].prompt).toBe(expected)
+    expect(config.presets[0].passes[0].enabled).toBe(true)
+    expect(normalizePostProcessing(config)).toEqual(config)
+  })
+
+  it('does not overwrite an edited Fix Slop prompt', () => {
+    const config = normalizePostProcessing({
+      version: 2,
+      presets: [
+        {
+          id: 'default',
+          name: 'Default',
+          passes: [
+            {
+              id: 'starter_fix_slop',
+              name: 'Fix Slop',
+              prompt: 'My custom slop prompt.',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(config.presets[0].passes[0].prompt).toBe('My custom slop prompt.')
   })
 })
 

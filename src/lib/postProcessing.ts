@@ -57,8 +57,8 @@ export const MAX_PASS_PROMPT_CHARS = 20_000
 export const MAX_HARNESS_HUNKS = 6
 /** And at most this many characters across those hunks. */
 export const MAX_HARNESS_CHARS = 20_000
-/** Bump when a new starter pass should be appended to stored presets. */
-export const POST_PROCESSING_VERSION = 2
+/** Bump when a new starter pass or starter prompt migration ships. */
+export const POST_PROCESSING_VERSION = 3
 
 const GROUNDING_PROMPT = `You are a conservative continuity and grounding proofreader. Make only small, local corrections when wording in <text_to_transform> clearly conflicts with supplied story facts, terminology, or setting context.
 
@@ -95,7 +95,11 @@ Rules:
 
 Return only the resulting text.`
 
-const FIX_SLOP_PROMPT = `You are an expert prose editor. Rewrite <text_to_transform> to remove slop while preserving the story.
+/**
+ * The original Fix Slop prompt, kept so stored presets can be upgraded
+ * without overwriting prompts the user has edited.
+ */
+export const LEGACY_FIX_SLOP_PROMPT = `You are an expert prose editor. Rewrite <text_to_transform> to remove slop while preserving the story.
 
 <characters>, <scene_context>, <reference_files>, and <document_context> are reference only. Do not rewrite them or copy material from them into the target text.
 
@@ -112,6 +116,36 @@ Rules:
 - Write narration as plaintext. Never use em dashes.
 - Do not invent or remove events, actions, or dialogue beats.
 - Return only the rewritten text. No labels, quotes, explanations, metadata, or markdown fences.
+
+Direct affirmation:
+Bad: It wasn't just a rainstorm, but a heavy downpour.
+Good: A heavy downpour flooded the streets.
+
+Independent description:
+Bad: The pipe bent where it should have run straight.
+Good: The pipe bent at a sharp angle.
+
+Singular focus:
+Bad: The engine sounded less like a car and more like a jet turbine.
+Good: The car engine roared.`
+
+const FIX_SLOP_PROMPT = `You are an expert line editor. Edit the existing prose in <text_to_transform> in place to remove slop. Do not continue the story or write past the final sentence of the input.
+
+<characters>, <scene_context>, <reference_files>, and <document_context> are reference only. Do not rewrite them or copy material from them into the target text.
+
+Rules:
+- Preserve story facts, continuity, point of view, tense, paragraph order, and the intent of every line of dialogue.
+- Keep approximately the same length. Do not add or remove events, actions, dialogue beats, sentences, or paragraphs.
+- Cut fluff, filler, adjectives, adverbs, and superfluous modifiers or statements. Rephrase with precise nouns and strong verbs.
+- Replace fragments with complete sentences only where the fragment already exists. Do not expand a fragment into a new beat.
+- Split an existing paragraph only when a different character acts or speaks, the location changes, or the text shifts between internal thought and physical action.
+- State facts directly. Do not use "not X but Y", "less like X, more like Y", or "X where it should be Y" framing.
+- Describe things as they are. Do not compare them to how they should be or to what they are not.
+- Keep the established voice, rhythm, and character mannerisms from the surrounding context.
+- Use literal, concrete sensory details and physical actions already present. Prefer active voice.
+- Do not end on an aphorism or summary line.
+- Write narration as plaintext. Never use em dashes.
+- Stop after the last sentence of <text_to_transform>. Return only the edited text. No labels, quotes, explanations, metadata, or markdown fences.
 
 Direct affirmation:
 Bad: It wasn't just a rainstorm, but a heavy downpour.
@@ -206,9 +240,9 @@ function cloneStarterPasses(): PostProcessPass[] {
 }
 
 /**
- * Append starter passes introduced after a stored config was written. Only the
- * new pass is added, so passes the user deleted earlier stay deleted. Runs
- * until the next settings save persists the current version.
+ * Apply starter migrations to a stored config. New starter passes are appended
+ * once, and the original Fix Slop prompt is upgraded once. User-edited prompts
+ * are never replaced.
  */
 function migratePresets(
   presets: PostProcessPreset[],
@@ -216,14 +250,27 @@ function migratePresets(
 ): PostProcessPreset[] {
   if (fromVersion >= POST_PROCESSING_VERSION) return presets
   return presets.map((preset) => {
-    const hasFixSlop = preset.passes.some(
-      (pass) => pass.id === FIX_SLOP_STARTER_PASS.id,
-    )
-    if (hasFixSlop || preset.passes.length >= MAX_POST_PROCESS_PASSES) return preset
-    return {
-      ...preset,
-      passes: [...preset.passes, { ...FIX_SLOP_STARTER_PASS }],
+    let passes = preset.passes
+
+    if (fromVersion < 2) {
+      const hasFixSlop = passes.some(
+        (pass) => pass.id === FIX_SLOP_STARTER_PASS.id,
+      )
+      if (!hasFixSlop && passes.length < MAX_POST_PROCESS_PASSES) {
+        passes = [...passes, { ...FIX_SLOP_STARTER_PASS }]
+      }
     }
+
+    if (fromVersion < 3) {
+      passes = passes.map((pass) =>
+        pass.id === FIX_SLOP_STARTER_PASS.id &&
+        pass.prompt === LEGACY_FIX_SLOP_PROMPT
+          ? { ...pass, prompt: FIX_SLOP_PROMPT }
+          : pass,
+      )
+    }
+
+    return { ...preset, passes }
   })
 }
 

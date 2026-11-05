@@ -91,6 +91,8 @@ export interface PostProcessContext {
   logs?: AiLogEntry[] | null
   /** Writer max tokens used when a pass does not override it. */
   defaultMaxTokens?: number | null
+  /** Wall-clock limit for one pass call; defaults to 5 minutes. */
+  passTimeoutMs?: number
   signal?: AbortSignal
   onEvent?: (event: PostProcessEvent) => void
 }
@@ -126,6 +128,8 @@ const MAX_CONTEXT_CHARS = 12_000
 const MAX_SCENE_ENTRY_CHARS = 2_000
 const MAX_UPSTREAM_SYSTEM_CHARS = 8_000
 const MAX_UPSTREAM_INSTRUCTION_CHARS = 4_000
+/** A pass that produces no response within this window is abandoned. */
+const DEFAULT_PASS_TIMEOUT_MS = 5 * 60_000
 
 const PASS_GUARDRAILS = `You are a conservative prose editor making a limited refinement to existing text.
 
@@ -367,16 +371,27 @@ export async function runPostProcessPipeline(
     })
 
     let client: ReturnType<typeof loadLlmConfig> | null = null
+    const timeout = AbortSignal.timeout(
+      input.passTimeoutMs ?? DEFAULT_PASS_TIMEOUT_MS,
+    )
+    const passSignal = input.signal
+      ? AbortSignal.any([input.signal, timeout])
+      : timeout
     try {
       const built = await buildPassMessages(pass, text, passContext)
       client = loadLlmConfig(input.settings as never, pass.endpoint_id)
       const raw = await client.generateBlockingWithMessages(built.messages, {
         temperature: pass.temperature,
         maxTokens: pass.max_tokens ?? input.defaultMaxTokens ?? undefined,
-        signal: input.signal,
+        signal: passSignal,
       })
       const output = stripCodeFences(raw)
-      const status: PostProcessPassStatus = output ? 'ok' : 'empty'
+      const truncated = client.lastFinishReason === 'length'
+      const status: PostProcessPassStatus = truncated
+        ? 'failed'
+        : output
+          ? 'ok'
+          : 'empty'
       const usage = client.lastUsage
       results.push({
         id: pass.id,
@@ -384,17 +399,21 @@ export async function runPostProcessPipeline(
         endpoint_id: pass.endpoint_id,
         model: client.lastModelUsed || null,
         status,
+        ...(truncated
+          ? { error: 'Output hit the endpoint token limit; kept the previous text.' }
+          : {}),
         input_chars: text.length,
         output_chars: output.length,
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
         thinking: client.lastThinking,
       })
-      if (output) {
+      if (output && !truncated) {
         text = output
         snapshots.push(text)
       }
     } catch (error) {
+      const timedOut = timeout.aborted && !input.signal?.aborted
       const usage = client?.lastUsage
       results.push({
         id: pass.id,
@@ -402,14 +421,20 @@ export async function runPostProcessPipeline(
         endpoint_id: pass.endpoint_id,
         model: client?.lastModelUsed || null,
         status: input.signal?.aborted ? 'skipped' : 'failed',
-        error: input.signal?.aborted ? 'aborted' : errMsg(error),
+        error: input.signal?.aborted
+          ? 'aborted'
+          : timedOut
+            ? `Pass timed out after ${Math.round(
+                (input.passTimeoutMs ?? DEFAULT_PASS_TIMEOUT_MS) / 1000,
+              )}s.`
+            : errMsg(error),
         input_chars: text.length,
         output_chars: 0,
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
         thinking: client?.lastThinking ?? null,
       })
-      if (input.signal?.aborted) break
+      if (input.signal?.aborted || timedOut) break
     }
 
     input.onEvent?.({
