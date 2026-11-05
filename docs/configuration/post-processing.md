@@ -17,7 +17,7 @@ Passes are instructed to preserve the established voice, meaning, events, dialog
 
 ## Starter passes
 
-Four passes ship disabled:
+Five passes ship disabled:
 
 | Pass | What it does |
 | --- | --- |
@@ -25,6 +25,9 @@ Four passes ship disabled:
 | **Character Behavior Validator** | Fixes dialogue and actions that contradict a character's established voice. Does not polish prose. |
 | **Prose Rhythm** | Improves sentence variety, showing over telling, and filler without changing events or dialogue. |
 | **Repetition Hammer** | Removes repeated words, phrases, and dialogue beats without adding content. |
+| **Fix Slop** | Cuts filler, fluff, and weak modifiers; replaces sentence fragments with complete sentences; removes "not X but Y", "where it should be", and "less like X, more like Y" framing. |
+
+Toggling a pass on includes it. Existing presets receive **Fix Slop** once, disabled, when their stored settings are normalized.
 
 Toggle a pass on to include it. Use the arrow buttons to reorder passes; the list runs top to bottom.
 
