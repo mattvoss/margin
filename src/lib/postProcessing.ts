@@ -28,6 +28,8 @@ export interface PostProcessPass {
   temperature: number
   /** Null = inherit the Writer's max-token setting. */
   max_tokens: number | null
+  /** Ask the endpoint to skip reasoning tokens for this pass. */
+  disable_thinking: boolean
 }
 
 export interface PostProcessPreset {
@@ -172,6 +174,7 @@ const FIX_SLOP_STARTER_PASS: PostProcessPass = {
   include_document: true,
   temperature: 0.3,
   max_tokens: null,
+  disable_thinking: true,
 }
 
 /** Five starter passes, all disabled until the user opts in. */
@@ -189,6 +192,7 @@ export const STARTER_PASSES: readonly PostProcessPass[] = [
     include_document: true,
     temperature: 0.2,
     max_tokens: null,
+    disable_thinking: true,
   },
   {
     id: 'starter_validator',
@@ -203,6 +207,7 @@ export const STARTER_PASSES: readonly PostProcessPass[] = [
     include_document: true,
     temperature: 0.2,
     max_tokens: null,
+    disable_thinking: true,
   },
   {
     id: 'starter_prose',
@@ -217,6 +222,7 @@ export const STARTER_PASSES: readonly PostProcessPass[] = [
     include_document: true,
     temperature: 0.4,
     max_tokens: null,
+    disable_thinking: true,
   },
   {
     id: 'starter_repetition',
@@ -231,6 +237,7 @@ export const STARTER_PASSES: readonly PostProcessPass[] = [
     include_document: false,
     temperature: 0.2,
     max_tokens: null,
+    disable_thinking: true,
   },
   FIX_SLOP_STARTER_PASS,
 ]
@@ -349,6 +356,9 @@ function normalizePass(raw: unknown, index: number): PostProcessPass | null {
       r.max_tokens === null || r.max_tokens === undefined
         ? null
         : Math.round(clampNumber(r.max_tokens, 0, 0, 32768)) || null,
+    // Post-processing is an edit, not a reasoning task. Default to skipping
+    // reasoning tokens; a pass can opt back in from settings.
+    disable_thinking: asBool(r.disable_thinking, true),
   }
 }
 

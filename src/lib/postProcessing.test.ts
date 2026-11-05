@@ -29,6 +29,7 @@ describe('post-processing defaults', () => {
       'Fix Slop',
     )
     expect(activePostProcessPreset(config).passes.every((p) => !p.enabled)).toBe(true)
+    expect(activePostProcessPreset(config).passes.every((p) => p.disable_thinking)).toBe(true)
     expect(enabledPostProcessPasses(config)).toHaveLength(0)
   })
 
@@ -63,6 +64,25 @@ describe('normalizePostProcessing', () => {
     expect(config.presets[0].passes[0].id).toBe('mine')
     expect(config.presets[0].passes[0].temperature).toBe(2)
     expect(enabledPostProcessPasses(config)).toHaveLength(1)
+  })
+
+  it('defaults missing disable_thinking to true and keeps an explicit opt-in', () => {
+    const config = normalizePostProcessing({
+      version: POST_PROCESSING_VERSION,
+      presets: [
+        {
+          id: 'x',
+          name: 'X',
+          passes: [
+            { id: 'a', prompt: 'a' },
+            { id: 'b', prompt: 'b', disable_thinking: false },
+          ],
+        },
+      ],
+    })
+
+    expect(config.presets[0].passes[0].disable_thinking).toBe(true)
+    expect(config.presets[0].passes[1].disable_thinking).toBe(false)
   })
 
   it('falls back to the first preset when active_preset is stale', () => {

@@ -28,7 +28,10 @@ function fakeClient(replies: FakeReply[]) {
     lastThinking: null as string | null,
     lastFinishReason: null as string | null,
     generateBlockingWithMessages: vi.fn(
-      async (_messages: unknown, _opts?: { signal?: AbortSignal }) => {
+      async (
+        _messages: unknown,
+        _opts?: { signal?: AbortSignal; enableThinking?: boolean },
+      ) => {
         void _messages
         void _opts
         const reply = replies[index++]
@@ -105,7 +108,26 @@ describe('runPostProcessPipeline', () => {
     expect(result.passes.map((p) => p.status)).toEqual(['ok', 'ok'])
     expect(result.passes.map((p) => p.name)).toEqual(['Grounding', 'Prose Rhythm'])
     expect(client.generateBlockingWithMessages).toHaveBeenCalledTimes(2)
+    expect(client.generateBlockingWithMessages.mock.calls[0][1]).toMatchObject({
+      enableThinking: false,
+    })
     expect(loadLlmConfig).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves thinking enabled when a pass opts back in', async () => {
+    const config = configFor(['starter_grounding'])
+    config.presets[0].passes[0].disable_thinking = false
+    const client = fakeClient(['edited text'])
+    vi.mocked(loadLlmConfig).mockReturnValue(client as never)
+
+    await runPostProcessPipeline({
+      ...baseContext,
+      settings: settingsFor(config),
+      text: 'original text that is long enough',
+      mode: 'edit',
+    })
+
+    expect(client.generateBlockingWithMessages.mock.calls[0][1]?.enableThinking).toBeUndefined()
   })
 
   it('uses each pass endpoint override and falls back independently', async () => {

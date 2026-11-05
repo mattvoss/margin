@@ -10,6 +10,7 @@ A preset contains an ordered list of passes. Each pass:
 
 - receives the previous pass's text plus the upstream system instructions and your original request; these constraints take precedence over a pass's generic editing goal
 - can use its own endpoint, prompt, temperature, and token limit
+- can disable model thinking per pass, which keeps edits fast on reasoning models
 - can optionally receive character context, recent scene turns, pinned reference files, or a document window
 - is independent: disabling or reordering one pass never rewrites another pass's prompt
 
@@ -43,6 +44,7 @@ Agent harnesses are never used to run passes. Every pass calls the endpoint conf
 
 - **Review before applying** keeps the normal endpoint accept/reject review. Turn it off to insert and save the final text immediately. Harness runs always keep their existing three-way merge review.
 - **Minimum characters** skips the pipeline for short outputs (default `60`). Harness runs apply this per changed hunk.
+- Each pass must answer within **60 seconds**. A timeout keeps the previous text and reports the failure.
 - A harness run processes at most **6 changed hunks** and **20,000 characters** per run. Skipped hunks are reported in the result.
 - The settings screen shows the worst-case extra call count. Each enabled pass is one extra call per generation, and a harness run can make up to one call per pass per changed hunk.
 
@@ -69,6 +71,10 @@ Each pass can opt into:
 - **Document window** — the paragraph before, the target text, and the paragraph after. Harness passes use the changed hunk as the target.
 
 Prompt text is wrapped as `<text_to_transform>`. The pass should return only the rewritten text; Margin strips a single wrapping Markdown code fence if one appears.
+
+## Thinking
+
+Each pass has a **Disable thinking** toggle, on by default. It asks the endpoint to skip reasoning tokens for that pass, which keeps line edits fast on reasoning models. Turn it off when a pass benefits from deliberation. llama.cpp-style endpoints honor the switch; other OpenAI-compatible servers may ignore it.
 
 ## Logs
 

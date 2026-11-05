@@ -379,6 +379,20 @@ function PassCard({
           </div>
         </div>
 
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">
+            Thinking
+          </div>
+          <ContextToggle
+            label="Disable thinking"
+            checked={pass.disable_thinking}
+            onChange={(next) => onChange({ disable_thinking: next })}
+          />
+          <p className="text-[10.5px] text-[var(--text-muted)] mt-1">
+            Skip reasoning tokens for this pass. Recommended for reasoning models.
+          </p>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-[10px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">

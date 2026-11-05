@@ -91,7 +91,7 @@ export interface PostProcessContext {
   logs?: AiLogEntry[] | null
   /** Writer max tokens used when a pass does not override it. */
   defaultMaxTokens?: number | null
-  /** Wall-clock limit for one pass call; defaults to 5 minutes. */
+  /** Wall-clock limit for one pass call; defaults to 60 seconds. */
   passTimeoutMs?: number
   signal?: AbortSignal
   onEvent?: (event: PostProcessEvent) => void
@@ -129,7 +129,7 @@ const MAX_SCENE_ENTRY_CHARS = 2_000
 const MAX_UPSTREAM_SYSTEM_CHARS = 8_000
 const MAX_UPSTREAM_INSTRUCTION_CHARS = 4_000
 /** A pass that produces no response within this window is abandoned. */
-const DEFAULT_PASS_TIMEOUT_MS = 5 * 60_000
+const DEFAULT_PASS_TIMEOUT_MS = 60_000
 
 const PASS_GUARDRAILS = `You are a conservative prose editor making a limited refinement to existing text.
 
@@ -383,6 +383,7 @@ export async function runPostProcessPipeline(
       const raw = await client.generateBlockingWithMessages(built.messages, {
         temperature: pass.temperature,
         maxTokens: pass.max_tokens ?? input.defaultMaxTokens ?? undefined,
+        enableThinking: pass.disable_thinking ? false : undefined,
         signal: passSignal,
       })
       const output = stripCodeFences(raw)
