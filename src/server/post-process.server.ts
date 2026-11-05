@@ -13,6 +13,7 @@
  */
 
 import {
+  activePostProcessPreset,
   enabledPostProcessPasses,
   normalizePostProcessing,
   postProcessingForMode,
@@ -430,6 +431,51 @@ export async function runPostProcessPipeline(
     snapshots,
     passes: results,
   }
+}
+
+/**
+ * Run exactly one pass against a block, ignoring the master switch, per-mode
+ * flags, the pass's enabled toggle, and the minimum-length gate. Used for
+ * manual one-off runs from the Assist response context menu.
+ */
+export interface RunSinglePostProcessPassInput extends PostProcessContext {
+  passId: string
+  text: string
+}
+
+export async function runSinglePostProcessPass(
+  input: RunSinglePostProcessPassInput,
+): Promise<PostProcessResult> {
+  const original = input.text
+  const config = normalizePostProcessing(input.settings.post_processing)
+  const preset = activePostProcessPreset(config)
+  const pass = preset.passes.find((candidate) => candidate.id === input.passId)
+
+  if (!pass) {
+    return skippedResult(original, 'unknown_pass', 'edit', input.onEvent)
+  }
+
+  const singleConfig: PostProcessingSettings = {
+    ...config,
+    enabled: true,
+    apply_to_edit: true,
+    apply_to_chat: true,
+    apply_to_harness: true,
+    min_chars: 0,
+    presets: [
+      {
+        ...preset,
+        passes: [{ ...pass, enabled: true }],
+      },
+    ],
+  }
+
+  return runPostProcessPipeline({
+    ...input,
+    settings: { ...input.settings, post_processing: singleConfig },
+    mode: 'edit',
+    text: original,
+  })
 }
 
 /**

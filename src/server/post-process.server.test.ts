@@ -4,6 +4,7 @@ import {
   buildPassMessages,
   runHarnessPostProcess,
   runPostProcessPipeline,
+  runSinglePostProcessPass,
   stripCodeFences,
 } from './post-process.server'
 import {
@@ -215,6 +216,55 @@ describe('runPostProcessPipeline', () => {
       mode: 'chat',
     })
     expect(on.text).toBe('chat output')
+  })
+})
+
+describe('runSinglePostProcessPass', () => {
+  it('runs a disabled pass even when the pipeline is off and the text is short', async () => {
+    const config = configFor([])
+    config.enabled = false
+    config.min_chars = 10_000
+    vi.mocked(loadLlmConfig).mockReturnValue(fakeClient(['cleaned text']) as never)
+
+    const result = await runSinglePostProcessPass({
+      ...baseContext,
+      settings: settingsFor(config),
+      text: 'x',
+      passId: 'starter_fix_slop',
+    })
+
+    expect(result.skipped).toBe(false)
+    expect(result.text).toBe('cleaned text')
+    expect(result.passes[0]?.status).toBe('ok')
+  })
+
+  it('reports an unknown pass without changing the text', async () => {
+    const result = await runSinglePostProcessPass({
+      ...baseContext,
+      settings: settingsFor(configFor([])),
+      text: 'original',
+      passId: 'missing_pass',
+    })
+
+    expect(result.skipped).toBe(true)
+    expect(result.reason).toBe('unknown_pass')
+    expect(result.text).toBe('original')
+    expect(result.passes).toHaveLength(0)
+  })
+
+  it('keeps the original text when the pass fails', async () => {
+    vi.mocked(loadLlmConfig).mockReturnValue(fakeClient([new Error('boom')]) as never)
+
+    const result = await runSinglePostProcessPass({
+      ...baseContext,
+      settings: settingsFor(configFor([])),
+      text: 'original',
+      passId: 'starter_fix_slop',
+    })
+
+    expect(result.text).toBe('original')
+    expect(result.passes[0]?.status).toBe('failed')
+    expect(result.passes[0]?.error).toBe('boom')
   })
 })
 

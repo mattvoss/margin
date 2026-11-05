@@ -32,6 +32,7 @@ import { Route as HarnessModelsRoute } from '../routes/api.harnesses.$id.models'
 import { Route as PromptsRoute } from '../routes/api.assist.prompts'
 import { Route as PromptsSplatRoute } from '../routes/api.assist.prompts.$'
 import { Route as AssistSimpleRoute } from '../routes/api.assist.simple'
+import { Route as AssistPostProcessRoute } from '../routes/api.assist.post-process'
 import { Route as AssistSimpleLogsRoute } from '../routes/api.assist.simple.logs'
 import { Route as AssistStopRoute } from '../routes/api.assist.simple.stop.$'
 import { Route as AssistSessionRoute } from '../routes/api.assist.simple.session.$'
@@ -294,6 +295,19 @@ describe('assist', () => {
   it('rejects empty message', async () => {
     const r = await invoke(AssistSimpleRoute, 'POST', 'assist/simple', { mode: 'chat', message: '  ' })
     expect(r.status).toBe(400)
+  })
+
+  it('validates one-off post-processing requests', async () => {
+    const missingPass = await invoke(AssistPostProcessRoute, 'POST', 'assist/post-process', {
+      text: 'some text',
+    })
+    expect(missingPass.status).toBe(400)
+
+    const missingText = await invoke(AssistPostProcessRoute, 'POST', 'assist/post-process', {
+      pass_id: 'starter_fix_slop',
+      text: '  ',
+    })
+    expect(missingText.status).toBe(400)
   })
 
   it('streams an error event when no LLM is reachable', async () => {

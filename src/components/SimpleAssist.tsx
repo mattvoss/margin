@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2 } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2 } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -13,6 +13,11 @@ import { scheduleFileRefresh } from '../lib/refreshFiles'
 import { restorePromptMentions, type MentionTarget } from '../lib/promptMentions'
 import { filterMentionFiles, mentionTextFor, type ReferenceFile } from '../lib/fileMentions'
 import { parseMentionQuery } from '../lib/mentionQuery'
+import {
+  activePostProcessPreset,
+  normalizePostProcessing,
+  type PostProcessPass,
+} from '../lib/postProcessing'
 import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -27,6 +32,10 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
@@ -506,6 +515,7 @@ export function SimpleAssist() {
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
   const [postProcessStatus, setPostProcessStatus] = useState<{ index: number; total: number; name?: string } | null>(null)
+  const [runningPass, setRunningPass] = useState<{ logId: string; passId: string } | null>(null)
   const [instructionText, setInstructionText] = useState('')
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
@@ -556,6 +566,65 @@ export function SimpleAssist() {
     ? settings.active_endpoint.replace('_', ' ')
     : ''
   const endpointEntries = Object.entries(settings?.endpoints || {})
+  const oneOffPasses = useMemo(
+    () => activePostProcessPreset(normalizePostProcessing(settings?.post_processing)).passes,
+    [settings?.post_processing],
+  )
+
+  const handleRunPostProcessPass = async (log: SimpleLogEntry, pass: PostProcessPass) => {
+    if (!log.output || runningPass) return
+    setRunningPass({ logId: log.id, passId: pass.id })
+    setNoticeText(`Running ${pass.name}…`)
+    try {
+      const res = await apiFetch(`${API_BASE}/api/assist/post-process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pass_id: pass.id,
+          text: log.output,
+          content: useEditorStore.getState().content,
+          session_id: log.session_id || activeSessionId,
+          text_before: log.text_before ?? '',
+          text_after: log.text_after ?? '',
+          available_files: openedFiles.map((file) => ({ name: file.name, path: file.path })),
+        }),
+      })
+      const data = (await res.json().catch(() => null)) as {
+        output?: string
+        skipped?: boolean
+        reason?: string | null
+        pass?: { status?: string; error?: string | null } | null
+        detail?: string
+      } | null
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
+      if (!data) throw new Error('The server returned an empty response.')
+      if (data.pass?.status === 'failed') {
+        throw new Error(data.pass.error || `${pass.name} failed.`)
+      }
+      if (data.skipped || !data.output) {
+        const reason = data.reason ? ` (${data.reason.replace(/_/g, ' ')})` : ''
+        setNoticeText(`${pass.name} was skipped${reason}.`)
+        return
+      }
+      if (data.output === log.output) {
+        setNoticeText(`${pass.name} left the text unchanged.`)
+        return
+      }
+      setHistoryLogs((prev) =>
+        prev.map((entry) =>
+          entry.id === log.id ? { ...entry, output: data.output as string } : entry,
+        ),
+      )
+      setNoticeText('')
+      toast.success(`${pass.name} applied`)
+    } catch (error) {
+      console.error('Failed to run post-processing pass:', error)
+      setNoticeText('')
+      toast.error(error instanceof Error ? error.message : 'Could not run that pass.')
+    } finally {
+      setRunningPass(null)
+    }
+  }
 
   // Picking an endpoint means "use this endpoint instead of the harness":
   // same two fields the Endpoints tab writes, then close the menu.
@@ -2262,6 +2331,50 @@ export function SimpleAssist() {
                             >
                               Copy
                             </ContextMenuItem>
+                            <ContextMenuSeparator className="bg-[var(--border)]" />
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger
+                                disabled={!!runningPass}
+                                className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                              >
+                                Run post-processing pass
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="w-56 bg-[var(--bg-elevated)] border-[var(--border)]">
+                                {oneOffPasses.length === 0 ? (
+                                  <ContextMenuItem
+                                    disabled
+                                    className="text-[11px] text-[var(--text-muted)]"
+                                  >
+                                    No passes configured
+                                  </ContextMenuItem>
+                                ) : (
+                                  oneOffPasses.map((pass) => {
+                                    const isRunning =
+                                      runningPass?.logId === log.id &&
+                                      runningPass.passId === pass.id
+                                    return (
+                                      <ContextMenuItem
+                                        key={pass.id}
+                                        disabled={!!runningPass}
+                                        onClick={() => void handleRunPostProcessPass(log, pass)}
+                                        className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                                        title={`Run ${pass.name} on this response only`}
+                                      >
+                                        {isRunning ? (
+                                          <Loader2 className="w-3 h-3 animate-spin" />
+                                        ) : null}
+                                        <span className="flex-1 truncate">{pass.name}</span>
+                                        {!pass.enabled ? (
+                                          <span className="text-[9px] text-[var(--text-muted)]">
+                                            off
+                                          </span>
+                                        ) : null}
+                                      </ContextMenuItem>
+                                    )
+                                  })
+                                )}
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
                           </ContextMenuContent>
                         </ContextMenu>
                       ) : null}

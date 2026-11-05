@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHarnessesRouteImport } from './routes/api.harnesses'
 import { Route as ApiSettingsRouteImport } from './routes/api.settings'
 import { Route as ApiAssistCharactersRouteImport } from './routes/api.assist.characters'
+import { Route as ApiAssistPostProcessRouteImport } from './routes/api.assist.post-process'
 import { Route as ApiAssistPromptsRouteImport } from './routes/api.assist.prompts'
 import { Route as ApiAssistSimpleRouteImport } from './routes/api.assist.simple'
 import { Route as ApiImagesGenerateRouteImport } from './routes/api.images.generate'
@@ -65,6 +66,11 @@ const ApiSettingsRoute = ApiSettingsRouteImport.update({
 const ApiAssistCharactersRoute = ApiAssistCharactersRouteImport.update({
   id: '/api/assist/characters',
   path: '/api/assist/characters',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAssistPostProcessRoute = ApiAssistPostProcessRouteImport.update({
+  id: '/api/assist/post-process',
+  path: '/api/assist/post-process',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAssistPromptsRoute = ApiAssistPromptsRouteImport.update({
@@ -243,6 +249,7 @@ export interface FileRoutesByFullPath {
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
+  '/api/assist/post-process': typeof ApiAssistPostProcessRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -282,6 +289,7 @@ export interface FileRoutesByTo {
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
+  '/api/assist/post-process': typeof ApiAssistPostProcessRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -322,6 +330,7 @@ export interface FileRoutesById {
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
+  '/api/assist/post-process': typeof ApiAssistPostProcessRoute
   '/api/assist/prompts': typeof ApiAssistPromptsRouteWithChildren
   '/api/assist/simple': typeof ApiAssistSimpleRouteWithChildren
   '/api/images/generate': typeof ApiImagesGenerateRoute
@@ -363,6 +372,7 @@ export interface FileRouteTypes {
     | '/api/harnesses'
     | '/api/settings'
     | '/api/assist/characters'
+    | '/api/assist/post-process'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -402,6 +412,7 @@ export interface FileRouteTypes {
     | '/api/harnesses'
     | '/api/settings'
     | '/api/assist/characters'
+    | '/api/assist/post-process'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -441,6 +452,7 @@ export interface FileRouteTypes {
     | '/api/harnesses'
     | '/api/settings'
     | '/api/assist/characters'
+    | '/api/assist/post-process'
     | '/api/assist/prompts'
     | '/api/assist/simple'
     | '/api/images/generate'
@@ -481,6 +493,7 @@ export interface RootRouteChildren {
   ApiHarnessesRoute: typeof ApiHarnessesRouteWithChildren
   ApiSettingsRoute: typeof ApiSettingsRouteWithChildren
   ApiAssistCharactersRoute: typeof ApiAssistCharactersRoute
+  ApiAssistPostProcessRoute: typeof ApiAssistPostProcessRoute
   ApiAssistPromptsRoute: typeof ApiAssistPromptsRouteWithChildren
   ApiAssistSimpleRoute: typeof ApiAssistSimpleRouteWithChildren
   ApiImagesGenerateRoute: typeof ApiImagesGenerateRoute
@@ -531,6 +544,13 @@ declare module '@tanstack/react-router' {
       path: '/api/assist/characters'
       fullPath: '/api/assist/characters'
       preLoaderRoute: typeof ApiAssistCharactersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/assist/post-process': {
+      id: '/api/assist/post-process'
+      path: '/api/assist/post-process'
+      fullPath: '/api/assist/post-process'
+      preLoaderRoute: typeof ApiAssistPostProcessRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/assist/prompts': {
@@ -874,6 +894,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiHarnessesRoute: ApiHarnessesRouteWithChildren,
   ApiSettingsRoute: ApiSettingsRouteWithChildren,
   ApiAssistCharactersRoute: ApiAssistCharactersRoute,
+  ApiAssistPostProcessRoute: ApiAssistPostProcessRoute,
   ApiAssistPromptsRoute: ApiAssistPromptsRouteWithChildren,
   ApiAssistSimpleRoute: ApiAssistSimpleRouteWithChildren,
   ApiImagesGenerateRoute: ApiImagesGenerateRoute,
