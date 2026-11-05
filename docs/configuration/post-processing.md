@@ -46,6 +46,19 @@ Agent harnesses are never used to run passes. Every pass calls the endpoint conf
 - A harness run processes at most **6 changed hunks** and **20,000 characters** per run. Skipped hunks are reported in the result.
 - The settings screen shows the worst-case extra call count. Each enabled pass is one extra call per generation, and a harness run can make up to one call per pass per changed hunk.
 
+## Run a pass manually
+
+Right-click a finished assistant response in the Assist panel and choose **Run post-processing pass**, then pick a pass. This runs that one pass against just that response and replaces the text in the current chat view.
+
+A one-off run:
+
+- lists every pass in the active preset, including passes that are currently turned off — the **off** hint marks those
+- ignores the pipeline's master switch, the **Where it applies** toggles, the pass's enabled toggle, and **Minimum characters**
+- does not re-run the Writer or create a new log entry; the original `outputs/ai_logs/` record stays untouched, so reloading the history restores the stored text
+- sends the block's surrounding paragraphs as the document window when they are available, and omits it otherwise
+
+**Insert at cursor** and **Copy** use the transformed text. If the pass fails or returns nothing, the block is left as it was and the failure is reported.
+
 ## Context options
 
 Each pass can opt into:
