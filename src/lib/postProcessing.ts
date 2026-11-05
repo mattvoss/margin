@@ -37,6 +37,8 @@ export interface PostProcessPreset {
 }
 
 export interface PostProcessingSettings {
+  /** Stored config version; used to append new starter passes once. */
+  version: number
   enabled: boolean
   /** false = apply the final text inline; true = keep the accept/reject review. */
   review: boolean
@@ -55,6 +57,8 @@ export const MAX_PASS_PROMPT_CHARS = 20_000
 export const MAX_HARNESS_HUNKS = 6
 /** And at most this many characters across those hunks. */
 export const MAX_HARNESS_CHARS = 20_000
+/** Bump when a new starter pass should be appended to stored presets. */
+export const POST_PROCESSING_VERSION = 2
 
 const GROUNDING_PROMPT = `You are a conservative continuity and grounding proofreader. Make only small, local corrections when wording in <text_to_transform> clearly conflicts with supplied story facts, terminology, or setting context.
 
@@ -91,7 +95,52 @@ Rules:
 
 Return only the resulting text.`
 
-/** Four starter passes, all disabled until the user opts in. */
+const FIX_SLOP_PROMPT = `You are an expert prose editor. Rewrite <text_to_transform> to remove slop while preserving the story.
+
+<characters>, <scene_context>, <reference_files>, and <document_context> are reference only. Do not rewrite them or copy material from them into the target text.
+
+Rules:
+- Preserve story facts, continuity, point of view, tense, and the intent of every line of dialogue.
+- Cut fluff, filler, adjectives, adverbs, and superfluous modifiers or statements. Rephrase with precise nouns and strong verbs.
+- Write complete, flowing sentences. Replace short, punchy fragments with connected sentences.
+- Start a new paragraph when a different character acts or speaks, when the location changes, or when the text shifts between internal thought and physical action.
+- State facts directly. Do not use "not X but Y", "less like X, more like Y", or "X where it should be Y" framing.
+- Describe things as they are. Do not compare them to how they should be or to what they are not.
+- Keep the established voice, rhythm, and character mannerisms from the surrounding context.
+- Use literal, concrete sensory details and physical actions. Prefer active voice. Vary sentence length.
+- Do not end on an aphorism or summary line.
+- Write narration as plaintext. Never use em dashes.
+- Do not invent or remove events, actions, or dialogue beats.
+- Return only the rewritten text. No labels, quotes, explanations, metadata, or markdown fences.
+
+Direct affirmation:
+Bad: It wasn't just a rainstorm, but a heavy downpour.
+Good: A heavy downpour flooded the streets.
+
+Independent description:
+Bad: The pipe bent where it should have run straight.
+Good: The pipe bent at a sharp angle.
+
+Singular focus:
+Bad: The engine sounded less like a car and more like a jet turbine.
+Good: The car engine roared.`
+
+const FIX_SLOP_STARTER_PASS: PostProcessPass = {
+  id: 'starter_fix_slop',
+  name: 'Fix Slop',
+  enabled: false,
+  prompt: FIX_SLOP_PROMPT,
+  endpoint_id: null,
+  context_length: 3,
+  include_character: true,
+  include_scene: true,
+  include_pinned_refs: false,
+  include_document: true,
+  temperature: 0.3,
+  max_tokens: null,
+}
+
+/** Five starter passes, all disabled until the user opts in. */
 export const STARTER_PASSES: readonly PostProcessPass[] = [
   {
     id: 'starter_grounding',
@@ -149,10 +198,33 @@ export const STARTER_PASSES: readonly PostProcessPass[] = [
     temperature: 0.2,
     max_tokens: null,
   },
+  FIX_SLOP_STARTER_PASS,
 ]
 
 function cloneStarterPasses(): PostProcessPass[] {
   return STARTER_PASSES.map((pass) => ({ ...pass }))
+}
+
+/**
+ * Append starter passes introduced after a stored config was written. Only the
+ * new pass is added, so passes the user deleted earlier stay deleted. Runs
+ * until the next settings save persists the current version.
+ */
+function migratePresets(
+  presets: PostProcessPreset[],
+  fromVersion: number,
+): PostProcessPreset[] {
+  if (fromVersion >= POST_PROCESSING_VERSION) return presets
+  return presets.map((preset) => {
+    const hasFixSlop = preset.passes.some(
+      (pass) => pass.id === FIX_SLOP_STARTER_PASS.id,
+    )
+    if (hasFixSlop || preset.passes.length >= MAX_POST_PROCESS_PASSES) return preset
+    return {
+      ...preset,
+      passes: [...preset.passes, { ...FIX_SLOP_STARTER_PASS }],
+    }
+  })
 }
 
 function uniqueId(base: string, used: Set<string>): string {
@@ -168,6 +240,7 @@ function uniqueId(base: string, used: Set<string>): string {
 
 export function createDefaultPostProcessing(): PostProcessingSettings {
   return {
+    version: POST_PROCESSING_VERSION,
     enabled: false,
     review: true,
     min_chars: 60,
@@ -252,13 +325,17 @@ function normalizePreset(raw: unknown, index: number): PostProcessPreset | null 
 
 /**
  * Sanitize a stored `post_processing` value. Unknown/missing fields fall back
- * to the starter configuration, so older settings files need no migration.
+ * to the starter configuration. Stored configs from before a new starter pass
+ * shipped are migrated once by appending that pass.
  */
 export function normalizePostProcessing(raw: unknown): PostProcessingSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return createDefaultPostProcessing()
   }
   const r = raw as Record<string, unknown>
+  const fromVersion = Math.round(
+    clampNumber(r.version, 1, 1, POST_PROCESSING_VERSION),
+  )
   const rawPresets = Array.isArray(r.presets) ? r.presets : []
   const seenPresetIds = new Set<string>()
   let presets = rawPresets
@@ -271,10 +348,13 @@ export function normalizePostProcessing(raw: unknown): PostProcessingSettings {
     presets = [{ id: 'default', name: 'Default', passes: cloneStarterPasses() }]
   }
 
+  presets = migratePresets(presets, fromVersion)
+
   const active = asString(r.active_preset).trim()
   const activeId = presets.some((p) => p.id === active) ? active : presets[0].id
 
   return {
+    version: POST_PROCESSING_VERSION,
     enabled: asBool(r.enabled, false),
     review: asBool(r.review, true),
     min_chars: Math.round(clampNumber(r.min_chars, 60, 0, 100_000)),

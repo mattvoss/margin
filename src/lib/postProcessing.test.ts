@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   MAX_POST_PROCESS_PASSES,
+  POST_PROCESSING_VERSION,
   STARTER_PASSES,
   activePostProcessPreset,
   createDefaultPostProcessing,
@@ -10,8 +11,9 @@ import {
 } from './postProcessing'
 
 describe('post-processing defaults', () => {
-  it('ships one preset with four disabled starter passes', () => {
+  it('ships one preset with five disabled starter passes', () => {
     const config = createDefaultPostProcessing()
+    expect(config.version).toBe(POST_PROCESSING_VERSION)
     expect(config.enabled).toBe(false)
     expect(config.review).toBe(true)
     expect(config.min_chars).toBe(60)
@@ -19,8 +21,12 @@ describe('post-processing defaults', () => {
     expect(config.apply_to_chat).toBe(false)
     expect(config.apply_to_harness).toBe(true)
     expect(config.presets).toHaveLength(1)
+    expect(STARTER_PASSES).toHaveLength(5)
     expect(activePostProcessPreset(config).name).toBe('Default')
     expect(activePostProcessPreset(config).passes).toHaveLength(STARTER_PASSES.length)
+    expect(activePostProcessPreset(config).passes.map((p) => p.name)).toContain(
+      'Fix Slop',
+    )
     expect(activePostProcessPreset(config).passes.every((p) => !p.enabled)).toBe(true)
     expect(enabledPostProcessPasses(config)).toHaveLength(0)
   })
@@ -68,9 +74,10 @@ describe('normalizePostProcessing', () => {
 
   it('creates a default preset when every stored preset is invalid', () => {
     const config = normalizePostProcessing({ presets: [{}, null, 3] })
-    // `{}` is a valid preset with zero passes, so it survives.
+    // `{}` is a valid preset with zero passes, so it survives; migration
+    // appends the new starter pass to it.
     expect(config.presets).toHaveLength(1)
-    expect(config.presets[0].passes).toHaveLength(0)
+    expect(config.presets[0].passes.map((p) => p.id)).toEqual(['starter_fix_slop'])
   })
 
   it('drops passes without prompts and caps the list', () => {
@@ -89,6 +96,7 @@ describe('normalizePostProcessing', () => {
 
   it('dedupes pass and preset ids without random churn', () => {
     const config = normalizePostProcessing({
+      version: POST_PROCESSING_VERSION,
       presets: [
         {
           id: 'same',
@@ -104,6 +112,43 @@ describe('normalizePostProcessing', () => {
     expect(config.presets.map((p) => p.id)).toEqual(['same', 'same_2'])
     expect(config.presets[0].passes.map((p) => p.id)).toEqual(['p', 'p_2'])
     expect(normalizePostProcessing(config)).toEqual(config)
+  })
+})
+
+describe('starter pass migration', () => {
+  it('appends Fix Slop to a version-less preset once', () => {
+    const config = normalizePostProcessing({
+      presets: [
+        {
+          id: 'default',
+          name: 'Default',
+          passes: [STARTER_PASSES[0]],
+        },
+      ],
+    })
+
+    expect(config.version).toBe(POST_PROCESSING_VERSION)
+    expect(config.presets[0].passes.map((p) => p.id)).toEqual([
+      STARTER_PASSES[0].id,
+      'starter_fix_slop',
+    ])
+    expect(config.presets[0].passes[1].enabled).toBe(false)
+    expect(normalizePostProcessing(config)).toEqual(config)
+  })
+
+  it('does not re-add Fix Slop after the version is current', () => {
+    const config = normalizePostProcessing({
+      version: POST_PROCESSING_VERSION,
+      presets: [
+        {
+          id: 'default',
+          name: 'Default',
+          passes: [STARTER_PASSES[0]],
+        },
+      ],
+    })
+
+    expect(config.presets[0].passes.map((p) => p.id)).toEqual([STARTER_PASSES[0].id])
   })
 })
 

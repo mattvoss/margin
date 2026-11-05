@@ -88,7 +88,7 @@ export function PostProcessingSettings({
           <SectionCard>
             <Row
               label="Enable post-processing"
-              description="Runs after the configured Writer or Harness produces text. Four starter passes ship disabled."
+              description="Runs after the configured Writer or Harness produces text. Five starter passes ship disabled."
               control={
                 <Toggle
                   checked={config.enabled}
