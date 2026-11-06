@@ -76,15 +76,25 @@ export default function SimpleEditor() {
     return () => media.removeEventListener('change', applyTheme)
   }, [settings?.theme, settings?.theme_family, settings?.text_style])
   const [panelOpen, setPanelOpen] = useState(true)
-  const [panelWidth, setPanelWidth] = useState(() => getStoredWidth('simple-ai-panel-width', PANEL_DEFAULT_WIDTH))
+  // Keep the server and first client render identical. Persisted widths are
+  // loaded after hydration so localStorage cannot change the SSR markup.
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH)
   const aiDraggingRef = useRef(false)
 
   const [filesPanelOpen, setFilesPanelOpen] = useState(true)
-  const [filesPanelWidth, setFilesPanelWidth] = useState(() => getStoredWidth('simple-files-panel-width', PANEL_DEFAULT_WIDTH))
+  const [filesPanelWidth, setFilesPanelWidth] = useState(PANEL_DEFAULT_WIDTH)
   const filesDraggingRef = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
   const filesPanelWidthRef = useRef(filesPanelWidth)
   const panelWidthRef = useRef(panelWidth)
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setPanelWidth(getStoredWidth('simple-ai-panel-width', PANEL_DEFAULT_WIDTH))
+      setFilesPanelWidth(getStoredWidth('simple-files-panel-width', PANEL_DEFAULT_WIDTH))
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   useEffect(() => {
     filesPanelWidthRef.current = filesPanelWidth
