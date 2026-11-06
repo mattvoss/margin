@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2 } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -20,10 +20,21 @@ import {
 } from '../lib/postProcessing'
 import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
+import { AssistMarkdown } from './AssistMarkdown'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Chat, ChatMessages } from '@/components/ui/chat'
+import { MessageScroller } from '@/components/ui/message-scroller'
+import { Context, ContextLabel, ContextValue } from '@/components/ui/context'
+import { InputGroup } from '@/components/ui/input-group'
+import { Bubble, BubbleContent } from '@/components/ui/bubble'
+import { Message, MessageContent } from '@/components/ui/message'
+import { Trace, TraceLine, TraceIcon, TraceTitle } from '@/components/ui/trace'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import { MessageFooter } from '@/components/ui/message'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -339,129 +350,11 @@ function getInputData(el: HTMLElement): {
   return { text: clone.textContent?.trim() ?? '', refPaths, selection }
 }
 
-function renderMarkdown(text: string): React.ReactNode[] {
-  if (!text) return []
-  const lines = text.split('\n')
-  const nodes: React.ReactNode[] = []
-  let i = 0
-
-  while (i < lines.length) {
-    const line = lines[i]
-
-    // Fenced code block
-    if (line.startsWith('```')) {
-      const lang = line.slice(3).trim()
-      const codeLines: string[] = []
-      i++
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        codeLines.push(lines[i])
-        i++
-      }
-      nodes.push(
-        <pre key={i} className="bg-[var(--bg-hover)] rounded-[6px] px-3 py-2 my-1.5 overflow-x-auto">
-          <code className="text-[11px] font-mono text-[var(--text)]">
-            {lang && <span className="text-[var(--text-muted)] text-[9px] uppercase tracking-widest block mb-1">{lang}</span>}
-            {codeLines.join('\n')}
-          </code>
-        </pre>
-      )
-      i++ // skip closing ```
-      continue
-    }
-
-    // Headings
-    const h6 = line.match(/^###### (.+)/)
-    const h5 = line.match(/^##### (.+)/)
-    const h4 = line.match(/^#### (.+)/)
-    const h3 = line.match(/^### (.+)/)
-    const h2 = line.match(/^## (.+)/)
-    const h1 = line.match(/^# (.+)/)
-    if (h1) { nodes.push(<p key={i} className="font-semibold text-[var(--text-heading)] mt-2 mb-0.5">{inlineMarkdown(h1[1])}</p>); i++; continue }
-    if (h2) { nodes.push(<p key={i} className="font-semibold text-[var(--text-heading)] mt-1.5 mb-0.5 text-[11px]">{inlineMarkdown(h2[1])}</p>); i++; continue }
-    if (h3) { nodes.push(<p key={i} className="font-medium text-[var(--text-secondary)] mt-1 mb-0.5 text-[10px] uppercase tracking-wide">{inlineMarkdown(h3[1])}</p>); i++; continue }
-    if (h4) { nodes.push(<p key={i} className="font-medium text-[var(--text-secondary)] mt-0.5 mb-0.5 text-[10px] uppercase tracking-wide">{inlineMarkdown(h4[1])}</p>); i++; continue }
-    if (h5) { nodes.push(<p key={i} className="font-medium text-[var(--text-muted)] mt-0.5 mb-0.5 text-[9px] uppercase tracking-wide">{inlineMarkdown(h5[1])}</p>); i++; continue }
-    if (h6) { nodes.push(<p key={i} className="font-medium text-[var(--text-muted)] mt-0.5 mb-0.5 text-[9px] uppercase tracking-wide">{inlineMarkdown(h6[1])}</p>); i++; continue }
-
-    // Blockquote
-    if (line.startsWith('> ')) {
-      nodes.push(
-        <div key={i} className="border-l-2 border-[var(--border)] pl-2.5 my-1 text-[var(--text-secondary)] italic">
-          {inlineMarkdown(line.slice(2))}
-        </div>
-      )
-      i++; continue
-    }
-
-    // Horizontal rule
-    if (/^[-*]{3,}$/.test(line.trim())) {
-      nodes.push(<hr key={i} className="border-[var(--border)] my-2" />)
-      i++; continue
-    }
-
-    // Bullet list
-    if (/^[-*+] /.test(line)) {
-      const items: React.ReactNode[] = []
-      while (i < lines.length && /^[-*+] /.test(lines[i])) {
-        items.push(<li key={i}>{inlineMarkdown(lines[i].slice(2))}</li>)
-        i++
-      }
-      nodes.push(<ul key={`ul-${i}`} className="list-disc list-inside my-1 space-y-0.5">{items}</ul>)
-      continue
-    }
-
-    // Numbered list
-    if (/^\d+\. /.test(line)) {
-      const items: React.ReactNode[] = []
-      while (i < lines.length && /^\d+\. /.test(lines[i])) {
-        items.push(<li key={i}>{inlineMarkdown(lines[i].replace(/^\d+\. /, ''))}</li>)
-        i++
-      }
-      nodes.push(<ol key={`ol-${i}`} className="list-decimal list-inside my-1 space-y-0.5">{items}</ol>)
-      continue
-    }
-
-    // Empty line → spacing
-    if (line.trim() === '') {
-      nodes.push(<div key={i} className="h-1.5" />)
-      i++; continue
-    }
-
-    // Normal paragraph
-    nodes.push(<p key={i} className="my-0.5 leading-relaxed">{inlineMarkdown(line)}</p>)
-    i++
-  }
-
-  return nodes
-}
-
-function inlineMarkdown(text: string): React.ReactNode[] {
-  // Handle bold, italic, inline code in sequence
-  const parts: React.ReactNode[] = []
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/g
-  let last = 0
-  let m: RegExpExecArray | null
-  let idx = 0
-  while ((m = regex.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index))
-    const raw = m[0]
-    if (raw.startsWith('`')) {
-      parts.push(<code key={idx++} className="bg-[var(--bg-hover)] px-1 py-0.5 rounded text-[10.5px] font-mono">{raw.slice(1, -1)}</code>)
-    } else if (raw.startsWith('**') || raw.startsWith('__')) {
-      parts.push(<strong key={idx++} className="font-semibold text-[var(--text-heading)]">{raw.slice(2, -2)}</strong>)
-    } else {
-      parts.push(<em key={idx++} className="italic text-[var(--text-secondary)]">{raw.slice(1, -1)}</em>)
-    }
-    last = m.index + raw.length
-  }
-  if (last < text.length) parts.push(text.slice(last))
-  return parts
-}
-
 function ThinkingDropdown({ text, defaultOpen = false }: { text: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
 
   return (
+    <Trace>
     <Collapsible
       open={open}
       onOpenChange={setOpen}
@@ -487,6 +380,7 @@ function ThinkingDropdown({ text, defaultOpen = false }: { text: string; default
         {text}
       </CollapsibleContent>
     </Collapsible>
+    </Trace>
   )
 }
 
@@ -520,6 +414,7 @@ export function SimpleAssist() {
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [copiedResponseId, setCopiedResponseId] = useState<string | null>(null)
 
   const handleCopyPrompt = async (log: SimpleLogEntry) => {
     const textToCopy = log.instruction || log.user_prompt || cleanUserPrompt(log)
@@ -531,6 +426,23 @@ export function SimpleAssist() {
       console.error('Failed to copy prompt text:', err)
       toast.error('Could not copy to clipboard.')
     }
+  }
+
+  const handleCopyResponse = async (log: SimpleLogEntry) => {
+    try {
+      await navigator.clipboard.writeText(log.output)
+      setCopiedResponseId(log.id)
+      window.setTimeout(() => setCopiedResponseId(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy response:', err)
+      toast.error('Could not copy to clipboard.')
+    }
+  }
+
+  const handleInsertResponse = (log: SimpleLogEntry) => {
+    const activeEditor = useEditorStore.getState().editor
+    if (!activeEditor || activeEditor.isDestroyed) return
+    activeEditor.chain().focus().insertContent(log.output).run()
   }
 
   const [activeInstruction, setActiveInstruction] = useState('')
@@ -624,6 +536,17 @@ export function SimpleAssist() {
     } finally {
       setRunningPass(null)
     }
+  }
+
+  const handleRetry = (log: SimpleLogEntry) => {
+    handlePromptToInput(log)
+    window.setTimeout(() => {
+      if (log.mode === 'chat') {
+        void handleChat()
+      } else {
+        void handleEdit()
+      }
+    }, 0)
   }
 
   // Picking an endpoint means "use this endpoint instead of the harness":
@@ -970,7 +893,7 @@ export function SimpleAssist() {
     setShowFileDropdown(true)
   }, [pendingEditSelection, setPendingEditSelection])
 
-  const handleSelectFile = useCallback((file: ReferenceFile) => {
+  const handleSelectFile = (file: ReferenceFile) => {
     const div = inputRef.current
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount || !div) return
@@ -1017,7 +940,7 @@ export function SimpleAssist() {
       }
       div.focus()
     }, 0)
-  }, [inputRef, setShowFileDropdown])
+  }
 
   const handleEdit = async () => {
     const activeEditor = useEditorStore.getState().editor || editor
@@ -1616,7 +1539,7 @@ export function SimpleAssist() {
   const hasHistory = filteredLogs.length > 0 || isWorking || !!errorText || !!noticeText
 
   const renderInputCard = () => (
-    <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus-within:border-[var(--text-muted)] shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 rounded-[14px] pt-3 px-3 pb-2 flex flex-col relative animate-scale-in">
+    <InputGroup className="h-auto min-h-[92px] items-stretch rounded-[14px] bg-[var(--bg-elevated)] border-[var(--border-subtle)] focus-within:border-[var(--text-muted)] shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 pt-3 px-3 pb-2 flex-col relative animate-scale-in">
       <div className="flex items-start gap-1.5 w-full">
         <div
           ref={inputRef}
@@ -1816,61 +1739,37 @@ export function SimpleAssist() {
 
           {/* Circular Context Ring (hidden when no window is known) */}
           {activeContextWindow ? (
-          <Tooltip>
-            <TooltipTrigger
+          <HoverCard>
+            <HoverCardTrigger
+              delay={10}
+              closeDelay={100}
               render={
-                <div
-                  className={`flex items-center gap-1.5 ${percentUsed === 0 ? 'opacity-45' : 'opacity-100'} transition-opacity duration-200 cursor-default`}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-[10px] font-mono"
                 >
-                  <span className="text-[10px] font-mono text-[var(--text-secondary)]">{Math.round(percentUsed)}%</span>
-                  <div className={`relative w-6 h-6 ${percentUsed >= 90 ? 'animate-pulse' : ''}`}>
-                    <svg viewBox="0 0 24 24" className="w-full h-full -rotate-90">
-                      <circle
-                        cx="12" cy="12" r="9" strokeWidth="2"
-                        className="fill-none stroke-[var(--border-subtle)]"
-                      />
-                      <circle
-                        cx="12" cy="12" r="9" strokeWidth="2"
-                        className="fill-none"
-                        style={{
-                          strokeDasharray: '56.55',
-                          strokeDashoffset: `${56.55 * (1 - Math.min(100, percentUsed) / 100)}`,
-                          stroke: percentUsed >= 90 ? '#ef4444' : percentUsed >= 70 ? '#d97706' : 'var(--accent-brown)',
-                          transition: 'stroke-dashoffset 0.4s ease, stroke 0.4s ease'
-                        }}
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </div>
-                </div>
+                  <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
+                  <span>{Math.round(percentUsed)}%</span>
+                </Button>
               }
             />
-            <TooltipContent side="top" align="end" className="bg-[var(--bg-elevated)] border-[var(--border)] whitespace-nowrap text-[10.5px] font-mono">
-              <div className="flex flex-col gap-0.5 text-[var(--text-secondary)] leading-relaxed">
-                <div className="flex justify-between gap-4">
-                  <span>Context (last request):</span>
-                  <span className="text-[var(--text)]">{contextUsedTokens.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span>Session input:</span>
-                  <span className="text-[var(--text)]">{sessionInputTokens.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span>Session output:</span>
-                  <span className="text-[var(--text)]">{sessionOutputTokens.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span>Context window:</span>
-                  <span className="text-[var(--text)]">{activeContextWindow.toLocaleString()}</span>
-                </div>
-                <div className="border-t border-[var(--border)] my-1"></div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-[var(--text)] font-medium">{percentUsed.toFixed(1)}% used</span>
-                  <span>({percentLeft.toFixed(1)}% left)</span>
-                </div>
+            <HoverCardContent className="flex w-64 flex-col gap-3" align="end">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium">Context</span>
+                <span className="text-muted-foreground">
+                  {contextUsedTokens.toLocaleString()} / {activeContextWindow.toLocaleString()}
+                </span>
               </div>
-            </TooltipContent>
-          </Tooltip>
+              <Progress value={percentUsed} aria-label="Context used" />
+              <Context className="text-[var(--text-secondary)] leading-relaxed">
+                <div className="flex justify-between gap-4"><ContextLabel>Session input:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionInputTokens.toLocaleString()}</ContextValue></div>
+                <div className="flex justify-between gap-4"><ContextLabel>Session output:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionOutputTokens.toLocaleString()}</ContextValue></div>
+                <div className="flex justify-between gap-4"><ContextLabel>{percentUsed.toFixed(1)}% used:</ContextLabel><ContextValue className="text-[var(--text)]">{percentLeft.toFixed(1)}% left</ContextValue></div>
+              </Context>
+            </HoverCardContent>
+          </HoverCard>
           ) : null}
 
           {/* Action Button: Stop when working, Send/Submit otherwise */}
@@ -1907,7 +1806,7 @@ export function SimpleAssist() {
           </button>
         </div>
       </div>
-    </div>
+    </InputGroup>
   )
 
   return (
@@ -2101,8 +2000,9 @@ export function SimpleAssist() {
 
       {/* History area (scrollable) */}
       {hasHistory && (
-        <>
-          <div className="flex-1 overflow-y-auto flex flex-col gap-4 pr-1 pt-2 min-h-0 select-text">
+        <Chat>
+          <MessageScroller>
+          <ChatMessages className="gap-4 pr-1 pt-2 select-text">
             {displayLogs.map((log) => {
               const isExpanded = !!expandedIds[log.id]
 
@@ -2124,41 +2024,31 @@ export function SimpleAssist() {
               })()
 
               return (
-                <div key={log.id} className="flex flex-col gap-3">
+                <Message key={log.id} className="group gap-3">
                   {/* User Speech Capsule Bubble */}
-                  <div className="self-end max-w-[85%] bg-[var(--bg-bubble)] border border-[var(--border)] rounded-[16px] rounded-tr-[4px] px-3.5 py-2.5 font-sans text-xs text-[var(--text)] shadow-none leading-relaxed select-text flex flex-wrap items-center gap-1 animate-scale-in relative group pr-12">
-                    <span>{renderUserPrompt(cleanUserPrompt(log))}</span>
-                    <div className="absolute bottom-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                      <button
-                        onClick={() => handlePromptToInput(log)}
-                        className="p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-all cursor-pointer"
-                        title="Copy prompt to input"
-                        aria-label="Copy prompt to input"
-                      >
-                        <Undo2 className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => handleCopyPrompt(log)}
-                        className="p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-all cursor-pointer"
-                        title="Copy prompt"
-                        aria-label="Copy prompt"
-                      >
-                        {copiedId === log.id ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-600 dark:text-green-400">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] flex flex-wrap items-center gap-1 animate-scale-in">
+                    <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
+                  </Bubble>
+                  <MessageFooter className="self-end opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                    <Tooltip>
+                      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handlePromptToInput(log)} aria-label="Restore prompt to input"><Undo2 /></Button>} />
+                      <TooltipContent>Restore prompt to input</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => void handleCopyPrompt(log)} aria-label="Copy prompt">
+                        {copiedId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect width="14" height="14" x="8" y="8" rx="2" />
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 1 2 2" />
                           </svg>
                         )}
-                      </button>
-                    </div>
-                  </div>
+                      </Button>} />
+                      <TooltipContent>{copiedId === log.id ? 'Copied' : 'Copy prompt'}</TooltipContent>
+                    </Tooltip>
+                  </MessageFooter>
 
                   {/* AI Assistant Plain Text Response */}
-                  <div className="flex flex-col gap-1.5 self-start w-full select-text max-w-full py-1 animate-scale-in">
+                  <MessageContent className="w-full py-1 animate-scale-in">
                     <div className="flex items-center gap-2.5 select-none text-[var(--text-muted)]">
                       <button
                         onClick={() => setExpandedIds(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
@@ -2302,7 +2192,7 @@ export function SimpleAssist() {
                       {log.success === false ? log.output : log.output ? (
                         <ContextMenu>
                           <ContextMenuTrigger className="block select-text">
-                            {renderMarkdown(log.output)}
+                            <AssistMarkdown className="assist-markdown">{log.output}</AssistMarkdown>
                           </ContextMenuTrigger>
                           <ContextMenuContent className="w-40 bg-[var(--bg-elevated)] border-[var(--border)]">
                             <ContextMenuItem
@@ -2379,17 +2269,35 @@ export function SimpleAssist() {
                         </ContextMenu>
                       ) : null}
                     </div>
-                  </div>
-                </div>
+                    {log.success !== false && log.output && (
+                      <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                        <Tooltip>
+                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => void handleCopyResponse(log)} aria-label="Copy response">
+                            {copiedResponseId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <span className="text-[10px]">Copy</span>}
+                          </Button>} />
+                          <TooltipContent>{copiedResponseId === log.id ? 'Copied' : 'Copy response'}</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleInsertResponse(log)} aria-label="Insert response"><span className="text-[10px]">Insert</span></Button>} />
+                          <TooltipContent>Insert response at cursor</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleRetry(log)} aria-label="Retry response"><Undo2 /></Button>} />
+                          <TooltipContent>Retry response</TooltipContent>
+                        </Tooltip>
+                      </MessageFooter>
+                    )}
+                  </MessageContent>
+                </Message>
               )
             })}
 
             {isWorking && activeInstruction && (
-              <div className="flex flex-col gap-2.5 animate-fade-in">
+              <Message className="gap-2.5 animate-fade-in">
                 {/* User Prompt */}
-                <div className="self-end max-w-[85%] bg-[var(--bg-bubble)] border border-[var(--border)] rounded-[16px] rounded-tr-[4px] px-3.5 py-2.5 font-sans text-xs text-[var(--text)] shadow-none leading-relaxed select-text flex flex-wrap items-center gap-1 opacity-70">
-                  <span>{renderUserPrompt(activeInstruction)}</span>
-                </div>
+                <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] opacity-70">
+                  <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
+                </Bubble>
                 {/* Context Readings Logs */}
                 {activeRefFiles.map((file) => (
                   <div key={file.path} className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] font-sans select-none ml-1">
@@ -2420,14 +2328,20 @@ export function SimpleAssist() {
                   })}
 
                 {/* Harness tool calls (structured harnesses) */}
-                {activeToolRows.map((t, i) => (
-                  <div key={`htool-${i}`} className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] font-sans select-none ml-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                    </svg>
-                    <span>{t.tool}{t.detail ? ` ${t.detail}` : ''}</span>
-                  </div>
-                ))}
+                {activeToolRows.length > 0 && (
+                  <Trace className="ml-1 gap-1">
+                    {activeToolRows.map((t, i) => (
+                      <TraceLine key={`htool-${i}`} className="text-[11px] font-sans">
+                        <TraceIcon>
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                          </svg>
+                        </TraceIcon>
+                        <TraceTitle>{t.tool}{t.detail ? ` ${t.detail}` : ''}</TraceTitle>
+                      </TraceLine>
+                    ))}
+                  </Trace>
+                )}
 
                 {streamingThinkingText && (
                   <div className="self-start w-full">
@@ -2439,7 +2353,7 @@ export function SimpleAssist() {
                 {(mode === 'chat' || activeHarness !== 'none') && streamingChatText && (
                   <div className="flex flex-col gap-1.5 self-start w-full select-text max-w-full py-1 animate-scale-in relative group">
                     <div className="text-xs font-sans leading-relaxed select-text text-[var(--text)]">
-                      {renderMarkdown(streamingChatText)}
+                      <AssistMarkdown streaming className="assist-markdown">{streamingChatText}</AssistMarkdown>
                     </div>
                     {/* Hover context menu */}
                     <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col gap-0.5 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] shadow-lg z-10 p-0.5 min-w-[120px]">
@@ -2474,17 +2388,20 @@ export function SimpleAssist() {
                 )}
 
                 {/* Phase-aware status indicator */}
-                <div className="flex items-center gap-2 text-xs font-serif italic py-1 select-none" ref={outputRef}>
+                <Trace ref={outputRef} className="py-1">
+                  <TraceLine className="text-xs font-serif italic">
                   <div className={`status-indicator-square ${isPlanning ? 'animate-planning' : isGenerating ? 'animate-generating-pulse' : ''}`}>
                     <div className={`status-indicator-inner ${isGenerating ? 'animate-orbit' : ''}`} />
                   </div>
-                  <span className="animate-shimmer">
+                  <TraceIcon><span className="animate-shimmer">
                     {postProcessStatus
                       ? `Post-processing${postProcessStatus.name ? ` · ${postProcessStatus.name}` : ''}${postProcessStatus.total ? ` (${Math.min(postProcessStatus.index + 1, postProcessStatus.total)}/${postProcessStatus.total})` : ''}…`
                       : activeHarness !== 'none' && isWorking ? `${harnessLabel(activeHarness)} working…` : isPlanning ? 'Planning...' : isGenerating ? 'Generating...' : 'Thinking about the edit...'}
-                  </span>
-                </div>
-              </div>
+                  </span></TraceIcon>
+                  <TraceTitle className="animate-shimmer">{postProcessStatus ? 'Working' : isPlanning ? 'Planning' : isGenerating ? 'Generating' : 'Thinking'}</TraceTitle>
+                  </TraceLine>
+                </Trace>
+              </Message>
             )}
 
             {errorText && (
@@ -2498,8 +2415,9 @@ export function SimpleAssist() {
                 <span>{noticeText}</span>
               </div>
             )}
-          </div>
-        </>
+          </ChatMessages>
+          </MessageScroller>
+        </Chat>
       )}
 
       {!hasHistory && (
