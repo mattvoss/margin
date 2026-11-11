@@ -931,7 +931,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               onPaste={handleComposerPaste}
               data-placeholder="Plan the next scene…"
               aria-label="Planner message"
-              className="min-h-[52px] max-h-[180px] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
+              className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
               <DropdownMenu>
