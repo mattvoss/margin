@@ -56,8 +56,11 @@ export function buildMentionAliases(
   )
 
   const nameCounts = new Map<string, number>()
+  const stemCounts = new Map<string, number>()
   for (const file of candidates) {
     nameCounts.set(file.name, (nameCounts.get(file.name) ?? 0) + 1)
+    const stem = file.name.replace(/\.md$/i, '')
+    if (stem !== file.name) stemCounts.set(stem, (stemCounts.get(stem) ?? 0) + 1)
   }
 
   const seen = new Set<string>()
@@ -70,6 +73,10 @@ export function buildMentionAliases(
 
   for (const file of candidates) {
     if ((nameCounts.get(file.name) ?? 0) === 1) add(file.name, file)
+    // Extensionless shorthand (e.g. @general) is convenient in chat prompts.
+    // Only expose it when unique so it cannot silently select the wrong file.
+    const stem = file.name.replace(/\.md$/i, '')
+    if (stem !== file.name && (stemCounts.get(stem) ?? 0) === 1) add(stem, file)
     // Paths are always aliases. For a root file the path equals the basename,
     // which keeps `@notes.md` pointing at the root copy when a same-named file
     // lives in a folder.

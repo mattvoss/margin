@@ -17,6 +17,8 @@ import { useSettingsStore, type AppSettings } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { streamSSE } from '../lib/stream-sse'
+import { filterMentionFiles, mentionTextFor, type ReferenceFile } from '../lib/fileMentions'
+import { parseMentionQuery } from '../lib/mentionQuery'
 import { AssistMarkdown } from './AssistMarkdown'
 import { Button } from '@/components/ui/button'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
@@ -187,6 +189,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   const setShowSettings = useSettingsStore((s) => s.setShowSettings)
   const setSettingsTab = useSettingsStore((s) => s.setSettingsTab)
   const currentFilePath = useEditorStore((s) => s.currentFilePath)
+  const openedFiles = useEditorStore((s) => s.openedFiles)
   const workspace = settings.linked_workspace_dir ?? 'sample'
 
   const [sessionId, setSessionId] = useState<string>(() => {
@@ -199,6 +202,10 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   })
   const [messages, setMessages] = useState<PlannerMessage[]>([])
   const [input, setInput] = useState('')
+  const [availableFiles, setAvailableFiles] = useState<ReferenceFile[]>([])
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
+  const [highlightedMention, setHighlightedMention] = useState(0)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
   const [streamingText, setStreamingText] = useState('')
@@ -210,6 +217,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
 
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const runIdRef = useRef(0)
   const restoreSessionRef = useRef<string | null>(null)
 
@@ -217,6 +225,17 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   const installedHarnesses = useMemo(
     () => harnessList.filter((h) => h.installed),
     [harnessList],
+  )
+  const mentionFiles = useMemo(() => {
+    const files = new Map<string, ReferenceFile>()
+    for (const file of [...availableFiles, ...openedFiles]) {
+      files.set(file.path, { name: file.name, path: file.path })
+    }
+    return [...files.values()]
+  }, [availableFiles, openedFiles])
+  const filteredMentionFiles = useMemo(
+    () => filterMentionFiles(mentionFiles, mentionQuery, currentFilePath),
+    [mentionFiles, mentionQuery, currentFilePath],
   )
 
   const resolvedChoice = useMemo(
@@ -239,6 +258,27 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   useEffect(() => {
     return () => abortRef.current?.abort()
   }, [])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    apiFetch(`${API_BASE}/api/workspace/files`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: unknown) => {
+        if (!cancelled && Array.isArray(data)) {
+          setAvailableFiles(
+            data.filter(
+              (file): file is ReferenceFile =>
+                typeof file?.name === 'string' && typeof file?.path === 'string',
+            ),
+          )
+        }
+      })
+      .catch((err) => console.error('Failed to load planner mention files:', err))
+    return () => {
+      cancelled = true
+    }
+  }, [open, workspace])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
@@ -309,6 +349,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     setSessionId(next)
     setMessages([])
     setInput('')
+    setMentionOpen(false)
     setError('')
     setIsStreaming(false)
     setStreamingText('')
@@ -390,7 +431,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
         harness: resolvedChoice.kind === 'harness' ? resolvedChoice.id : 'none',
         endpoint_id: resolvedChoice.kind === 'endpoint' ? resolvedChoice.id : null,
         ref_files: [],
-        available_files: state.openedFiles.map((f) => ({ name: f.name, path: f.path })),
+        available_files: mentionFiles,
         active_filename: activeFilename,
         cursor_paragraph_text: cursorParagraph() || null,
         skip_planner: true,
@@ -481,7 +522,59 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     editor.chain().focus().insertContent(message.content).run()
   }
 
+  const handleMentionSelect = (file: ReferenceFile) => {
+    const textarea = inputRef.current
+    if (!textarea) return
+    const caret = textarea.selectionStart
+    const parsed = parseMentionQuery(input.slice(0, caret))
+    if (!parsed) return
+
+    const mention = mentionTextFor(file, mentionFiles, currentFilePath)
+    const next = `${input.slice(0, parsed.atIndex)}${mention} ${input.slice(caret)}`
+    const nextCaret = parsed.atIndex + mention.length + 1
+    setInput(next)
+    setMentionOpen(false)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
+  const handleInputChange = (value: string, caret: number) => {
+    setInput(value)
+    const parsed = parseMentionQuery(value.slice(0, caret))
+    if (!parsed) {
+      setMentionOpen(false)
+      return
+    }
+    setMentionQuery(parsed.query)
+    setHighlightedMention(0)
+    setMentionOpen(true)
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen && filteredMentionFiles.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setHighlightedMention((index) => Math.min(index + 1, filteredMentionFiles.length - 1))
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setHighlightedMention((index) => Math.max(index - 1, 0))
+        return
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        handleMentionSelect(filteredMentionFiles[highlightedMention])
+        return
+      }
+    }
+    if (event.key === 'Escape' && mentionOpen) {
+      event.preventDefault()
+      setMentionOpen(false)
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       void handleSend()
@@ -683,9 +776,39 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
 
         <div className="shrink-0 border-t border-[var(--border-subtle)] p-3">
           <InputGroup>
+            {mentionOpen && (
+              <div className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-50 max-h-[220px] overflow-y-auto rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-1 shadow-lg">
+                {filteredMentionFiles.length > 0 ? (
+                  filteredMentionFiles.map((file, index) => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => handleMentionSelect(file)}
+                      onMouseEnter={() => setHighlightedMention(index)}
+                      className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left ${index === highlightedMention ? 'bg-[var(--bg-hover)]' : ''}`}
+                    >
+                      <span className="truncate text-[11px] font-medium text-[var(--text)]">
+                        {file.name}
+                      </span>
+                      <span className="truncate text-[10px] text-[var(--text-muted)]">
+                        {file.path}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-2 py-2 text-[11px] text-[var(--text-muted)]">
+                    No matching workspace files
+                  </div>
+                )}
+              </div>
+            )}
             <InputGroupTextarea
+              ref={inputRef}
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) =>
+                handleInputChange(event.target.value, event.currentTarget.selectionStart)
+              }
               onKeyDown={handleKeyDown}
               placeholder="Plan the next scene…"
               aria-label="Planner message"
@@ -792,6 +915,11 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           {!resolvedChoice && (
             <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
               Add an endpoint in Settings → Endpoints, or install an agent harness to start planning.
+            </p>
+          )}
+          {resolvedChoice && (
+            <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
+              Type @ to attach a workspace reference, such as @general.
             </p>
           )}
         </div>

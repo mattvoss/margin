@@ -28,6 +28,23 @@ describe('buildMentionAliases', () => {
     expect(names.filter((name) => name === 'notes.md')).toHaveLength(1)
   })
 
+  it('supports an extensionless mention for a unique markdown basename', () => {
+    const general: ReferenceFile = { name: 'general.md', path: 'styles/general.md' }
+    const matches = findMentionRanges('@general', aliasesFor([general]))
+    expect(matches.map((match) => match.target.path)).toEqual(['styles/general.md'])
+  })
+
+  it('does not resolve an ambiguous extensionless basename', () => {
+    const matches = findMentionRanges(
+      '@general',
+      aliasesFor([
+        { name: 'general.md', path: 'styles/general.md' },
+        { name: 'general.md', path: 'notes/general.md' },
+      ]),
+    )
+    expect(matches).toEqual([])
+  })
+
   it('drops ambiguous basenames in favour of paths', () => {
     const duplicate: ReferenceFile = { name: 'notes.md', path: 'lore/notes.md' }
     const aliases = aliasesFor([notes, duplicate])

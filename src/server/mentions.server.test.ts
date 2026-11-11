@@ -16,6 +16,7 @@ const files: ReferenceFile[] = [
   { name: 'notes.md', path: 'notes.md' },
   { name: 'notes.md', path: 'lore/notes.md' },
   { name: 'maps.md', path: 'lore/maps.md' },
+  { name: 'general.md', path: 'styles/general.md' },
   { name: 'writer.md', path: 'prompts/writer.md' },
   { name: 'draft.md', path: '.trash/draft.md' },
   { name: 'map.png', path: 'assets/map.png' },
@@ -89,6 +90,16 @@ describe('expandMentionedFiles', () => {
     })
 
     expect(result).toEqual(['characters/elara.md', 'locations/river.md'])
+  })
+
+  it('resolves extensionless planner shorthand such as @general', async () => {
+    const result = await expandMentionedFiles({
+      text: 'Use @general as the style reference.',
+      availableFiles: files,
+      readFile: reader({ 'styles/general.md': 'General style guidance.' }),
+    })
+
+    expect(result).toEqual(['styles/general.md'])
   })
 
   it('dedupes cycles and repeated references', async () => {
