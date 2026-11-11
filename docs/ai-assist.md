@@ -58,6 +58,20 @@ Use Chat mode for brainstorming, asking questions, or discussing your content wi
 - Chat mode **does not modify your document** -- it only responds conversationally.
 - You can switch between Edit and Chat modes freely without losing session context.
 
+## Scene Planner
+
+The **Plan next scene** button in the Assist panel header (the compass icon) opens a large, interactive planning dialog. Unlike Edit mode, the Scene Planner never changes your manuscript — it is a multi-turn conversation about what should happen next.
+
+- **What it reads**: the tail of the active document, the paragraph your cursor is on, any `@`-referenced or pinned files, and the tracked active cast. This gives the planner the current POV, timeline, and unresolved threads without sending the whole workspace.
+- **What it does**: asks focused questions when your goal is unclear, offers two or three distinct directions with their trade-offs, then converges on a concrete plan with scene goal, POV/setting, beats, conflict, continuity notes, opening direction, and an ending hook.
+- **Models**: the picker in the composer lists your configured **endpoints** and installed **agent harnesses**. Endpoint planning runs through `POST /api/assist/simple` with `mode: 'planner'`; harness planning resumes the harness session like chat but instructs the agent to read only, never edit. That read-only rule is a prompt instruction, not a sandbox — choose an endpoint if you need a hard guarantee. The chosen model is remembered per workspace.
+- **Persistence**: the planner session ID and model choice are stored in `localStorage` per workspace. Closing the dialog, switching files, or reloading the app restores the same planning conversation from planner-mode logs. **New plan** starts a fresh thread.
+- **Working with the result**: copy a plan, or insert it at your cursor to turn it into notes or a scene skeleton. Planner turns are excluded from the main Chat history and session list.
+
+The planner's standing instructions are editable in **Settings > Context** under *Scene Planner* (`prompts/scene-planner.md`). Treat the plan as a draft: the Writer still produces the prose, and you remain in control of what lands on the page.
+
+> See [Prompts](./configuration/prompts.md) for the full prompt list.
+
 ## Post-processing
 
 When enabled in **Settings > Post-processing**, Margin can run ordered rewrite passes after endpoint Edit/Chat output or after a harness changes the active file. Each pass receives the upstream system instructions and your original request along with the previous pass's text. Those instructions take precedence over a pass's editing goal, and passes are directed to make only small, voice-preserving changes. Passes can use their own endpoint and context options, and fail independently — a bad pass keeps the previous text. The five starter passes ship disabled.

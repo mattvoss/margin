@@ -7,6 +7,7 @@ Agent instructions are editable from **Settings > Context** (top section). Chang
 | Writer | `simple-writer.md` | Panel edits and inline Rewrite — endpoint path only. Writes the replacement text. |
 | Planner | `simple-planner.md` | Endpoint path only. Picks context files and refines the instruction for the Writer. |
 | Chat | `simple-chat.md` | Conversational answers, no edits. Used by both endpoints and harnesses. |
+| Scene Planner | `scene-planner.md` | Interactive next-scene planning dialog — goals, beats, continuity, and hooks. Used by both endpoints and harnesses; never edits files. |
 | Harness Edit | `harness-edit.md` | Standing instructions for agent harnesses in Edit mode (OpenCode, Pi, Claude Code, Codex, Antigravity) — including the rule that changes land in files, not in the reply. |
 | Character Tracker | `character-tracker.md` | Extracts and updates the active cast after a generation or chapter rescan. Returns JSON only; the manuscript is never rewritten. |
 
