@@ -1,4 +1,13 @@
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   ArrowUp,
   Check,
@@ -45,7 +54,6 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-  InputGroupTextarea,
 } from '@/components/ui/input-group'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
 import { MessageScroller } from '@/components/ui/message-scroller'
@@ -184,6 +192,61 @@ function cursorParagraph(): string {
   return paragraph
 }
 
+function plannerInputData(element: HTMLElement | null): { text: string; refs: ReferenceFile[] } {
+  if (!element) return { text: '', refs: [] }
+  const refs: ReferenceFile[] = []
+  const clone = element.cloneNode(true) as HTMLElement
+  clone.querySelectorAll<HTMLElement>('[data-planner-mention]').forEach((chip) => {
+    const path = chip.dataset.path ?? ''
+    const name = chip.dataset.name ?? ''
+    if (path && name) refs.push({ path, name })
+    chip.replaceWith(document.createTextNode(chip.dataset.mention ?? `@${name}`))
+  })
+  return { text: (clone.innerText ?? clone.textContent ?? '').trim(), refs }
+}
+
+function plannerTextBeforeCaret(element: HTMLElement): string {
+  const selection = window.getSelection()
+  if (!selection?.rangeCount) return ''
+  const caret = selection.getRangeAt(0)
+  if (!element.contains(caret.startContainer)) return ''
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  range.setEnd(caret.startContainer, caret.startOffset)
+  const clone = document.createElement('div')
+  clone.appendChild(range.cloneContents())
+  clone.querySelectorAll<HTMLElement>('[data-planner-mention]').forEach((chip) => {
+    chip.replaceWith(document.createTextNode(chip.dataset.mention ?? ''))
+  })
+  return clone.innerText ?? clone.textContent ?? ''
+}
+
+function createPlannerMentionChip(file: ReferenceFile, mention: string): HTMLSpanElement {
+  const chip = document.createElement('span')
+  chip.contentEditable = 'false'
+  chip.dataset.plannerMention = 'true'
+  chip.dataset.path = file.path
+  chip.dataset.name = file.name
+  chip.dataset.mention = mention
+  chip.className =
+    'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]'
+
+  const icon = document.createElement('span')
+  icon.className = 'shrink-0 text-[var(--accent-brown)]'
+  icon.textContent = '@'
+  const label = document.createElement('span')
+  label.className = 'truncate'
+  label.textContent = mention.slice(1).replace(/\.md$/i, '')
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.dataset.plannerMentionRemove = 'true'
+  remove.setAttribute('aria-label', `Remove ${mention} reference`)
+  remove.className = 'ml-0.5 shrink-0 text-[var(--text-muted)] hover:text-[var(--text-heading)]'
+  remove.textContent = '×'
+  chip.append(icon, label, remove)
+  return chip
+}
+
 export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerProps) {
   const settings = useSettingsStore((s) => s.settings)
   const setShowSettings = useSettingsStore((s) => s.setShowSettings)
@@ -217,7 +280,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
 
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<HTMLDivElement>(null)
   const runIdRef = useRef(0)
   const restoreSessionRef = useRef<string | null>(null)
 
@@ -349,6 +412,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     setSessionId(next)
     setMessages([])
     setInput('')
+    inputRef.current?.replaceChildren()
     setMentionOpen(false)
     setError('')
     setIsStreaming(false)
@@ -371,7 +435,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   }
 
   const handleSend = async () => {
-    const text = input.trim()
+    const composer = plannerInputData(inputRef.current)
+    const text = composer.text
     if (!text || isStreaming) return
     if (!resolvedChoice) {
       toast.error('Add an endpoint in Settings → Endpoints, or install an agent harness.')
@@ -386,6 +451,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     }
     setMessages((prev) => [...prev, userMessage])
     setInput('')
+    inputRef.current?.replaceChildren()
+    setMentionOpen(false)
     setError('')
     setStreamingText('')
     setStreamingThinking('')
@@ -430,7 +497,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
         session_id: sessionId,
         harness: resolvedChoice.kind === 'harness' ? resolvedChoice.id : 'none',
         endpoint_id: resolvedChoice.kind === 'endpoint' ? resolvedChoice.id : null,
-        ref_files: [],
+        ref_files: composer.refs,
         available_files: mentionFiles,
         active_filename: activeFilename,
         cursor_paragraph_text: cursorParagraph() || null,
@@ -523,26 +590,48 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   }
 
   const handleMentionSelect = (file: ReferenceFile) => {
-    const textarea = inputRef.current
-    if (!textarea) return
-    const caret = textarea.selectionStart
-    const parsed = parseMentionQuery(input.slice(0, caret))
+    const editor = inputRef.current
+    const selection = window.getSelection()
+    if (!editor || !selection?.rangeCount) return
+    const range = selection.getRangeAt(0)
+    if (range.startContainer.nodeType !== Node.TEXT_NODE) return
+    const textNode = range.startContainer as Text
+    const before = plannerTextBeforeCaret(editor)
+    const parsed = parseMentionQuery(before)
     if (!parsed) return
 
     const mention = mentionTextFor(file, mentionFiles, currentFilePath)
-    const next = `${input.slice(0, parsed.atIndex)}${mention} ${input.slice(caret)}`
-    const nextCaret = parsed.atIndex + mention.length + 1
-    setInput(next)
+    const start = range.startOffset - parsed.query.length - 1
+    if (start < 0) return
+    range.setStart(textNode, start)
+    range.deleteContents()
+    const chip = createPlannerMentionChip(file, mention)
+    const spacer = document.createTextNode('\u200B ')
+    const fragment = document.createDocumentFragment()
+    fragment.append(chip, spacer)
+    range.insertNode(fragment)
     setMentionOpen(false)
     requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(nextCaret, nextCaret)
+      const after = document.createRange()
+      after.setStartAfter(spacer)
+      after.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(after)
+      editor.focus()
+      syncComposerInput()
     })
   }
 
-  const handleInputChange = (value: string, caret: number) => {
-    setInput(value)
-    const parsed = parseMentionQuery(value.slice(0, caret))
+  const syncComposerInput = () => {
+    setInput(plannerInputData(inputRef.current).text)
+  }
+
+  const handleComposerInput = () => {
+    const editor = inputRef.current
+    if (!editor) return
+    const { text } = plannerInputData(editor)
+    setInput(text)
+    const parsed = parseMentionQuery(plannerTextBeforeCaret(editor))
     if (!parsed) {
       setMentionOpen(false)
       return
@@ -552,7 +641,33 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     setMentionOpen(true)
   }
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const setComposerText = (text: string) => {
+    setInput(text)
+    if (inputRef.current) inputRef.current.textContent = text
+    setMentionOpen(false)
+  }
+
+  const handleComposerClick = (event: MouseEvent<HTMLDivElement>) => {
+    const remove = (event.target as HTMLElement).closest('[data-planner-mention-remove]')
+    if (!remove) return
+    event.preventDefault()
+    remove.closest('[data-planner-mention]')?.remove()
+    syncComposerInput()
+  }
+
+  const handleComposerMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('[data-planner-mention-remove]')) {
+      event.preventDefault()
+    }
+  }
+
+  const handleComposerPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
+    handleComposerInput()
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (mentionOpen && filteredMentionFiles.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
@@ -764,7 +879,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                     variant="outline"
                     size="sm"
                     className="text-[10.5px]"
-                    onClick={() => setInput(suggestion)}
+                    onClick={() => setComposerText(suggestion)}
                   >
                     {suggestion}
                   </Button>
@@ -803,17 +918,20 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                 )}
               </div>
             )}
-            <InputGroupTextarea
+            <div
               ref={inputRef}
-              value={input}
-              onChange={(event) =>
-                handleInputChange(event.target.value, event.currentTarget.selectionStart)
-              }
+              contentEditable
+              role="textbox"
+              aria-multiline="true"
+              suppressContentEditableWarning
+              onInput={handleComposerInput}
               onKeyDown={handleKeyDown}
-              placeholder="Plan the next scene…"
+              onClick={handleComposerClick}
+              onMouseDown={handleComposerMouseDown}
+              onPaste={handleComposerPaste}
+              data-placeholder="Plan the next scene…"
               aria-label="Planner message"
-              rows={2}
-              className="min-h-[52px] text-[12px]"
+              className="min-h-[52px] max-h-[180px] flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
               <DropdownMenu>
