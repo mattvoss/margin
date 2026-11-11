@@ -2,6 +2,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -26,7 +27,13 @@ import { useSettingsStore, type AppSettings } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { streamSSE } from '../lib/stream-sse'
-import { filterMentionFiles, mentionTextFor, type ReferenceFile } from '../lib/fileMentions'
+import {
+  buildMentionAliases,
+  filterMentionFiles,
+  findMentionRanges,
+  mentionTextFor,
+  type ReferenceFile,
+} from '../lib/fileMentions'
 import { parseMentionQuery } from '../lib/mentionQuery'
 import { AssistMarkdown } from './AssistMarkdown'
 import { Button } from '@/components/ui/button'
@@ -245,6 +252,32 @@ function createPlannerMentionChip(file: ReferenceFile, mention: string): HTMLSpa
   remove.textContent = '×'
   chip.append(icon, label, remove)
   return chip
+}
+
+function renderPlannerMentions(text: string, files: ReferenceFile[]): ReactNode {
+  const mentions = findMentionRanges(text, buildMentionAliases(files))
+  if (mentions.length === 0) return text
+
+  const content: ReactNode[] = []
+  let cursor = 0
+  for (const [index, mention] of mentions.entries()) {
+    if (mention.from < cursor) continue
+    if (mention.from > cursor) content.push(text.slice(cursor, mention.from))
+    const label = text.slice(mention.from, mention.to)
+    content.push(
+      <span
+        key={`${mention.from}-${mention.target.path}-${index}`}
+        title={mention.target.path}
+        className="mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]"
+      >
+        <span className="shrink-0 text-[var(--accent-brown)]">@</span>
+        <span className="truncate">{label.slice(1).replace(/\.md$/i, '')}</span>
+      </span>,
+    )
+    cursor = mention.to
+  }
+  if (cursor < text.length) content.push(text.slice(cursor))
+  return content
 }
 
 export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerProps) {
@@ -748,7 +781,9 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                       <Message key={message.id} align="end">
                         <MessageContent>
                           <Bubble align="end" variant="muted" className="text-[var(--text)]">
-                            <BubbleContent>{message.content}</BubbleContent>
+                            <BubbleContent>
+                              {renderPlannerMentions(message.content, mentionFiles)}
+                            </BubbleContent>
                           </Bubble>
                         </MessageContent>
                       </Message>
