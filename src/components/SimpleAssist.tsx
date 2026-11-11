@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
+import { AtSign, Check, ChevronDown, Code2, Compass, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
 import { CharacterDialog } from './CharacterDialog'
+import { ScenePlanner } from './ScenePlanner'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { toDisplaySrc } from '../lib/media'
@@ -70,7 +71,7 @@ import type { FileEntry } from '../stores/editorStore'
 interface SimpleLogEntry {
   id: string
   timestamp: string
-  mode: 'chat' | 'edit_plan' | 'edit_write'
+  mode: 'chat' | 'edit_plan' | 'edit_write' | 'planner'
   session_id?: string
   system_prompt: string
   user_prompt: string
@@ -450,6 +451,7 @@ export function SimpleAssist() {
   const [errorText, setErrorText] = useState('')
   const [activeSessionId, setActiveSessionId] = useState<string>(() => crypto.randomUUID())
   const [showHistoryDropdown, setShowHistoryDropdown] = useState(false)
+  const [plannerOpen, setPlannerOpen] = useState(false)
   const [sessionLoadCount, setSessionLoadCount] = useState(3)
   const [historyView, setHistoryView] = useState<'chats' | 'images'>('chats')
   const [imageLogs, setImageLogs] = useState<ImageLogEntry[] | null>(null)
@@ -654,7 +656,9 @@ export function SimpleAssist() {
       const res = await apiFetch(`${API_BASE}/api/assist/simple/logs`)
       if (res.ok) {
         const data = await res.json()
-        setHistoryLogs(data)
+        // Planner turns are persisted for the dedicated planner session, not
+        // the assist chat history. Keep them out of this panel's sessions.
+        setHistoryLogs((Array.isArray(data) ? data : []).filter((entry: SimpleLogEntry) => entry.mode !== 'planner'))
       }
     } catch (err) {
       console.error('Failed to fetch simple logs:', err)
@@ -756,7 +760,7 @@ export function SimpleAssist() {
   )
 
   const displayLogs = useMemo(() =>
-    filteredLogs.filter(l => l.mode !== 'edit_plan'),
+    filteredLogs.filter(l => l.mode !== 'edit_plan' && l.mode !== 'planner'),
     [filteredLogs]
   )
 
@@ -1819,6 +1823,14 @@ export function SimpleAssist() {
         {/* Action Buttons Group */}
         <div className="flex items-center gap-1.5">
           <button
+            onClick={() => setPlannerOpen(true)}
+            className="flex items-center justify-center w-7 h-7 text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--border-sidebar)]/60 rounded-[6px] transition-all cursor-pointer active:scale-[0.95]"
+            title="Plan next scene"
+          >
+            <Compass size={14} />
+          </button>
+
+          <button
             onClick={() => {
               const newId = crypto.randomUUID()
               setActiveSessionId(newId)
@@ -2460,6 +2472,13 @@ export function SimpleAssist() {
       )}
 
       <CharacterDialog />
+
+      <ScenePlanner
+        key={linkedWorkspaceDir ?? 'sample'}
+        open={plannerOpen}
+        onOpenChange={setPlannerOpen}
+        harnessList={harnessList}
+      />
     </div>
   )
 }
