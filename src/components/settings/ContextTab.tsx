@@ -267,6 +267,7 @@ export function ContextSettings({
 const PROMPT_ENTRIES = [
   { id: 'writer', file: 'simple-writer.md', label: 'Writer', description: 'Writes the replacement text for panel edits and inline Rewrite — endpoint path only.' },
   { id: 'planner', file: 'simple-planner.md', label: 'Planner', description: 'Picks context files and refines the instruction for the Writer — endpoint path only.' },
+  { id: 'scene-planner', file: 'scene-planner.md', label: 'Scene Planner', description: 'Interactive story planning chat for the next scene — plans, beats, continuity, and hooks. Endpoints and harnesses.' },
   { id: 'chat', file: 'simple-chat.md', label: 'Chat', description: 'Converses and answers — makes no edits, for endpoints and harnesses.' },
   { id: 'harness-edit', file: 'harness-edit.md', label: 'Harness Edit', description: 'Standing instructions for agent harnesses in Edit mode (OpenCode, Pi, Claude Code, Codex, Antigravity) — including the rule that changes land in files, not in the reply.' },
   { id: 'character-tracker', file: 'character-tracker.md', label: 'Character Tracker', description: 'Extracts the active cast from new prose and chapter rescans. Returns JSON; does not write the manuscript.' },

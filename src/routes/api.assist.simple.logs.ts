@@ -9,6 +9,9 @@ export const Route = createFileRoute('/api/assist/simple/logs')({
     handlers: {
       GET: async ({ request }) => {
         const ws = await requestWorkspaceDir(request)
+        const params = new URL(request.url).searchParams
+        const sessionFilter = params.get('session_id')
+        const modeFilter = params.get('mode')
         const dir = join(ws, 'outputs', 'ai_logs')
         const all: unknown[] = []
         try {
@@ -25,7 +28,13 @@ export const Route = createFileRoute('/api/assist/simple/logs')({
           // no logs yet
         }
         all.sort((a, b) => String((a as Record<string, unknown>).timestamp ?? '').localeCompare(String((b as Record<string, unknown>).timestamp ?? '')))
-        return json(all)
+        const filtered = all.filter((entry) => {
+          const log = entry as Record<string, unknown>
+          if (sessionFilter && log.session_id !== sessionFilter) return false
+          if (modeFilter && log.mode !== modeFilter) return false
+          return true
+        })
+        return json(filtered)
       },
     },
   },

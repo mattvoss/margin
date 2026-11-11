@@ -6,6 +6,7 @@ import {
   cacheOptsForSession,
   collectManifestSections,
   composeChatMessages,
+  composeScenePlannerMessages,
   extractAnchorContext,
   formatCacheInfo,
   loadSimplePrompt,
@@ -70,6 +71,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           })
         const mode = payload.mode.trim().toLowerCase()
         const harness = payload.harness && payload.harness !== 'api' ? payload.harness : null
+        const isPlanner = mode === 'planner'
+        const harnessMode: 'chat' | 'edit' = isPlanner ? 'chat' : mode === 'edit' ? 'edit' : 'chat'
         const readFile = (p: string) => readWorkspaceFile(p, ws).catch(() => null)
         // Expand prompt @mentions once: every branch (planner, writer, harness,
         // chat) sees the same transitive reference set, and context_resolved
@@ -128,7 +131,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (payload.active_filename) {
             activePath =
               payload.available_files.find((f) => f.name === payload.active_filename)?.path ?? null
-            if (activePath && payload.content) {
+            if (!isPlanner && activePath && payload.content) {
               try {
                 await writeWorkspaceFile(activePath, payload.content, ws)
               } catch (e) {
@@ -137,7 +140,27 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             }
           }
           let harnessPrompt = ''
-          if (mode === 'edit') {
+          if (isPlanner) {
+            const deps = {
+              settings: settings as never,
+              plannerPrompt: await loadSimplePrompt('scene-planner.md').catch(() => ''),
+              readFile: (p: string) => readWorkspaceFile(p, ws).catch(() => null),
+              includeHistory: false,
+              expandedTagged: tagged,
+            }
+            const composed = await composeScenePlannerMessages(payload, deps as never)
+            const idx = await workspaceIndexLine(ws).catch(() => '')
+            const built = buildHarnessChatPrompt({
+              system: composed.system,
+              userMessage: composed.files ? `${composed.files}\n\n${composed.user}` : composed.user,
+              characterMessage,
+              indexLine: idx || undefined,
+            })
+            systemPrompt = built.system
+            userPrompt = built.user
+            harnessPrompt = built.harnessPrompt
+            console.log(formatCacheInfo('scene_planner_harness', systemPrompt, userPrompt))
+          } else if (mode === 'edit') {
             send({ status: 'context_resolved', context_needed: [] })
             const idx = await workspaceIndexLine(ws).catch(() => '')
             const built = buildHarnessEditPrompt({
@@ -190,7 +213,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             harnessId: harness,
             prompt: harnessPrompt,
             cwd: ws,
-            mode,
+            mode: harnessMode,
             resumeId,
             overrides,
             signal,
@@ -235,7 +258,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (outcome.sessionId && payload.session_id) await setHarnessSession(payload.session_id, harness, outcome.sessionId)
           const runOk = !sawErrorText
           let harnessPost: HarnessPostProcessResult | null = null
-          if (mode === 'edit' && activePath && runOk && !signal.aborted) {
+          if (!isPlanner && mode === 'edit' && activePath && runOk && !signal.aborted) {
             try {
               const after = (await readWorkspaceFile(activePath, ws)) ?? ''
               if (after && after !== payload.content) {
@@ -270,11 +293,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 }
               : null
           await saveSimpleAiLog({
-            mode: mode === 'chat' ? 'chat' : 'edit_write',
+            mode: isPlanner ? 'planner' : mode === 'chat' ? 'chat' : 'edit_write',
             session_id: payload.session_id,
             system_prompt: isServiceTransport(harness)
               ? systemPrompt
-              : resolveHarnessArgv(harness, harnessPrompt, ws, mode, resumeId, overrides)
+              : resolveHarnessArgv(harness, harnessPrompt, ws, harnessMode, resumeId, overrides)
                   .map((a) => (a.length < 60 ? a : a.slice(0, 60) + '…')).join(' '),
             user_prompt: harnessPrompt,
             output: fullOutput,
@@ -292,12 +315,99 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             user_hash: prefixHash(harnessPrompt),
             post_processing: harnessPostLog,
           }, ws)
-          send({ status: 'harness_done', harness, post_processing: harnessPostLog })
+          if (isPlanner) {
+            send({
+              status: 'planner',
+              harness,
+              output: fullOutput,
+              thinking_output: fullThinking || null,
+              model_used: `${harness}:${String(overrides[harness]?.model ?? 'default')}`,
+            })
+          } else {
+            send({ status: 'harness_done', harness, post_processing: harnessPostLog })
+          }
           c.close()
           return
         }
 
-        const client = loadLlmConfig(settings as never)
+        const client = loadLlmConfig(settings as never, payload.endpoint_id)
+
+        if (isPlanner) {
+          send({ status: 'generating' })
+          const plannerPrompt = await loadSimplePrompt('scene-planner.md').catch(() => '')
+          const plannerLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
+          const composed = await composeScenePlannerMessages(payload, {
+            settings: settings as never,
+            plannerPrompt,
+            readFile,
+            logs: plannerLogs as never,
+            expandedTagged: tagged,
+          })
+          systemPrompt = composed.system
+          const plannerMsgs = assembleAssistMessages(
+            systemPrompt,
+            composed.history,
+            composed.files,
+            composed.user,
+            characterMessage,
+          )
+          userPrompt = plannerMsgs.fullUser
+          const plannerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
+          console.log(formatCacheInfo('scene_planner', systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
+          const plannerMaxTokens = Math.max(pickWriterMaxTokens(settings as never) ?? 0, 1200)
+          let fullPlanner = ''
+          for await (const chunk of client.streamWithMessages(plannerMsgs.messages, {
+            temperature: 0.7,
+            maxTokens: plannerMaxTokens,
+            signal,
+            cachePrompt: plannerCache.cachePrompt,
+            nKeep: plannerCache.nKeep,
+            slotId: plannerCache.slotId,
+          })) {
+            if (signal.aborted) break
+            fullPlanner += chunk
+            send({ status: 'chunk', chunk })
+          }
+          console.log(
+            formatCacheInfo('scene_planner', systemPrompt, userPrompt, {
+              slotId: plannerCache.slotId,
+              promptMs: client.lastTimings?.prompt_ms,
+              promptN: client.lastTimings?.prompt_n,
+              tokensCached: client.lastTokensCached,
+            }),
+          )
+          const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          await saveSimpleAiLog({
+            mode: 'planner',
+            session_id: payload.session_id,
+            system_prompt: systemPrompt,
+            user_prompt: userPrompt,
+            output: fullPlanner,
+            raw_output: fullPlanner,
+            instruction: payload.message,
+            selected_text: payload.selected_text,
+            ref_files: null,
+            success: true,
+            prompt_tokens: usage.prompt_tokens ?? 0,
+            completion_tokens: usage.completion_tokens ?? 0,
+            total_tokens: usage.total_tokens ?? 0,
+            thinking_output: client.lastThinking,
+            model_used: client.lastModelUsed,
+            system_hash: prefixHash(systemPrompt),
+            user_hash: prefixHash(userPrompt),
+            prompt_ms: (client.lastTimings?.prompt_ms as number | undefined) ?? null,
+            tokens_cached: client.lastTokensCached,
+            slot_id: plannerCache.slotId ?? null,
+          }, ws)
+          send({
+            status: 'planner',
+            output: fullPlanner,
+            thinking_output: client.lastThinking,
+            model_used: client.lastModelUsed,
+          })
+          c.close()
+          return
+        }
 
         if (mode === 'edit') {
           if (!payload.skip_planner) {

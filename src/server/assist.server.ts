@@ -94,6 +94,8 @@ export interface SimpleAssistRequest {
   active_filename: string | null
   skip_planner: boolean
   harness: string | null
+  /** Override the active endpoint for this request (planner model picker). */
+  endpoint_id: string | null
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -115,6 +117,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     active_filename: str(input.active_filename) ?? null,
     skip_planner: input.skip_planner === true,
     harness: typeof input.harness === 'string' ? input.harness : 'api',
+    endpoint_id: str(input.endpoint_id) ?? null,
   }
 }
 
@@ -834,12 +837,13 @@ export function buildChatHistoryMessages(
   sessionId: string | null | undefined,
   settings: AssistSettings,
   logs: SimpleAssistLogEntry[] = [],
+  mode: string = 'chat',
 ): ChatMessage[] {
   if (!sessionId) return []
   const historyTurns = Number(settings.history_turns ?? 5)
   if (!(historyTurns > 0)) return []
   const filtered = logs
-    .filter((log) => log.session_id === sessionId && log.mode === 'chat' && (log.success ?? true))
+    .filter((log) => log.session_id === sessionId && log.mode === mode && (log.success ?? true))
     .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
   const recent = filtered.slice(-historyTurns)
   const out: ChatMessage[] = []
@@ -1159,6 +1163,78 @@ export async function composeChatMessages(
 
   const history =
     (deps.includeHistory ?? true) ? buildChatHistoryMessages(req.session_id ?? null, settings, deps.logs ?? []) : []
+
+  return { system, history, files, user: userParts.join('\n\n') }
+}
+
+/**
+ * Scene-planner chat assembly.
+ *
+ * Planning needs the tail of the draft rather than the narrow cursor window
+ * used by inline edits, so the full current document's last `draftTailChars`
+ * ships in the final user message. History is sent as real append-only
+ * user/assistant pairs (mode `planner`) so the endpoint path can continue a
+ * multi-turn planning conversation.
+ */
+export interface ComposeScenePlannerDeps {
+  settings: AssistSettings
+  /** Loaded scene-planner.md content. */
+  plannerPrompt: string
+  readFile: AssistFileReader
+  logs?: SimpleAssistLogEntry[]
+  expandedTagged?: string[]
+  includeHistory?: boolean
+  /** Maximum characters of the current draft tail to include (default 12000). */
+  draftTailChars?: number
+}
+
+export async function composeScenePlannerMessages(
+  req: SimpleAssistRequest,
+  deps: ComposeScenePlannerDeps,
+): Promise<{ system: string; history: ChatMessage[]; files: string | null; user: string }> {
+  const settings = deps.settings
+  const system = buildStaticSystem(deps.plannerPrompt, settings)
+
+  const tagged = deps.expandedTagged
+    ? sortUniquePaths(deps.expandedTagged)
+    : await expandMentionedFiles({
+        roots: taggedPaths(req),
+        text: req.message,
+        availableFiles: req.available_files,
+        readFile: deps.readFile,
+        ignoredRefFiles: settings.ignored_ref_files,
+      })
+
+  const fileParts: string[] = []
+  if (tagged.length > 0) {
+    const ignored = new Set(settings.ignored_ref_files ?? [])
+    for (const p of tagged) {
+      if (isBlocked(p, ignored)) continue
+      await injectContextFile(fileParts, p, p, deps.readFile)
+    }
+  }
+  await injectPinnedRefFiles(fileParts, new Set(tagged), settings, req.available_files, deps.readFile)
+  const files = joinFilesMessage(fileParts)
+
+  const history =
+    (deps.includeHistory ?? true)
+      ? buildChatHistoryMessages(req.session_id ?? null, settings, deps.logs ?? [], 'planner')
+      : []
+
+  const userParts: string[] = []
+  if (req.active_filename) userParts.push(`ACTIVE_FILE: ${req.active_filename}`)
+
+  const draft = (req.content ?? '').replace(/\r\n/g, '\n').trim()
+  if (draft) {
+    const limit = Math.max(1000, deps.draftTailChars ?? 12000)
+    const tail = draft.length > limit ? draft.slice(-limit) : draft
+    userParts.push(`${draft.length > limit ? 'CURRENT_DRAFT (tail)' : 'CURRENT_DRAFT'}:\n${tail}`)
+  }
+
+  const cursorParagraph = (req.cursor_paragraph_text ?? '').trim()
+  if (cursorParagraph) userParts.push(`CURSOR_PARAGRAPH:\n${cursorParagraph}`)
+
+  userParts.push(`USER_MESSAGE:\n${req.message}`)
 
   return { system, history, files, user: userParts.join('\n\n') }
 }

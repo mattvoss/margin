@@ -23,6 +23,7 @@ import { DATA_ROOT } from './env.server'
 
 import characterTrackerPrompt from '../../prompts/character-tracker.md?raw'
 import harnessEditPrompt from '../../prompts/harness-edit.md?raw'
+import scenePlannerPrompt from '../../prompts/scene-planner.md?raw'
 import simpleChatPrompt from '../../prompts/simple-chat.md?raw'
 import simplePlannerPrompt from '../../prompts/simple-planner.md?raw'
 import simpleWriterPrompt from '../../prompts/simple-writer.md?raw'
@@ -31,6 +32,7 @@ import simpleWriterPrompt from '../../prompts/simple-writer.md?raw'
 export const BUNDLED_PROMPTS: Readonly<Record<string, string>> = {
   'character-tracker.md': characterTrackerPrompt,
   'harness-edit.md': harnessEditPrompt,
+  'scene-planner.md': scenePlannerPrompt,
   'simple-chat.md': simpleChatPrompt,
   'simple-planner.md': simplePlannerPrompt,
   'simple-writer.md': simpleWriterPrompt,
