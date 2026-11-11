@@ -354,12 +354,17 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           userPrompt = plannerMsgs.fullUser
           const plannerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
           console.log(formatCacheInfo('scene_planner', systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
-          const plannerMaxTokens = Math.max(pickWriterMaxTokens(settings as never) ?? 0, 1200)
+          // Planning needs room for both reasoning and a full scene plan; the
+          // writer's verbosity budget (250–1000 tokens) is too small and makes
+          // thinking models run out mid-reasoning with an empty answer.
+          const writerMax = pickWriterMaxTokens(settings as never)
+          const plannerMaxTokens = writerMax === null ? undefined : Math.max(writerMax, 4096)
           let fullPlanner = ''
           for await (const chunk of client.streamWithMessages(plannerMsgs.messages, {
             temperature: 0.7,
             maxTokens: plannerMaxTokens,
             signal,
+            onThinking: (chunk) => send({ status: 'thinking_chunk', chunk }),
             cachePrompt: plannerCache.cachePrompt,
             nKeep: plannerCache.nKeep,
             slotId: plannerCache.slotId,

@@ -68,6 +68,8 @@ export interface GenerateOptions {
   slotId?: number;
   /** See PayloadOptions.enableThinking. */
   enableThinking?: boolean;
+  /** Called for each captured reasoning delta (when the model thinks). */
+  onThinking?: (chunk: string) => void;
   /**
    * When `message.content` is empty, use `reasoning_content` as the answer.
    * Intended for structured utility calls; prose callers should leave this off.
@@ -322,13 +324,14 @@ export class LLMClient {
     this.lastThinking = null;
     this.lastContentChars = null;
     const payload = this.payloadWithMessages(messages, true, opts);
-    yield* this.runStream(payload, opts.signal);
+    yield* this.runStream(payload, opts);
   }
 
   private async *runStream(
     payload: ChatPayload,
-    signal?: AbortSignal,
+    opts: GenerateOptions = {},
   ): AsyncGenerator<string> {
+    const signal = opts.signal;
     const openings = [...OPENING_TAGS, ...this.customOpeningTags];
     const closings = [...CLOSING_TAGS, ...this.customClosingTags];
     const maxTagLen = Math.max(...[...openings, ...closings].map((t) => t.length), 12);
@@ -340,6 +343,7 @@ export class LLMClient {
 
     const takeThinking = (text: string): void => {
       thinking += text;
+      if (text) opts.onThinking?.(text);
     };
 
     let resp: Response;

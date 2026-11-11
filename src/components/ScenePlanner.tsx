@@ -68,7 +68,12 @@ interface PlannerMessage {
   content: string
   thinking?: string
   model?: string
+  /** True when the model only produced reasoning and no final answer. */
+  incomplete?: boolean
 }
+
+const INCOMPLETE_NOTICE =
+  'The model returned reasoning but no final plan. Expand **Thought process** below to read what it produced, then try again.'
 
 type ModelChoice =
   | { kind: 'endpoint'; id: string }
@@ -256,20 +261,20 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           const log = raw as Record<string, unknown>
           const instruction = typeof log.instruction === 'string' ? log.instruction.trim() : ''
           const output = typeof log.output === 'string' ? log.output.trim() : ''
+          const thinking =
+            typeof log.thinking_output === 'string' ? log.thinking_output.trim() : ''
           const id = String(log.id ?? crypto.randomUUID())
           if (instruction) {
             restored.push({ id: `${id}-user`, role: 'user', content: instruction })
           }
-          if (output) {
+          if (output || thinking) {
             restored.push({
               id: `${id}-assistant`,
               role: 'assistant',
-              content: output,
-              thinking:
-                typeof log.thinking_output === 'string' && log.thinking_output
-                  ? log.thinking_output
-                  : undefined,
+              content: output || INCOMPLETE_NOTICE,
+              thinking: thinking || undefined,
               model: typeof log.model_used === 'string' ? log.model_used : undefined,
+              incomplete: !output,
             })
           }
         }
@@ -355,16 +360,19 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     let committed = false
 
     const commit = (content: string, thought: string, usedModel: string | null) => {
-      if (committed || !content.trim()) return
+      const trimmedContent = content.trim()
+      const trimmedThinking = thought.trim()
+      if (committed || (!trimmedContent && !trimmedThinking)) return
       committed = true
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: content.trim(),
-          thinking: thought.trim() || undefined,
+          content: trimmedContent || INCOMPLETE_NOTICE,
+          thinking: trimmedThinking || undefined,
           model: usedModel || undefined,
+          incomplete: !trimmedContent,
         },
       ])
     }
@@ -540,11 +548,14 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                       <Message key={message.id} className="group">
                         <MessageContent className="w-full">
                           {message.thinking && (
-                            <details className="text-[10px] text-[var(--text-muted)]">
+                            <details
+                              open={message.incomplete}
+                              className="text-[10px] text-[var(--text-muted)]"
+                            >
                               <summary className="cursor-pointer select-none py-0.5">
-                                Thought process
+                                {message.incomplete ? 'Thought process (no final plan)' : 'Thought process'}
                               </summary>
-                              <pre className="mt-1 whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
+                              <pre className="mt-1 max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
                                 {message.thinking}
                               </pre>
                             </details>
@@ -605,7 +616,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                         {streamingThinking && (
                           <details open className="text-[10px] text-[var(--text-muted)]">
                             <summary className="cursor-pointer select-none py-0.5">Thinking…</summary>
-                            <pre className="mt-1 whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
+                            <pre className="mt-1 max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
                               {streamingThinking}
                             </pre>
                           </details>

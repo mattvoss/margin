@@ -88,3 +88,46 @@ describe('LLMClient blocking responses', () => {
     ).toBe('{"characters":[]}')
   })
 })
+
+describe('LLMClient streaming responses', () => {
+  it('streams captured reasoning through the thinking callback without mixing it into the answer', async () => {
+    const encoder = new TextEncoder()
+    const body = [
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'deliberation' } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'The scene opens at dusk.' } }] })}\n\n`,
+      'data: [DONE]\n\n',
+    ].join('')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(body))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+      ),
+    )
+
+    const client = new LLMClient({
+      baseUrl: 'http://mock.local/v1',
+      model: 'mock',
+      isThinking: true,
+    })
+    const thinking: string[] = []
+    const answer: string[] = []
+    for await (const chunk of client.streamWithMessages(
+      [{ role: 'system', content: 'system' }, { role: 'user', content: 'plan' }],
+      { onThinking: (chunk) => thinking.push(chunk) },
+    )) {
+      answer.push(chunk)
+    }
+
+    expect(thinking.join('')).toBe('deliberation')
+    expect(answer.join('')).toBe('The scene opens at dusk.')
+    expect(client.lastThinking).toBe('deliberation')
+  })
+})
