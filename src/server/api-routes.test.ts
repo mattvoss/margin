@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -333,6 +333,31 @@ describe('assist', () => {
     const l = await invoke(AssistSimpleLogsRoute, 'GET', 'assist/simple/logs')
     expect(l.status).toBe(200)
     expect(Array.isArray(l.data)).toBe(true)
+  })
+
+  it('filters simple logs by session and mode', async () => {
+    const ws = await requestWorkspaceDir(new Request('http://localhost/x'))
+    const dir = join(ws, 'outputs', 'ai_logs')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'filter-session.json'),
+      JSON.stringify([
+        { id: '1', timestamp: '2026-01-01T00:00:00.000Z', mode: 'chat', session_id: 'filter-session' },
+        { id: '2', timestamp: '2026-01-02T00:00:00.000Z', mode: 'planner', session_id: 'filter-session' },
+        { id: '3', timestamp: '2026-01-03T00:00:00.000Z', mode: 'planner', session_id: 'other' },
+      ]),
+      'utf-8',
+    )
+
+    const planner = await invoke(
+      AssistSimpleLogsRoute,
+      'GET',
+      'assist/simple/logs?session_id=filter-session&mode=planner',
+    )
+    expect((planner.data as Array<{ id: string }>).map((entry) => entry.id)).toEqual(['2'])
+
+    const session = await invoke(AssistSimpleLogsRoute, 'GET', 'assist/simple/logs?session_id=filter-session')
+    expect((session.data as Array<{ id: string }>).map((entry) => entry.id)).toEqual(['1', '2'])
   })
 })
 

@@ -9,6 +9,8 @@ import {
   buildStaticSystem,
   cacheOptsForSession,
   composeChatMessages,
+  composeScenePlannerMessages,
+  normalizeSimpleAssistRequest,
   prefixHash,
   runPlannerPrompt,
   sortUniquePaths,
@@ -197,6 +199,7 @@ describe('chat prompt layout', () => {
         active_filename: 'ch1.md',
         skip_planner: true,
         harness: 'api',
+        endpoint_id: null,
       },
       {
         settings,
@@ -250,6 +253,7 @@ describe('chat prompt layout', () => {
         active_filename: null,
         skip_planner: true,
         harness: 'api',
+        endpoint_id: null,
       },
       {
         settings,
@@ -280,6 +284,7 @@ describe('chat prompt layout', () => {
         active_filename: null,
         skip_planner: true,
         harness: 'api',
+        endpoint_id: null,
       },
       {
         settings: { ...settings, pinned_ref_files: ['styles/c.md'] },
@@ -302,6 +307,116 @@ describe('chat history pairs', () => {
     ]
     const msgs = buildChatHistoryMessages('s1', { ...settings, history_turns: 1 }, logs)
     expect(msgs).toEqual([{ role: 'user', content: 'q' }])
+  })
+
+  it('can filter to planner-mode turns only', () => {
+    const logs = [
+      log({ instruction: 'chat q', output: 'chat a', mode: 'chat' }),
+      log({ instruction: 'plan q', output: 'plan a', mode: 'planner' }),
+    ]
+    expect(buildChatHistoryMessages('s1', settings, logs, 'planner')).toEqual([
+      { role: 'user', content: 'plan q' },
+      { role: 'assistant', content: 'plan a' },
+    ])
+    expect(buildChatHistoryMessages('s1', settings, logs, 'chat')).toEqual([
+      { role: 'user', content: 'chat q' },
+      { role: 'assistant', content: 'chat a' },
+    ])
+  })
+})
+
+describe('scene planner prompt layout', () => {
+  const request = (overrides: Record<string, unknown> = {}) => ({
+    content: 'Start of the draft.\n\nThe current paragraph.',
+    message: 'What happens next?',
+    mode: 'planner',
+    session_id: 'p1',
+    history: [],
+    selected_text: null,
+    cursor_paragraph_text: 'The current paragraph.',
+    ref_files: null,
+    available_files: [],
+    active_filename: 'chapters/c1.md',
+    skip_planner: true,
+    harness: 'none',
+    endpoint_id: 'local',
+    ...overrides,
+  })
+
+  it('freezes system and ships draft, cursor, files, and planner history', async () => {
+    const logs = [
+      log({
+        instruction: 'plan q1',
+        output: 'plan a1',
+        mode: 'planner',
+        session_id: 'p1',
+        timestamp: '2026-01-01T00:00:00.000Z',
+      }),
+      log({
+        instruction: 'plan q2',
+        output: 'plan a2',
+        mode: 'planner',
+        session_id: 'p1',
+        timestamp: '2026-01-02T00:00:00.000Z',
+      }),
+      log({
+        instruction: 'chat q',
+        output: 'chat a',
+        mode: 'chat',
+        session_id: 'p1',
+        timestamp: '2026-01-03T00:00:00.000Z',
+      }),
+    ]
+    const built = await composeScenePlannerMessages(request({ ref_files: [{ path: 'characters/elara.md' }] }), {
+      settings,
+      plannerPrompt: 'planner base',
+      readFile: async (p: string) => `content-of-${p}`,
+      logs,
+    })
+
+    expect(built.system).toBe('planner base')
+    expect(built.system).not.toContain('current paragraph')
+    expect(built.user).toContain('ACTIVE_FILE: chapters/c1.md')
+    expect(built.user).toContain('CURRENT_DRAFT:\nStart of the draft.')
+    expect(built.user).toContain('CURSOR_PARAGRAPH:\nThe current paragraph.')
+    expect(built.user.endsWith('USER_MESSAGE:\nWhat happens next?')).toBe(true)
+    expect(built.files).toContain('--- FILE: characters/elara.md ---\ncontent-of-characters/elara.md')
+    expect(built.history).toEqual([
+      { role: 'user', content: 'plan q1' },
+      { role: 'assistant', content: 'plan a1' },
+      { role: 'user', content: 'plan q2' },
+      { role: 'assistant', content: 'plan a2' },
+    ])
+  })
+
+  it('keeps only the draft tail when the document exceeds the window', async () => {
+    const content = `STARTMARK${'a'.repeat(2000)}ENDMARK`
+    const built = await composeScenePlannerMessages(request({ content }), {
+      settings,
+      plannerPrompt: 'planner base',
+      readFile: async () => null,
+      includeHistory: false,
+      draftTailChars: 1000,
+    })
+
+    expect(built.user).toContain('CURRENT_DRAFT (tail)')
+    expect(built.user).toContain('ENDMARK')
+    expect(built.user).not.toContain('STARTMARK')
+  })
+})
+
+describe('simple assist request normalization', () => {
+  it('defaults endpoint_id to null', () => {
+    const req = normalizeSimpleAssistRequest({ content: '', message: 'hi' })
+    expect(req.endpoint_id).toBeNull()
+    expect(req.mode).toBe('chat')
+    expect(req.harness).toBe('api')
+  })
+
+  it('keeps a per-request endpoint override and planner mode', () => {
+    const req = normalizeSimpleAssistRequest({ message: 'hi', mode: 'planner', endpoint_id: 'local' })
+    expect(req.mode).toBe('planner')
+    expect(req.endpoint_id).toBe('local')
   })
 })
 
