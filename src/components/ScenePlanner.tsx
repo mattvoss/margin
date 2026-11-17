@@ -11,6 +11,7 @@ import {
 } from 'react'
 import {
   ArrowUp,
+  ChartNoAxesColumnIncreasing,
   Check,
   ChevronDown,
   Compass,
@@ -67,6 +68,9 @@ import {
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
 import { MessageScroller } from '@/components/ui/message-scroller'
 import { Trace, TraceIcon, TraceLine, TraceTitle } from '@/components/ui/trace'
+import { Context, ContextLabel, ContextValue } from '@/components/ui/context'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Progress } from '@/components/ui/progress'
 
 interface PlannerHarness {
   id: string
@@ -313,6 +317,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   const [toolRows, setToolRows] = useState<Array<{ tool: string; detail: string }>>([])
   const [error, setError] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [lastPromptTokens, setLastPromptTokens] = useState(0)
+  const [lastCompletionTokens, setLastCompletionTokens] = useState(0)
 
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -345,6 +351,22 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     [choice, settings, harnessList],
   )
   const modelLabel = choiceLabel(resolvedChoice, settings, harnessList)
+  const contextWindow = useMemo(() => {
+    let value: number | undefined
+    if (resolvedChoice?.kind === 'harness') {
+      value = settings.harnesses?.[resolvedChoice.id]?.context_window
+    } else if (resolvedChoice?.kind === 'endpoint') {
+      value =
+        settings.endpoints?.[resolvedChoice.id]?.context_window ??
+        settings.default_context_window ??
+        8192
+    }
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  }, [resolvedChoice, settings])
+  const contextPercent = contextWindow
+    ? Math.min(100, (lastPromptTokens / contextWindow) * 100)
+    : 0
 
   useEffect(() => {
     writeStored(storageKey('session', workspace), sessionId)
@@ -417,6 +439,13 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
             })
           }
         }
+        const latest = data.at(-1) as Record<string, unknown> | undefined
+        setLastPromptTokens(
+          typeof latest?.prompt_tokens === 'number' ? latest.prompt_tokens : 0,
+        )
+        setLastCompletionTokens(
+          typeof latest?.completion_tokens === 'number' ? latest.completion_tokens : 0,
+        )
         setMessages((prev) => (prev.length > 0 ? prev : restored))
       })
       .catch((err) => {
@@ -448,6 +477,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     setSessionId(next)
     setMessages([])
     setInput('')
+    setLastPromptTokens(0)
+    setLastCompletionTokens(0)
     inputRef.current?.replaceChildren()
     setMentionOpen(false)
     setError('')
@@ -575,6 +606,12 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
             if (typeof data.model_used === 'string') {
               model = data.model_used
               setStreamingModel(model)
+            }
+            if (typeof data.prompt_tokens === 'number') {
+              setLastPromptTokens(data.prompt_tokens)
+            }
+            if (typeof data.completion_tokens === 'number') {
+              setLastCompletionTokens(data.completion_tokens)
             }
           } else if (status === 'error') {
             setError(String(data.detail || 'The planner could not finish.'))
@@ -973,6 +1010,53 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
+              {contextWindow && (
+                <HoverCard>
+                  <HoverCardTrigger
+                    render={
+                      <InputGroupButton
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 px-2 font-mono text-[10px]"
+                        aria-label={`Planner context ${Math.round(contextPercent)}% used`}
+                      />
+                    }
+                  >
+                    <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
+                    <span>{Math.round(contextPercent)}%</span>
+                  </HoverCardTrigger>
+                  <HoverCardContent align="start" side="top" className="w-64 gap-3 p-3">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-medium">Planner context</span>
+                      <span className="text-muted-foreground">
+                        {lastPromptTokens.toLocaleString()} / {contextWindow.toLocaleString()}
+                      </span>
+                    </div>
+                    <Progress value={contextPercent} aria-label="Planner context used" />
+                    <Context className="text-[var(--text-secondary)] leading-relaxed">
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Last prompt:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {lastPromptTokens.toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Last response:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {lastCompletionTokens.toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Remaining:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {Math.max(0, contextWindow - lastPromptTokens).toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                    </Context>
+                  </HoverCardContent>
+                </HoverCard>
+              )}
               <InputGroupButton
                 type="button"
                 variant="ghost"

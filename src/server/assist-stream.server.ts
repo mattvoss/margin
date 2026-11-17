@@ -321,6 +321,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               harness,
               output: fullOutput,
               thinking_output: fullThinking || null,
+              prompt_tokens: usagePrompt,
+              completion_tokens: usageCompletion,
               model_used: `${harness}:${String(overrides[harness]?.model ?? 'default')}`,
             })
           } else {
@@ -408,6 +410,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             status: 'planner',
             output: fullPlanner,
             thinking_output: client.lastThinking,
+            prompt_tokens: usage.prompt_tokens ?? 0,
+            completion_tokens: usage.completion_tokens ?? 0,
             model_used: client.lastModelUsed,
           })
           c.close()
