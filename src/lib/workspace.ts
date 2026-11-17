@@ -23,3 +23,25 @@ export function isSampleWorkspace(dir: string | null | undefined): boolean {
   const d = String(dir).trim()
   return !d || d === SAMPLE_WORKSPACE_SENTINEL
 }
+
+/** Stable localStorage key for per-workspace client state. */
+export function workspaceKey(dir: string | null | undefined): string {
+  return selectedWorkspaceDir(dir) ?? SAMPLE_WORKSPACE_SENTINEL
+}
+
+/**
+ * The last file edited in a workspace, if it still exists in the workspace
+ * listing. Used to reopen that document after a page reload.
+ */
+export function rememberedFilePath(
+  paths: Record<string, string> | null | undefined,
+  dir: string | null | undefined,
+  availablePaths: Iterable<string>,
+): string | null {
+  const remembered = paths?.[workspaceKey(dir)]
+  if (!remembered) return null
+  for (const path of availablePaths) {
+    if (path === remembered) return remembered
+  }
+  return null
+}

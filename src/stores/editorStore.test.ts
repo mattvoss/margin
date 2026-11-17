@@ -25,6 +25,7 @@ beforeEach(() => {
     content: '',
     currentFilePath: null,
     openedFiles: [],
+    lastEditedPaths: {},
     aiPendingEdit: null,
     autoSaveTimer: null,
     isSaving: false,
@@ -249,5 +250,39 @@ describe('autosave while streaming', () => {
     const [, init] = apiFetchMock.mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(String(init.body)) as { content: string }
     expect(body.content).toBe('final content')
+  })
+})
+
+describe('last edited file memory', () => {
+  const file = {
+    name: 'chapter-1.md',
+    path: 'chapters/chapter-1.md',
+    content: 'original',
+    originalContent: 'original',
+  }
+
+  it('records only real edits, keyed by workspace', () => {
+    useEditorStore.setState({
+      currentFilePath: file.path,
+      openedFiles: [file],
+      lastEditedPaths: {},
+    })
+
+    useEditorStore.getState().setContent('original')
+    expect(useEditorStore.getState().lastEditedPaths).toEqual({})
+
+    useEditorStore.getState().setContent('changed')
+    expect(useEditorStore.getState().lastEditedPaths).toEqual({
+      sample: 'chapters/chapter-1.md',
+    })
+
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, linked_workspace_dir: '/ws' },
+    })
+    useEditorStore.getState().setContent('changed again')
+    expect(useEditorStore.getState().lastEditedPaths).toEqual({
+      sample: 'chapters/chapter-1.md',
+      '/ws': 'chapters/chapter-1.md',
+    })
   })
 })

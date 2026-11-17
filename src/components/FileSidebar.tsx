@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/context-menu'
 import { Button } from '@/components/ui/button'
 import { API_BASE, apiFetch } from '../lib/api'
-import { selectedWorkspaceDir, workspacePayload } from '../lib/workspace'
+import { rememberedFilePath, selectedWorkspaceDir, workspacePayload } from '../lib/workspace'
 
 interface FolderNode {
   type: 'folder'
@@ -325,12 +325,20 @@ export function FileSidebar({
           body: JSON.stringify(workspacePayload(effectiveWorkspaceDir)),
         })
         if (!res.ok) throw new Error()
-        const files = await res.json()
+        const files = (await res.json()) as Array<{ name: string; path: string }>
         if (!active) return
         setWorkspaceDir(effectiveWorkspaceDir ? 'custom' : 'sample')
         for (const file of files) {
           addFile({ name: file.name, path: file.path, content: '', originalContent: '' })
         }
+        // Reopen the file this workspace was last editing, so a page reload
+        // lands back in the document instead of an empty editor.
+        const remembered = rememberedFilePath(
+          useEditorStore.getState().lastEditedPaths,
+          effectiveWorkspaceDir,
+          files.map((file) => file.path),
+        )
+        if (remembered) await useEditorStore.getState().openFile(remembered)
       } catch {
         // skip
       }

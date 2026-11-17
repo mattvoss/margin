@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { Editor } from '@tiptap/react'
 import { API_BASE, apiFetch } from '../lib/api'
-import { workspacePayload } from '../lib/workspace'
+import { workspaceKey, workspacePayload } from '../lib/workspace'
 import { useSettingsStore } from './settingsStore'
 import { toast } from './toastStore'
 
@@ -49,6 +49,8 @@ interface EditorState {
   clearFiles: () => void
   currentFilePath: string | null
   setCurrentFilePath: (path: string | null) => void
+  /** Last edited file per workspace key, persisted so a reload can reopen it. */
+  lastEditedPaths: Record<string, string>
   updateFileContent: (path: string, content: string) => void
   markFileClean: (path: string) => void
   aiPendingEdit: { previousContent: string; selectionRange?: { from: number; to: number } | null; highlightFrom?: number; harness?: string; aiContent?: string; aiChangedIdx?: number[] } | null
@@ -94,6 +96,17 @@ export const useEditorStore = create<EditorState>()(
     if (!file) {
       set({ autoSaveTimer: null })
       return
+    }
+    // Remember the document that actually changed so a page reload can reopen
+    // it. Opening a file seeds `content` from the same stored value, so this
+    // only fires for real edits (typing, AI inserts, accepted edits).
+    if (content !== file.content && content !== file.originalContent) {
+      const key = workspaceKey(useSettingsStore.getState().selectedWorkspaceDir())
+      if (state.lastEditedPaths[key] !== path) {
+        set({
+          lastEditedPaths: { ...state.lastEditedPaths, [key]: path },
+        })
+      }
     }
     const contentToSave = state.aiPendingEdit
       ? state.aiPendingEdit.previousContent
@@ -206,6 +219,7 @@ export const useEditorStore = create<EditorState>()(
     })
   },
   currentFilePath: null,
+  lastEditedPaths: {},
   setCurrentFilePath: (currentFilePath) => {
     const state = useEditorStore.getState()
     const timer = state.autoSaveTimer
@@ -366,8 +380,10 @@ export const useEditorStore = create<EditorState>()(
       name: 'margin:editor-workspace',
       storage: createJSONStorage(() => localStorage),
       // Marker only ('custom'/'sample') for instant first paint; file
-      // contents and editor state stay session-only.
-      partialize: (s) => ({ workspaceDir: s.workspaceDir }) as EditorState,
+      // contents and editor state stay session-only. `lastEditedPaths` is a
+      // small per-workspace path map used to reopen the last edited file.
+      partialize: (s) =>
+        ({ workspaceDir: s.workspaceDir, lastEditedPaths: s.lastEditedPaths }) as EditorState,
     },
   ),
 )
