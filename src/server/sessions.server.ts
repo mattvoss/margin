@@ -31,6 +31,8 @@ export interface AiLogEntry {
   ref_files?: unknown
   success: boolean
   prompt_tokens: number
+  /** Peak single-step prompt size for multi-step agent context displays. */
+  context_prompt_tokens?: number | null
   completion_tokens: number
   total_tokens: number
   thinking_output?: string | null

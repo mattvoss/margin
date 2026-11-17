@@ -17,6 +17,7 @@ import {
   Compass,
   Copy,
   CornerDownLeft,
+  FilePenLine,
   Loader2,
   Plus,
   Square,
@@ -91,12 +92,18 @@ interface PlannerMessage {
   content: string
   thinking?: string
   model?: string
+  agent?: 'planner' | 'drafter'
+  planReady?: boolean
   /** True when the model only produced reasoning and no final answer. */
   incomplete?: boolean
 }
 
 const INCOMPLETE_NOTICE =
   'The model returned reasoning but no final plan. Expand **Thought process** below to read what it produced, then try again.'
+
+function isCompleteScenePlan(text: string): boolean {
+  return /(?:SCENE GOAL|BEATS)\s*:/i.test(text)
+}
 
 type ModelChoice =
   | { kind: 'endpoint'; id: string }
@@ -304,6 +311,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     return (stored ? parseChoice(stored) : null) ?? null
   })
   const [messages, setMessages] = useState<PlannerMessage[]>([])
+  const [replyAgent, setReplyAgent] = useState<'planner' | 'drafter'>('planner')
   const [input, setInput] = useState('')
   const [availableFiles, setAvailableFiles] = useState<ReferenceFile[]>([])
   const [mentionOpen, setMentionOpen] = useState(false)
@@ -350,10 +358,26 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
         : defaultChoice(settings, harnessList),
     [choice, settings, harnessList],
   )
-  const modelLabel = choiceLabel(resolvedChoice, settings, harnessList)
+  const choiceModelLabel = choiceLabel(resolvedChoice, settings, harnessList)
+  const draftEndpointId =
+    resolvedChoice?.kind === 'endpoint'
+      ? resolvedChoice.id
+      : settings.active_endpoint && settings.endpoints?.[settings.active_endpoint]
+        ? settings.active_endpoint
+        : endpoints[0]?.[0] ?? null
+  const modelLabel =
+    replyAgent === 'drafter' && draftEndpointId
+      ? settings.endpoints?.[draftEndpointId]?.model || draftEndpointId
+      : choiceModelLabel
   const contextWindow = useMemo(() => {
     let value: number | undefined
-    if (resolvedChoice?.kind === 'harness') {
+    if (replyAgent === 'drafter') {
+      value = draftEndpointId
+        ? settings.endpoints?.[draftEndpointId]?.context_window ??
+          settings.default_context_window ??
+          8192
+        : undefined
+    } else if (resolvedChoice?.kind === 'harness') {
       value = settings.harnesses?.[resolvedChoice.id]?.context_window
     } else if (resolvedChoice?.kind === 'endpoint') {
       value =
@@ -363,7 +387,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     }
     const parsed = Number(value)
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-  }, [resolvedChoice, settings])
+  }, [resolvedChoice, settings, replyAgent, draftEndpointId])
   const contextPercent = contextWindow
     ? Math.min(100, (lastPromptTokens / contextWindow) * 100)
     : 0
@@ -412,14 +436,19 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     let cancelled = false
     setIsRestoring(true)
     apiFetch(
-      `${API_BASE}/api/assist/simple/logs?session_id=${encodeURIComponent(sessionId)}&mode=planner`,
+      `${API_BASE}/api/assist/simple/logs?session_id=${encodeURIComponent(sessionId)}`,
     )
       .then((res) => (res.ok ? res.json() : []))
       .then((data: unknown) => {
         if (cancelled || !Array.isArray(data)) return
         const restored: PlannerMessage[] = []
-        for (const raw of data) {
+        const plannerLogs = data.filter((raw) => {
+          const mode = (raw as Record<string, unknown>).mode
+          return mode === 'planner' || mode === 'planner_draft'
+        })
+        for (const raw of plannerLogs) {
           const log = raw as Record<string, unknown>
+          const agent = log.mode === 'planner_draft' ? 'drafter' : 'planner'
           const instruction = typeof log.instruction === 'string' ? log.instruction.trim() : ''
           const output = typeof log.output === 'string' ? log.output.trim() : ''
           const thinking =
@@ -435,17 +464,25 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               content: output || INCOMPLETE_NOTICE,
               thinking: thinking || undefined,
               model: typeof log.model_used === 'string' ? log.model_used : undefined,
+              agent,
+              planReady: agent === 'planner' && !!output && isCompleteScenePlan(output),
               incomplete: !output,
             })
           }
         }
-        const latest = data.at(-1) as Record<string, unknown> | undefined
+        const latest = plannerLogs.at(-1) as Record<string, unknown> | undefined
         setLastPromptTokens(
-          typeof latest?.prompt_tokens === 'number' ? latest.prompt_tokens : 0,
+          typeof latest?.context_prompt_tokens === 'number'
+            ? latest.context_prompt_tokens
+            : typeof latest?.prompt_tokens === 'number'
+              ? latest.prompt_tokens
+              : 0,
         )
         setLastCompletionTokens(
           typeof latest?.completion_tokens === 'number' ? latest.completion_tokens : 0,
         )
+        const latestAssistant = [...restored].reverse().find((message) => message.role === 'assistant')
+        setReplyAgent(latestAssistant?.agent ?? 'planner')
         setMessages((prev) => (prev.length > 0 ? prev : restored))
       })
       .catch((err) => {
@@ -476,6 +513,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     restoreSessionRef.current = null
     setSessionId(next)
     setMessages([])
+    setReplyAgent('planner')
     setInput('')
     setLastPromptTokens(0)
     setLastCompletionTokens(0)
@@ -501,12 +539,18 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     onOpenChange(false)
   }
 
-  const handleSend = async () => {
+  const handleSend = async (approvedPlan?: PlannerMessage) => {
+    const isDraftHandoff = !!approvedPlan
+    const isDrafting = isDraftHandoff || replyAgent === 'drafter'
     const composer = plannerInputData(inputRef.current)
-    const text = composer.text
+    const text = isDraftHandoff ? 'Draft this scene from the approved plan.' : composer.text
     if (!text || isStreaming) return
-    if (!resolvedChoice) {
+    if (!isDrafting && !resolvedChoice) {
       toast.error('Add an endpoint in Settings → Endpoints, or install an agent harness.')
+      return
+    }
+    if (isDrafting && !draftEndpointId) {
+      toast.error('Choose an endpoint to draft the scene. Agent harnesses are used for planning only.')
       return
     }
 
@@ -517,9 +561,11 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
       content: text,
     }
     setMessages((prev) => [...prev, userMessage])
-    setInput('')
-    inputRef.current?.replaceChildren()
-    setMentionOpen(false)
+    if (!isDraftHandoff) {
+      setInput('')
+      inputRef.current?.replaceChildren()
+      setMentionOpen(false)
+    }
     setError('')
     setStreamingText('')
     setStreamingThinking('')
@@ -534,6 +580,10 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     let model: string | null = null
     let committed = false
 
+    const agentRole: PlannerMessage['agent'] = isDrafting ? 'drafter' : 'planner'
+    const fallbackModel = isDrafting
+      ? settings.endpoints?.[draftEndpointId!]?.model || draftEndpointId!
+      : modelLabel
     const commit = (content: string, thought: string, usedModel: string | null) => {
       const trimmedContent = content.trim()
       const trimmedThinking = thought.trim()
@@ -547,9 +597,12 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           content: trimmedContent || INCOMPLETE_NOTICE,
           thinking: trimmedThinking || undefined,
           model: usedModel || undefined,
+          agent: agentRole,
+          planReady: !isDrafting && !!trimmedContent && isCompleteScenePlan(trimmedContent),
           incomplete: !trimmedContent,
         },
       ])
+      setReplyAgent(agentRole)
     }
 
     try {
@@ -560,11 +613,17 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
       const body: Record<string, unknown> = {
         content: state.content,
         message: text,
-        mode: 'planner',
+        mode: isDrafting ? 'planner_draft' : 'planner',
         session_id: sessionId,
-        harness: resolvedChoice.kind === 'harness' ? resolvedChoice.id : 'none',
-        endpoint_id: resolvedChoice.kind === 'endpoint' ? resolvedChoice.id : null,
-        ref_files: composer.refs,
+        harness:
+          !isDrafting && resolvedChoice?.kind === 'harness' ? resolvedChoice.id : 'none',
+        endpoint_id: isDrafting
+          ? draftEndpointId
+          : resolvedChoice?.kind === 'endpoint'
+            ? resolvedChoice.id
+            : null,
+        draft_plan: approvedPlan?.content ?? null,
+        ref_files: isDraftHandoff ? [] : composer.refs,
         available_files: mentionFiles,
         active_filename: activeFilename,
         active_file_path: state.currentFilePath,
@@ -621,7 +680,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
       )
 
       if (runIdRef.current === runId) {
-        commit(full, thinking, model ?? modelLabel)
+        commit(full, thinking, model ?? fallbackModel)
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
@@ -831,6 +890,22 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                     ) : (
                       <Message key={message.id} className="group">
                         <MessageContent className="w-full">
+                          {message.agent === 'drafter' && (
+                            <div className="flex items-center gap-2">
+                              <span className="w-fit rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                                Scene Drafter
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                className="text-[9px] text-[var(--text-muted)]"
+                                onClick={() => setReplyAgent('planner')}
+                                disabled={isStreaming}
+                              >
+                                Continue planning
+                              </Button>
+                            </div>
+                          )}
                           {message.thinking && (
                             <details
                               open={message.incomplete}
@@ -847,12 +922,25 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                           <AssistMarkdown className="assist-markdown">
                             {message.content}
                           </AssistMarkdown>
+                          {message.agent === 'planner' && message.planReady && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-1 w-fit text-[10px]"
+                              disabled={isStreaming || !draftEndpointId || !!input.trim()}
+                              onClick={() => void handleSend(message)}
+                              aria-label="Approve this plan and draft the scene"
+                            >
+                              <FilePenLine className="size-3.5" />
+                              Draft this scene
+                            </Button>
+                          )}
                           <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                             <Button
                               variant="ghost"
                               size="icon-sm"
                               onClick={() => void handleCopy(message)}
-                              aria-label="Copy plan"
+                              aria-label={message.agent === 'drafter' ? 'Copy scene draft' : 'Copy plan'}
                             >
                               {copiedId === message.id ? (
                                 <Check className="text-green-600 dark:text-green-400" />
@@ -864,7 +952,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                               variant="ghost"
                               size="icon-sm"
                               onClick={() => handleInsert(message)}
-                              aria-label="Insert plan at cursor"
+                              aria-label={message.agent === 'drafter' ? 'Insert scene draft at cursor' : 'Insert plan at cursor'}
                             >
                               <CornerDownLeft />
                             </Button>
@@ -1005,8 +1093,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               onClick={handleComposerClick}
               onMouseDown={handleComposerMouseDown}
               onPaste={handleComposerPaste}
-              data-placeholder="Plan the next scene…"
-              aria-label="Planner message"
+              data-placeholder={replyAgent === 'drafter' ? 'Continue drafting…' : 'Plan the next scene…'}
+              aria-label={replyAgent === 'drafter' ? 'Drafting agent message' : 'Planner message'}
               className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
@@ -1170,7 +1258,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           )}
           {resolvedChoice && (
             <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
-              Type @ to attach a workspace reference, such as @general.
+              Type @ to attach a workspace reference, such as @general. Replying to the Scene {replyAgent === 'drafter' ? 'Drafter' : 'Planner'}.
             </p>
           )}
         </div>

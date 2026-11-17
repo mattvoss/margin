@@ -94,6 +94,8 @@ export interface SimpleAssistRequest {
   active_filename: string | null
   /** Workspace-relative path of the currently open file, when known. */
   active_file_path?: string | null
+  /** Approved plan passed to the separate scene-drafting agent. */
+  draft_plan?: string | null
   skip_planner: boolean
   harness: string | null
   /** Override the active endpoint for this request (planner model picker). */
@@ -118,6 +120,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     available_files: arr(input.available_files),
     active_filename: str(input.active_filename) ?? null,
     active_file_path: str(input.active_file_path) ?? null,
+    draft_plan: str(input.draft_plan) ?? null,
     skip_planner: input.skip_planner === true,
     harness: typeof input.harness === 'string' ? input.harness : 'api',
     endpoint_id: str(input.endpoint_id) ?? null,
@@ -840,13 +843,14 @@ export function buildChatHistoryMessages(
   sessionId: string | null | undefined,
   settings: AssistSettings,
   logs: SimpleAssistLogEntry[] = [],
-  mode: string = 'chat',
+  mode: string | string[] = 'chat',
 ): ChatMessage[] {
   if (!sessionId) return []
   const historyTurns = Number(settings.history_turns ?? 5)
   if (!(historyTurns > 0)) return []
+  const modes = new Set(Array.isArray(mode) ? mode : [mode])
   const filtered = logs
-    .filter((log) => log.session_id === sessionId && log.mode === mode && (log.success ?? true))
+    .filter((log) => log.session_id === sessionId && modes.has(log.mode) && (log.success ?? true))
     .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
   const recent = filtered.slice(-historyTurns)
   const out: ChatMessage[] = []
@@ -1187,6 +1191,8 @@ export interface ComposeScenePlannerDeps {
   logs?: SimpleAssistLogEntry[]
   expandedTagged?: string[]
   includeHistory?: boolean
+  /** Log mode to rebuild as history (defaults to planner turns). */
+  historyMode?: string | string[]
   /** Maximum characters of the current draft tail to include (default 12000). */
   draftTailChars?: number
 }
@@ -1231,7 +1237,12 @@ export async function composeScenePlannerMessages(
 
   const history =
     (deps.includeHistory ?? true)
-      ? buildChatHistoryMessages(req.session_id ?? null, settings, deps.logs ?? [], 'planner')
+      ? buildChatHistoryMessages(
+          req.session_id ?? null,
+          settings,
+          deps.logs ?? [],
+          deps.historyMode ?? 'planner',
+        )
       : []
 
   const userParts: string[] = []
@@ -1246,6 +1257,9 @@ export async function composeScenePlannerMessages(
 
   const cursorParagraph = (req.cursor_paragraph_text ?? '').trim()
   if (cursorParagraph) userParts.push(`CURSOR_PARAGRAPH:\n${cursorParagraph}`)
+
+  const draftPlan = (req.draft_plan ?? '').trim()
+  if (draftPlan) userParts.push(`APPROVED_SCENE_PLAN:\n${draftPlan}`)
 
   userParts.push(`USER_MESSAGE:\n${req.message}`)
 

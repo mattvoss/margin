@@ -71,6 +71,8 @@ describe('prompt resolution', () => {
     expect(names).toContain('simple-chat.md')
     expect(names).toContain('harness-edit.md')
     expect(names).toContain('character-tracker.md')
+    expect(names).toContain('scene-planner.md')
+    expect(names).toContain('scene-drafter.md')
   })
 
   it('ships a readable character tracker prompt', async () => {

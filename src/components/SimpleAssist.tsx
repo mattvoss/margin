@@ -71,7 +71,7 @@ import type { FileEntry } from '../stores/editorStore'
 interface SimpleLogEntry {
   id: string
   timestamp: string
-  mode: 'chat' | 'edit_plan' | 'edit_write' | 'planner'
+  mode: 'chat' | 'edit_plan' | 'edit_write' | 'planner' | 'planner_draft'
   session_id?: string
   system_prompt: string
   user_prompt: string
@@ -658,7 +658,11 @@ export function SimpleAssist() {
         const data = await res.json()
         // Planner turns are persisted for the dedicated planner session, not
         // the assist chat history. Keep them out of this panel's sessions.
-        setHistoryLogs((Array.isArray(data) ? data : []).filter((entry: SimpleLogEntry) => entry.mode !== 'planner'))
+        setHistoryLogs(
+          (Array.isArray(data) ? data : []).filter(
+            (entry: SimpleLogEntry) => entry.mode !== 'planner' && entry.mode !== 'planner_draft',
+          ),
+        )
       }
     } catch (err) {
       console.error('Failed to fetch simple logs:', err)
@@ -760,7 +764,7 @@ export function SimpleAssist() {
   )
 
   const displayLogs = useMemo(() =>
-    filteredLogs.filter(l => l.mode !== 'edit_plan' && l.mode !== 'planner'),
+    filteredLogs.filter(l => l.mode !== 'edit_plan' && l.mode !== 'planner' && l.mode !== 'planner_draft'),
     [filteredLogs]
   )
 

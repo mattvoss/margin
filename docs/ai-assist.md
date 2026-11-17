@@ -63,12 +63,14 @@ Use Chat mode for brainstorming, asking questions, or discussing your content wi
 The **Plan next scene** button in the Assist panel header (the compass icon) opens a large, interactive planning dialog. Unlike Edit mode, the Scene Planner never changes your manuscript — it is a multi-turn conversation about what should happen next.
 
 - **What it reads**: the full currently selected file as an attachment, plus its recent tail and the paragraph your cursor is on, any `@`-referenced or pinned files, and the tracked active cast. This grounds the plan in the selected document without sending the whole workspace.
-- **What it does**: asks focused questions when your goal is unclear, offers two or three distinct directions with their trade-offs, then converges on a concrete plan with scene goal, POV/setting, beats, conflict, continuity notes, opening direction, and an ending hook.
-- **Models**: the picker in the composer lists your configured **endpoints** and installed **agent harnesses**. Endpoint planning runs through `POST /api/assist/simple` with `mode: 'planner'`; harness planning resumes the harness session like chat but instructs the agent to read only, never edit. That read-only rule is a prompt instruction, not a sandbox — choose an endpoint if you need a hard guarantee. The chosen model is remembered per workspace.
+- **What it does**: asks focused questions when your goal is unclear, offers two or three distinct directions with their trade-offs, then converges on a concrete plan with scene goal, POV/setting, beats, conflict, continuity notes, opening direction, and an ending hook. It asks whether you want a draft and never drafts on its own.
+- **Models**: the picker in the composer lists your configured **endpoints** and installed **agent harnesses**. Endpoint planning uses an AI SDK `ToolLoopAgent` with a bounded, read-only workspace file tool; harness planning resumes the harness session like chat but instructs the agent to read only, never edit. That harness rule is a prompt instruction, not a sandbox. The chosen model is remembered per workspace.
 - **Persistence**: the planner session ID and model choice are stored in `localStorage` per workspace. Closing the dialog, switching files, or reloading the app restores the same planning conversation from planner-mode logs. **New plan** starts a fresh thread.
 - **Working with the result**: copy a plan, or insert it at your cursor to turn it into notes or a scene skeleton. Planner turns are excluded from the main Chat history and session list.
 
-The planner's standing instructions are editable in **Settings > Context** under *Scene Planner* (`prompts/scene-planner.md`). Treat the plan as a draft: the Writer still produces the prose, and you remain in control of what lands on the page.
+After a concrete plan, choose **Draft this scene** to explicitly hand it to the separate Scene Drafter agent. The drafter uses the selected endpoint (for harness-based planning, the active endpoint), receives the approved plan and story context, and returns prose in the chat for you to review or insert. It has no workspace-writing tools and cannot edit files.
+
+The planner and drafter instructions are editable in **Settings > Context** under *Scene Planner* and *Scene Drafter* (`prompts/scene-planner.md`, `prompts/scene-drafter.md`). You remain in control of what lands on the page.
 
 > See [Prompts](./configuration/prompts.md) for the full prompt list.
 

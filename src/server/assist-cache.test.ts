@@ -322,6 +322,19 @@ describe('chat history pairs', () => {
       { role: 'user', content: 'chat q' },
       { role: 'assistant', content: 'chat a' },
     ])
+    const draftLog = log({
+      instruction: 'Draft this scene',
+      output: 'The scene begins…',
+      mode: 'planner_draft',
+    })
+    expect(
+      buildChatHistoryMessages('s1', settings, [...logs, draftLog], ['planner', 'planner_draft']),
+    ).toEqual([
+      { role: 'user', content: 'plan q' },
+      { role: 'assistant', content: 'plan a' },
+      { role: 'user', content: 'Draft this scene' },
+      { role: 'assistant', content: 'The scene begins…' },
+    ])
   })
 })
 
@@ -335,6 +348,7 @@ describe('scene planner prompt layout', () => {
     selected_text: null,
     cursor_paragraph_text: 'The current paragraph.',
     ref_files: null,
+    draft_plan: null,
     available_files: [],
     active_filename: 'c1.md',
     active_file_path: 'chapters/c1.md',
@@ -406,6 +420,28 @@ describe('scene planner prompt layout', () => {
     expect(built.user).toContain('CURRENT_DRAFT (tail)')
     expect(built.user).toContain('ENDMARK')
     expect(built.user).not.toContain('STARTMARK')
+  })
+
+  it('passes an explicitly approved scene plan as a separate prompt section', async () => {
+    const built = await composeScenePlannerMessages(
+      request({
+        mode: 'planner_draft',
+        message: 'Draft this scene from my approved plan.',
+        draft_plan: 'SCENE GOAL:\nExpose the hidden letter.\n\nBEATS:\n1. She finds it.',
+      }),
+      {
+        settings,
+        plannerPrompt: 'drafting instructions',
+        readFile: async () => null,
+        includeHistory: false,
+      },
+    )
+
+    expect(built.system).toBe('drafting instructions')
+    expect(built.user).toContain(
+      'APPROVED_SCENE_PLAN:\nSCENE GOAL:\nExpose the hidden letter.\n\nBEATS:\n1. She finds it.',
+    )
+    expect(built.user.endsWith('USER_MESSAGE:\nDraft this scene from my approved plan.')).toBe(true)
   })
 })
 

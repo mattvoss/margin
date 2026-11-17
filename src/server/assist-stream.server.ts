@@ -49,6 +49,8 @@ import {
 } from './post-process.server'
 import { normalizePostProcessing } from '../lib/postProcessing'
 import { expandMentionedFiles } from './mentions.server'
+import { createSceneDraftingAgent, createScenePlannerAgent } from './scene-agents.server'
+import type { ModelMessage } from 'ai'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -70,16 +72,38 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             return null
           })
         const mode = payload.mode.trim().toLowerCase()
-        const harness = payload.harness && payload.harness !== 'api' ? payload.harness : null
+        const isPlannerDraft = mode === 'planner_draft'
+        const harness =
+          !isPlannerDraft && payload.harness && payload.harness !== 'api'
+            ? payload.harness
+            : null
         const isPlanner = mode === 'planner'
-        const harnessMode: 'chat' | 'edit' = isPlanner ? 'chat' : mode === 'edit' ? 'edit' : 'chat'
+        const harnessMode: 'chat' | 'edit' = isPlanner || isPlannerDraft ? 'chat' : mode === 'edit' ? 'edit' : 'chat'
         const readFile = (p: string) => readWorkspaceFile(p, ws).catch(() => null)
+        const plannerSessionLogs =
+          isPlannerDraft && payload.session_id
+            ? await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
+            : []
+        const priorPlannerLogs = plannerSessionLogs.filter(
+          (log) => log.mode === 'planner' || log.mode === 'planner_draft',
+        )
+        const priorPlannerRefs = priorPlannerLogs.flatMap((log) =>
+          Array.isArray(log.ref_files)
+            ? log.ref_files.flatMap((file) =>
+                typeof file?.path === 'string' ? [file.path] : [],
+              )
+            : [],
+        )
         // Expand prompt @mentions once: every branch (planner, writer, harness,
         // chat) sees the same transitive reference set, and context_resolved
         // reports what was actually included.
         const tagged = await expandMentionedFiles({
-          roots: taggedPaths(payload),
-          text: payload.message,
+          roots: [...taggedPaths(payload), ...priorPlannerRefs],
+          text: [
+            payload.message,
+            payload.draft_plan ?? '',
+            ...priorPlannerLogs.map((log) => log.instruction),
+          ].join('\n'),
           availableFiles: payload.available_files,
           readFile,
           ignoredRefFiles: (settings as { ignored_ref_files?: string[] }).ignored_ref_files,
@@ -334,16 +358,20 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
 
         const client = loadLlmConfig(settings as never, payload.endpoint_id)
 
-        if (isPlanner) {
+        if (isPlanner || isPlannerDraft) {
           send({ status: 'generating' })
-          const plannerPrompt = await loadSimplePrompt('scene-planner.md').catch(() => '')
-          const plannerLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
+          const promptName = isPlannerDraft ? 'scene-drafter.md' : 'scene-planner.md'
+          const plannerPrompt = await loadSimplePrompt(promptName).catch(() => '')
+          const plannerLogs = isPlannerDraft
+            ? plannerSessionLogs
+            : await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
           const composed = await composeScenePlannerMessages(payload, {
             settings: settings as never,
             plannerPrompt,
             readFile,
             logs: plannerLogs as never,
             expandedTagged: tagged,
+            historyMode: ['planner', 'planner_draft'],
           })
           systemPrompt = composed.system
           const plannerMsgs = assembleAssistMessages(
@@ -355,63 +383,99 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           )
           userPrompt = plannerMsgs.fullUser
           const plannerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
-          console.log(formatCacheInfo('scene_planner', systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
-          // Planning needs room for both reasoning and a full scene plan; the
-          // writer's verbosity budget (250–1000 tokens) is too small and makes
-          // thinking models run out mid-reasoning with an empty answer.
-          const writerMax = pickWriterMaxTokens(settings as never)
-          const plannerMaxTokens = writerMax === null ? undefined : Math.max(writerMax, 4096)
+          const logMode = isPlannerDraft ? 'planner_draft' : 'planner'
+          console.log(formatCacheInfo(`scene_${logMode}`, systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
+          const availableForAgent = payload.available_files
+          const agent = isPlannerDraft
+            ? createSceneDraftingAgent({
+                endpoint: client,
+                instructions: composed.system,
+              })
+            : createScenePlannerAgent({
+                endpoint: client,
+                instructions: composed.system,
+                availableFiles: availableForAgent,
+                readFile,
+              })
           let fullPlanner = ''
-          for await (const chunk of client.streamWithMessages(plannerMsgs.messages, {
-            temperature: 0.7,
-            maxTokens: plannerMaxTokens,
-            signal,
-            onThinking: (chunk) => send({ status: 'thinking_chunk', chunk }),
-            cachePrompt: plannerCache.cachePrompt,
-            nKeep: plannerCache.nKeep,
-            slotId: plannerCache.slotId,
-          })) {
+          let fullThinking = ''
+          let promptTokens = 0
+          let totalPromptTokens = 0
+          let completionTokens = 0
+          const toolCalls: Array<Record<string, unknown>> = []
+          const agentResult = await agent.stream({
+            messages: plannerMsgs.messages.filter((message) => message.role !== 'system') as ModelMessage[],
+            abortSignal: signal,
+            onToolExecutionStart: ({ toolCall }) => {
+              const call = toolCall as { toolName?: unknown; input?: unknown }
+              const toolName = typeof call.toolName === 'string' ? call.toolName : 'tool'
+              const input =
+                typeof call.input === 'object' && call.input !== null
+                  ? (call.input as Record<string, unknown>)
+                  : {}
+              const path = typeof input.path === 'string' ? input.path : ''
+              toolCalls.push({ tool: toolName, path: path || null })
+              send({
+                status: 'tool',
+                tool: toolName,
+                detail: path ? `Reading ${path}` : 'Reading workspace context',
+                ...(path ? { path } : {}),
+              })
+            },
+            onStepEnd: ({ usage }) => {
+              const stepInputTokens = usage.inputTokens ?? 0
+              promptTokens = Math.max(promptTokens, stepInputTokens)
+              totalPromptTokens += stepInputTokens
+              completionTokens += usage.outputTokens ?? 0
+            },
+          })
+          for await (const part of agentResult.fullStream) {
             if (signal.aborted) break
-            fullPlanner += chunk
-            send({ status: 'chunk', chunk })
+            if (part.type === 'text-delta') {
+              fullPlanner += part.text
+              send({ status: 'chunk', chunk: part.text })
+            } else if (part.type === 'reasoning-delta') {
+              fullThinking += part.text
+              send({ status: 'thinking_chunk', chunk: part.text })
+            }
           }
-          console.log(
-            formatCacheInfo('scene_planner', systemPrompt, userPrompt, {
-              slotId: plannerCache.slotId,
-              promptMs: client.lastTimings?.prompt_ms,
-              promptN: client.lastTimings?.prompt_n,
-              tokensCached: client.lastTokensCached,
-            }),
-          )
-          const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          const output = (await agentResult.text).trim() || fullPlanner
+          const refFiles = tagged.map((path) => ({
+            path,
+            name: payload.available_files.find((file) => file.path === path)?.name ?? path.split('/').pop() ?? path,
+          }))
           await saveSimpleAiLog({
-            mode: 'planner',
+            mode: logMode,
             session_id: payload.session_id,
             system_prompt: systemPrompt,
             user_prompt: userPrompt,
-            output: fullPlanner,
-            raw_output: fullPlanner,
+            output,
+            raw_output: output,
             instruction: payload.message,
             selected_text: payload.selected_text,
-            ref_files: null,
+            ref_files: refFiles,
             success: true,
-            prompt_tokens: usage.prompt_tokens ?? 0,
-            completion_tokens: usage.completion_tokens ?? 0,
-            total_tokens: usage.total_tokens ?? 0,
-            thinking_output: client.lastThinking,
+            prompt_tokens: totalPromptTokens,
+            context_prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: totalPromptTokens + completionTokens,
+            thinking_output: fullThinking || null,
+            tool_calls: toolCalls.length ? toolCalls : null,
             model_used: client.lastModelUsed,
             system_hash: prefixHash(systemPrompt),
             user_hash: prefixHash(userPrompt),
-            prompt_ms: (client.lastTimings?.prompt_ms as number | undefined) ?? null,
-            tokens_cached: client.lastTokensCached,
+            prompt_ms: null,
+            tokens_cached: null,
             slot_id: plannerCache.slotId ?? null,
           }, ws)
           send({
             status: 'planner',
-            output: fullPlanner,
-            thinking_output: client.lastThinking,
-            prompt_tokens: usage.prompt_tokens ?? 0,
-            completion_tokens: usage.completion_tokens ?? 0,
+            agent_role: isPlannerDraft ? 'drafter' : 'planner',
+            output,
+            thinking_output: fullThinking || null,
+            prompt_tokens: promptTokens,
+            total_prompt_tokens: totalPromptTokens,
+            completion_tokens: completionTokens,
             model_used: client.lastModelUsed,
           })
           c.close()
