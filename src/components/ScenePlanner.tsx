@@ -1098,63 +1098,6 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
-              {contextWindow && (
-                <HoverCard>
-                  <HoverCardTrigger
-                    render={
-                      <InputGroupButton
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="gap-1.5 px-2 font-mono text-[10px]"
-                        aria-label={`Planner context ${Math.round(contextPercent)}% used`}
-                      />
-                    }
-                  >
-                    <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
-                    <span>{Math.round(contextPercent)}%</span>
-                  </HoverCardTrigger>
-                  <HoverCardContent align="start" side="top" className="w-64 gap-3 p-3">
-                    <div className="flex items-center justify-between gap-3 text-sm">
-                      <span className="font-medium">Planner context</span>
-                      <span className="text-muted-foreground">
-                        {lastPromptTokens.toLocaleString()} / {contextWindow.toLocaleString()}
-                      </span>
-                    </div>
-                    <Progress value={contextPercent} aria-label="Planner context used" />
-                    <Context className="text-[var(--text-secondary)] leading-relaxed">
-                      <div className="flex justify-between gap-4">
-                        <ContextLabel>Last prompt:</ContextLabel>
-                        <ContextValue className="text-[var(--text)]">
-                          {lastPromptTokens.toLocaleString()} tokens
-                        </ContextValue>
-                      </div>
-                      <div className="flex justify-between gap-4">
-                        <ContextLabel>Last response:</ContextLabel>
-                        <ContextValue className="text-[var(--text)]">
-                          {lastCompletionTokens.toLocaleString()} tokens
-                        </ContextValue>
-                      </div>
-                      <div className="flex justify-between gap-4">
-                        <ContextLabel>Remaining:</ContextLabel>
-                        <ContextValue className="text-[var(--text)]">
-                          {Math.max(0, contextWindow - lastPromptTokens).toLocaleString()} tokens
-                        </ContextValue>
-                      </div>
-                    </Context>
-                  </HoverCardContent>
-                </HoverCard>
-              )}
-              <InputGroupButton
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setCharactersDialogOpen(true)}
-                aria-label="Open character dialog"
-                title="Characters"
-              >
-                <Users className="size-4" />
-              </InputGroupButton>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -1225,12 +1168,70 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              {contextWindow && (
+                <HoverCard>
+                  <HoverCardTrigger
+                    render={
+                      <InputGroupButton
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="ml-auto gap-1.5 px-2 font-mono text-[10px]"
+                        aria-label={`Planner context ${Math.round(contextPercent)}% used`}
+                      />
+                    }
+                  >
+                    <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
+                    <span>{Math.round(contextPercent)}%</span>
+                  </HoverCardTrigger>
+                  <HoverCardContent align="start" side="top" className="w-64 gap-3 p-3">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-medium">Planner context</span>
+                      <span className="text-muted-foreground">
+                        {lastPromptTokens.toLocaleString()} / {contextWindow.toLocaleString()}
+                      </span>
+                    </div>
+                    <Progress value={contextPercent} aria-label="Planner context used" />
+                    <Context className="text-[var(--text-secondary)] leading-relaxed">
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Last prompt:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {lastPromptTokens.toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Last response:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {lastCompletionTokens.toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <ContextLabel>Remaining:</ContextLabel>
+                        <ContextValue className="text-[var(--text)]">
+                          {Math.max(0, contextWindow - lastPromptTokens).toLocaleString()} tokens
+                        </ContextValue>
+                      </div>
+                    </Context>
+                  </HoverCardContent>
+                </HoverCard>
+              )}
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={contextWindow ? undefined : 'ml-auto'}
+                onClick={() => setCharactersDialogOpen(true)}
+                aria-label="Open character dialog"
+                title="Characters"
+              >
+                <Users className="size-4" />
+              </InputGroupButton>
               {isStreaming ? (
                 <InputGroupButton
                   type="button"
                   variant="outline"
                   size="icon-sm"
-                  className="ml-auto rounded-full"
+                  className="rounded-full"
                   onClick={handleStop}
                   aria-label="Stop planning"
                 >
@@ -1241,7 +1242,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
                   type="button"
                   variant="default"
                   size="icon-sm"
-                  className="ml-auto rounded-full"
+                  className="rounded-full"
                   disabled={!input.trim() || !resolvedChoice}
                   onClick={() => void handleSend()}
                   aria-label="Send planner message"
