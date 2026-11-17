@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { AtSign, Check, ChevronDown, Code2, Compass, Eye, Brain, Loader2, MousePointer2, Settings, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing, Wrench } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -29,7 +29,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Chat, ChatMessages } from '@/components/ui/chat'
 import { MessageScroller } from '@/components/ui/message-scroller'
 import { Context, ContextLabel, ContextValue } from '@/components/ui/context'
-import { InputGroup } from '@/components/ui/input-group'
+import { InputGroup, InputGroupAddon, InputGroupButton } from '@/components/ui/input-group'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Message, MessageContent } from '@/components/ui/message'
 import { Trace, TraceLine, TraceIcon, TraceTitle } from '@/components/ui/trace'
@@ -38,7 +38,6 @@ import { Progress } from '@/components/ui/progress'
 import { MessageFooter } from '@/components/ui/message'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
@@ -50,12 +49,6 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import {
-  Command,
-  CommandEmpty,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -117,6 +110,18 @@ interface MarkdownStorage {
 }
 
 
+const PROMPT_CHIP_CLASS =
+  'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]'
+const PROMPT_CHIP_SELECTION_CLASS =
+  'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--assist-pill-selection-border)] bg-[var(--assist-pill-selection-bg)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--assist-pill-selection-text)]'
+
+const ASSIST_SUGGESTIONS = [
+  'What should happen next?',
+  'Tighten the selected paragraph.',
+  'Summarize this scene.',
+  'Find continuity issues.',
+]
+
 function cleanUserPrompt(log: SimpleLogEntry): string {
   let text = log.instruction?.trim()
     ? log.instruction.trim()
@@ -149,25 +154,16 @@ function renderUserPrompt(text: string) {
     }
     const name = match[1]
     const isSelection = name.startsWith('selection(')
-    const label = isSelection ? name.replace(/^selection\((.*)\)$/, '$1') : name
+    const label = isSelection ? name.replace(/^selection\((.*)\)$/, '$1') : name.replace(/\.md$/i, '')
 
     // File tags get the neutral pill style; only cursor-selection gets the green accent
     parts.push(
-      <span key={match.index} className={`inline-chip${isSelection ? ' inline-chip-selection' : ''} align-middle mx-0.5`}>
-        <span className="chip-glyph flex items-center">
-          {isSelection ? (
-            <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m4 4 7.07 16.97 2.51-7.39 7.39-2.51L4 4Z" />
-              <path d="m13 13 6 6" />
-            </svg>
-          ) : (
-            <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11.688 3.063a3.5 3.5 0 0 1 1.027.712l5.968 5.97c.3.3.54.647.711 1.026m-7.706-7.708a3.5 3.5 0 0 0-1.448-.313H7.792a3.5 3.5 0 0 0-3.5 3.5v11.5a3.5 3.5 0 0 0 3.5 3.5h8.416a3.5 3.5 0 0 0 3.5-3.5v-5.53c0-.505-.109-.999-.314-1.45m-7.706-7.707V8.77a2 2 0 0 0 2 2h5.706" />
-            </svg>
-          )}
-        </span>
-        <span className="chip-divider" />
-        <span className="chip-label">{label}</span>
+      <span
+        key={match.index}
+        className={isSelection ? PROMPT_CHIP_SELECTION_CLASS : PROMPT_CHIP_CLASS}
+      >
+        <span className="shrink-0 text-[var(--accent-brown)]">@</span>
+        <span className="truncate">{isSelection ? `selection · ${label}` : label}</span>
       </span>
     )
     lastIndex = regex.lastIndex
@@ -183,30 +179,32 @@ function formatCharacterCount(length: number): string {
   return `${length.toLocaleString()} ch`
 }
 
-function appendChipText(chip: HTMLElement, label: string, removeDataset: Record<string, string>) {
+function appendChipText(
+  chip: HTMLElement,
+  label: string,
+  removeDataset: Record<string, string>,
+  ariaLabel?: string,
+) {
   const glyphEl = document.createElement('span')
-  glyphEl.className = 'chip-glyph flex items-center'
-  glyphEl.innerHTML = `<svg class="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M11.688 3.063a3.5 3.5 0 0 1 1.027.712l5.968 5.97c.3.3.54.647.711 1.026m-7.706-7.708a3.5 3.5 0 0 0-1.448-.313H7.792a3.5 3.5 0 0 0-3.5 3.5v11.5a3.5 3.5 0 0 0 3.5 3.5h8.416a3.5 3.5 0 0 0 3.5-3.5v-5.53c0-.505-.109-.999-.314-1.45m-7.706-7.707V8.77a2 2 0 0 0 2 2h5.706"/>
-  </svg>`
-
-  const divider = document.createElement('span')
-  divider.className = 'chip-divider'
+  glyphEl.className = 'shrink-0 text-[var(--accent-brown)]'
+  glyphEl.textContent = '@'
 
   const labelEl = document.createElement('span')
-  labelEl.className = 'chip-label'
+  labelEl.className = 'truncate'
   labelEl.textContent = label
 
   const removeButton = document.createElement('button')
-  removeButton.className = 'chip-remove'
+  removeButton.className =
+    'ml-0.5 shrink-0 text-[var(--text-muted)] hover:text-[var(--text-heading)]'
   removeButton.type = 'button'
+  removeButton.setAttribute('aria-label', ariaLabel ?? `Remove ${label}`)
+  removeButton.dataset.chipRemove = 'true'
   removeButton.textContent = '×'
   Object.entries(removeDataset).forEach(([key, value]) => {
     removeButton.dataset[key] = value
   })
 
   chip.appendChild(glyphEl)
-  chip.appendChild(divider)
   chip.appendChild(labelEl)
   chip.appendChild(removeButton)
 }
@@ -219,11 +217,17 @@ function createFileChip(
   const mention = mentionText ?? `@${file.name}`
   const chip = document.createElement('span')
   chip.contentEditable = 'false'
-  chip.className = 'inline-chip'
+  chip.className = PROMPT_CHIP_CLASS
+  chip.dataset.chip = 'true'
   chip.dataset.path = file.path
   chip.dataset.name = file.name
   chip.dataset.mention = mention
-  appendChipText(chip, mention.replace(/^@/, ''), { path: file.path })
+  appendChipText(
+    chip,
+    mention.replace(/^@/, '').replace(/\.md$/i, ''),
+    { path: file.path },
+    `Remove ${mention} reference`,
+  )
   return chip
 }
 
@@ -256,30 +260,12 @@ function buildPromptFragment(
 }
 
 function appendSelectionChipText(chip: HTMLElement, length: number) {
-  const glyphEl = document.createElement('span')
-  glyphEl.className = 'chip-glyph flex items-center'
-  glyphEl.innerHTML = `<svg class="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m4 4 7.07 16.97 2.51-7.39 7.39-2.51L4 4Z" />
-    <path d="m13 13 6 6" />
-  </svg>`
-
-  const divider = document.createElement('span')
-  divider.className = 'chip-divider'
-
-  const labelEl = document.createElement('span')
-  labelEl.className = 'chip-label'
-  labelEl.textContent = formatCharacterCount(length)
-
-  const removeButton = document.createElement('button')
-  removeButton.className = 'chip-remove'
-  removeButton.type = 'button'
-  removeButton.dataset.role = 'selection-remove'
-  removeButton.textContent = '×'
-
-  chip.appendChild(glyphEl)
-  chip.appendChild(divider)
-  chip.appendChild(labelEl)
-  chip.appendChild(removeButton)
+  appendChipText(
+    chip,
+    formatCharacterCount(length),
+    { role: 'selection-remove' },
+    'Remove editor selection',
+  )
 }
 
 function getTextBeforeCaret(el: HTMLElement): string {
@@ -335,7 +321,7 @@ function getInputData(el: HTMLElement): {
   }
 
   const clone = el.cloneNode(true) as HTMLElement
-  clone.querySelectorAll<HTMLElement>('.inline-chip').forEach((chip) => {
+  clone.querySelectorAll<HTMLElement>('[data-chip]').forEach((chip) => {
     if (chip.dataset.role === 'selection') {
       const len = selection?.text.length || 0
       const textNode = document.createTextNode(`@selection(${formatCharacterCount(len)})`)
@@ -351,37 +337,22 @@ function getInputData(el: HTMLElement): {
   return { text: clone.textContent?.trim() ?? '', refPaths, selection }
 }
 
-function ThinkingDropdown({ text, defaultOpen = false }: { text: string; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
-
+function ThinkingDetails({
+  text,
+  open = false,
+  label = 'Thought process',
+}: {
+  text: string
+  open?: boolean
+  label?: string
+}) {
   return (
-    <Trace>
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="flex flex-col gap-0 self-start w-full mb-0"
-    >
-      <CollapsibleTrigger
-        render={
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)] font-sans hover:text-[var(--text-secondary)] transition-colors select-none py-0.5 w-fit cursor-pointer"
-          >
-            <svg
-              className={`w-2.5 h-2.5 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-            >
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-            {text && !open ? 'Thought Process' : open ? 'Thought Process' : 'Thinking'}
-          </button>
-        }
-      />
-      <CollapsibleContent className="font-mono text-[10px] text-[var(--text-muted)] leading-relaxed max-h-[120px] overflow-y-auto whitespace-pre-wrap pl-4 border-l border-[var(--border-subtle)] mt-1">
+    <details open={open || undefined} className="text-[10px] text-[var(--text-muted)]">
+      <summary className="cursor-pointer select-none py-0.5">{label}</summary>
+      <pre className="mt-1 max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
         {text}
-      </CollapsibleContent>
-    </Collapsible>
-    </Trace>
+      </pre>
+    </details>
   )
 }
 
@@ -577,7 +548,7 @@ export function SimpleAssist() {
   const [fileQuery, setFileQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const inputRef = useRef<HTMLDivElement>(null)
-  const outputRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const wasAbortedRef = useRef(false)
@@ -851,10 +822,16 @@ export function SimpleAssist() {
   }, [linkedWorkspaceDir])
 
   useEffect(() => {
-    if (historyLogs.length > 0 || isWorking || errorText) {
-      outputRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [historyLogs.length, isWorking, errorText])
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [
+    historyLogs.length,
+    isWorking,
+    streamingChatText,
+    streamingThinkingText,
+    errorText,
+    noticeText,
+    activeToolRows.length,
+  ])
 
   // Close file-mention dropdown on click outside (harness menu is a
   // DropdownMenu and manages its own dismissal)
@@ -876,6 +853,12 @@ export function SimpleAssist() {
     () => filterMentionFiles(openedFiles, fileQuery, currentFilePath),
     [openedFiles, fileQuery, currentFilePath],
   )
+
+  const setComposerText = (text: string) => {
+    setInstructionText(text)
+    if (inputRef.current) inputRef.current.textContent = text
+    setShowFileDropdown(false)
+  }
 
 
   const handleInput = useCallback(() => {
@@ -1460,9 +1443,9 @@ export function SimpleAssist() {
 
   const handleContentMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement
-    if (target.classList.contains('chip-remove')) {
+    if (target.closest('[data-chip-remove]')) {
       e.preventDefault()
-      const chip = target.closest('.inline-chip') as HTMLElement
+      const chip = target.closest('[data-chip]') as HTMLElement
       if (chip) {
         const isSelection = chip.dataset.role === 'selection'
         chip.remove()
@@ -1489,7 +1472,8 @@ export function SimpleAssist() {
       // Create the new selection tag/chip
       const chip = document.createElement('span')
       chip.contentEditable = 'false'
-      chip.className = 'inline-chip inline-chip-selection'
+      chip.className = PROMPT_CHIP_SELECTION_CLASS
+      chip.dataset.chip = 'true'
       chip.dataset.role = 'selection'
       chip.dataset.from = String(pendingEditSelection.from)
       chip.dataset.to = String(pendingEditSelection.to)
@@ -1546,276 +1530,299 @@ export function SimpleAssist() {
 
   const hasHistory = filteredLogs.length > 0 || isWorking || !!errorText || !!noticeText
 
-  const renderInputCard = () => (
-    <InputGroup className="h-auto min-h-[92px] items-stretch rounded-[14px] bg-[var(--bg-elevated)] border-[var(--border-subtle)] focus-within:border-[var(--text-muted)] shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 pt-3 px-3 pb-2 flex-col relative animate-scale-in">
-      <div className="flex items-start gap-1.5 w-full">
-        <div
-          ref={inputRef}
-          contentEditable
-          role="textbox"
-          aria-multiline="true"
-          onInput={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onMouseDown={handleContentMouseDown}
-          data-placeholder={mode === 'chat' ? 'Ask a question...' : 'Describe changes...'}
-          className="flex-1 min-w-0 bg-transparent border-0 p-0 text-xs focus:ring-0 focus:outline-none resize-none text-[var(--text)] min-h-[44px] font-sans leading-relaxed whitespace-pre-wrap empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--text-muted)]"
-        />
-      </div>
+  const renderInputCard = () => {
+    const composerModelLabel =
+      harness === 'none' ? activeEndpointName || 'Endpoint' : harnessLabel(harness)
 
-      {showFileDropdown && (
-        <div
-          ref={dropdownRef}
-          className="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-[12px] overflow-hidden shadow-[0_4px_16px_rgba(0,0,0,0.03)]"
-        >
-          <Command>
-            <CommandList className="max-h-[200px]">
-              <CommandEmpty>
-                <span className="text-[11px] text-[var(--text-secondary)] font-sans">
-                  No matching files
-                </span>
-              </CommandEmpty>
-              {filteredFiles.map((file, index) => (
-                <CommandItem
-                  key={file.path}
-                  value={`${file.name} ${file.path}`}
-                  onSelect={() => handleSelectFile(file)}
-                  onMouseEnter={() => setHighlightedIndex(index)}
-                  data-selected={index === highlightedIndex ? true : undefined}
-                  className={`gap-2 px-3 py-2 ${index === highlightedIndex ? 'bg-[var(--bg-hover)]' : ''}`}
-                >
-                  <span className="text-xs text-[var(--text)] font-medium font-sans truncate">
-                    {file.name}
-                  </span>
-                  <span className="text-[10px] text-[var(--text-muted)] font-sans truncate">
-                    {file.path}
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandList>
-          </Command>
-        </div>
-      )}
-
-      {/* Input Action Bar */}
-      <div className="flex items-center justify-between select-none">
-        {/* Mode Toggle */}
-        <div className="flex items-center">
-          <button
-            onClick={() => setMode(mode === 'edit' ? 'chat' : 'edit')}
-            className={`flex items-center justify-center w-6 h-6 rounded-full transition-all duration-200 cursor-pointer -ml-1.5 ${mode === 'edit'
-              ? 'text-[var(--accent-brown)]'
-              : 'text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)]'
-              }`}
-            title={mode === 'edit' ? 'Switch to Chat mode' : 'Switch to Plan mode'}
-          >
-            {mode === 'edit' ? <SquareChartGantt size={12} /> : <ListTodo size={12} />}
-          </button>
-          {/* Harness selector: logo only, name in tooltip + dropdown */}
-          <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
-            <DropdownMenuTrigger
-              aria-label={harness === 'none'
-                ? (activeEndpointName ? `Endpoint — ${activeEndpointName}` : 'Endpoint')
-                : harnessLabel(harness)}
-              render={
-                <button
-                  className="ml-1 flex items-center gap-0.5 text-[var(--text-secondary)] hover:text-[var(--text-heading)] transition-colors cursor-pointer"
-                >
-                  <HarnessIcon id={harness} className="w-3.5 h-3.5" />
-                  <ChevronDown className={`w-2.5 h-2.5 opacity-60 shrink-0 transition-transform duration-150 ${showHarnessDropdown ? 'rotate-180' : ''}`} />
-                </button>
-              }
-            />
-            <DropdownMenuContent side="top" align="start" className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className={harness === 'none' ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}>
-                  <HarnessIcon id="none" className="w-3.5 h-3.5" />
-                  <span className="text-[11px] truncate flex-1">Endpoint</span>
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
-                  {endpointEntries.length === 0 ? (
-                    <div className="px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
-                      No endpoints yet
-                    </div>
-                  ) : (
-                    endpointEntries.map(([id, ep]) => {
-                      const isActive = harness === 'none' && settings?.active_endpoint === id
-                      const displayName = id.replace('_', ' ')
-                      return (
-                        <DropdownMenuItem
-                          key={id}
-                          onClick={() => handlePickEndpoint(id)}
-                          className={isActive ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
-                        >
-                          <span className="flex-1 min-w-0">
-                            <span className="flex items-center gap-1.5">
-                              <span className="text-[11px] truncate min-w-0 capitalize" title={displayName}>{displayName}</span>
-                              {ep.supports_vision && (
-                                <span title="Supports image input" className="flex shrink-0 text-[var(--text-muted)]">
-                                  <Eye size={11} />
-                                </span>
-                              )}
-                              {ep.is_thinking !== false ? (
-                                <span title="Thinking enabled" className="flex shrink-0 text-[var(--text-muted)]">
-                                  <Brain size={11} />
-                                </span>
-                              ) : (
-                                <span title="Thinking disabled" className="flex shrink-0 text-[var(--text-muted)] opacity-50">
-                                  <Brain size={11} />
-                                </span>
+    return (
+      <>
+        <InputGroup>
+          {showFileDropdown && (
+            <div
+              ref={dropdownRef}
+              className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-50 max-h-[220px] overflow-y-auto rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-1 shadow-lg"
+            >
+              {filteredFiles.length > 0 ? (
+                filteredFiles.map((file, index) => (
+                  <button
+                    key={file.path}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleSelectFile(file)}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left ${index === highlightedIndex ? 'bg-[var(--bg-hover)]' : ''}`}
+                  >
+                    <span className="truncate text-[11px] font-medium text-[var(--text)]">
+                      {file.name}
+                    </span>
+                    <span className="truncate text-[10px] text-[var(--text-muted)]">
+                      {file.path}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-2 py-2 text-[11px] text-[var(--text-muted)]">
+                  No matching workspace files
+                </div>
+              )}
+            </div>
+          )}
+          <div
+            ref={inputRef}
+            contentEditable
+            role="textbox"
+            aria-multiline="true"
+            suppressContentEditableWarning
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onMouseDown={handleContentMouseDown}
+            data-placeholder={mode === 'chat' ? 'Ask a question…' : 'Describe changes…'}
+            aria-label={mode === 'chat' ? 'AI assistant message' : 'Edit instruction'}
+            className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
+          />
+          <InputGroupAddon align="block-end">
+            <InputGroupButton
+              size="sm"
+              variant="outline"
+              onClick={() => setMode(mode === 'edit' ? 'chat' : 'edit')}
+              className="gap-1.5"
+              title={mode === 'edit' ? 'Switch to Chat mode' : 'Switch to Edit mode'}
+              aria-label={mode === 'edit' ? 'Edit mode' : 'Chat mode'}
+            >
+              {mode === 'edit' ? (
+                <SquareChartGantt className="size-3.5" />
+              ) : (
+                <ListTodo className="size-3.5" />
+              )}
+              <span className="text-[11px]">{mode === 'edit' ? 'Edit' : 'Chat'}</span>
+            </InputGroupButton>
+            <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
+              <DropdownMenuTrigger
+                aria-label={
+                  harness === 'none'
+                    ? activeEndpointName
+                      ? `Endpoint — ${activeEndpointName}`
+                      : 'Endpoint'
+                    : harnessLabel(harness)
+                }
+                render={
+                  <InputGroupButton
+                    size="sm"
+                    variant="outline"
+                    className="max-w-[230px] justify-start gap-1.5"
+                  >
+                    <HarnessIcon id={harness} className="size-3.5 shrink-0" />
+                    <span className="truncate">{composerModelLabel}</span>
+                    <ChevronDown
+                      className={`size-3.5 shrink-0 opacity-60 transition-transform duration-150 ${showHarnessDropdown ? 'rotate-180' : ''}`}
+                    />
+                  </InputGroupButton>
+                }
+              />
+              <DropdownMenuContent side="top" align="start" className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className={harness === 'none' ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}>
+                    <HarnessIcon id="none" className="w-3.5 h-3.5" />
+                    <span className="text-[11px] truncate flex-1">Endpoint</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
+                    {endpointEntries.length === 0 ? (
+                      <div className="px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
+                        No endpoints yet
+                      </div>
+                    ) : (
+                      endpointEntries.map(([id, ep]) => {
+                        const isActive = harness === 'none' && settings?.active_endpoint === id
+                        const displayName = id.replace('_', ' ')
+                        return (
+                          <DropdownMenuItem
+                            key={id}
+                            onClick={() => handlePickEndpoint(id)}
+                            className={isActive ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
+                          >
+                            <span className="flex-1 min-w-0">
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-[11px] truncate min-w-0 capitalize" title={displayName}>{displayName}</span>
+                                {ep.supports_vision && (
+                                  <span title="Supports image input" className="flex shrink-0 text-[var(--text-muted)]">
+                                    <Eye size={11} />
+                                  </span>
+                                )}
+                                {ep.is_thinking !== false ? (
+                                  <span title="Thinking enabled" className="flex shrink-0 text-[var(--text-muted)]">
+                                    <Brain size={11} />
+                                  </span>
+                                ) : (
+                                  <span title="Thinking disabled" className="flex shrink-0 text-[var(--text-muted)] opacity-50">
+                                    <Brain size={11} />
+                                  </span>
+                                )}
+                              </span>
+                              {ep.model && (
+                                <span className="block text-[10px] leading-tight truncate text-[var(--text-muted)]" title={ep.model}>{ep.model}</span>
                               )}
                             </span>
-                            {ep.model && (
-                              <span className="block text-[10px] leading-tight truncate text-[var(--text-muted)]" title={ep.model}>{ep.model}</span>
-                            )}
-                          </span>
-                          <Check size={14} className={`shrink-0 ${isActive ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
-                        </DropdownMenuItem>
-                      )
-                    })
-                  )}
-                  <DropdownMenuSeparator className="bg-[var(--border-sidebar)]/60" />
+                            <Check size={14} className={`shrink-0 ${isActive ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
+                          </DropdownMenuItem>
+                        )
+                      })
+                    )}
+                    <DropdownMenuSeparator className="bg-[var(--border-sidebar)]/60" />
+                    <DropdownMenuItem
+                      onClick={handleManageEndpoints}
+                      className="text-[11px] text-[var(--text-secondary)]"
+                    >
+                      Manage endpoints
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {harnessList.map(h => (
                   <DropdownMenuItem
-                    onClick={handleManageEndpoints}
-                    className="text-[11px] text-[var(--text-secondary)]"
+                    key={h.id}
+                    disabled={!h.installed}
+                    onClick={() => {
+                      updateSettings({ default_harness: h.id })
+                      setShowHarnessDropdown(false)
+                    }}
+                    className={harness === h.id ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
                   >
-                    Manage endpoints
+                    <HarnessIcon id={h.id} className="w-3.5 h-3.5" />
+                    <span className="text-[11px] truncate flex-1">{h.name}</span>
+                    {h.installed ? null : <span className="text-[9px] text-[var(--text-muted)] shrink-0">not installed</span>}
+                    <Check size={14} className={`shrink-0 ${harness === h.id ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
                   </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              {harnessList.map(h => (
-                <DropdownMenuItem
-                  key={h.id}
-                  disabled={!h.installed}
-                  onClick={() => {
-                    updateSettings({ default_harness: h.id })
-                    setShowHarnessDropdown(false)
-                  }}
-                  className={harness === h.id ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
-                >
-                  <HarnessIcon id={h.id} className="w-3.5 h-3.5" />
-                  <span className="text-[11px] truncate flex-1">{h.name}</span>
-                  {h.installed ? null : <span className="text-[9px] text-[var(--text-muted)] shrink-0">not installed</span>}
-                  <Check size={14} className={`shrink-0 ${harness === h.id ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-        {/* Context Ring and Action Button Group */}
-        <div className="flex items-center gap-2 -mr-1.5">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={() => setCharactersDialogOpen(true)}
-                  className="relative flex items-center justify-center w-6 h-6 shrink-0 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  title="Active characters"
-                  aria-label="Open active characters"
-                >
-                  <Users
-                    size={14}
-                    className={charactersTracking ? 'animate-pulse' : ''}
-                  />
-                  {activeCharacterCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[13px] h-[13px] px-[3px] rounded-full bg-[var(--accent-brown)] text-[var(--text-inverse)] text-[8px] leading-[13px] text-center font-medium tabular-nums">
-                      {activeCharacterCount}
+            {activeContextWindow ? (
+              <HoverCard>
+                <HoverCardTrigger
+                  delay={10}
+                  closeDelay={100}
+                  render={
+                    <InputGroupButton
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto gap-1.5 px-2 font-mono text-[10px]"
+                      aria-label={`Context ${Math.round(percentUsed)}% used`}
+                    >
+                      <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
+                      <span>{Math.round(percentUsed)}%</span>
+                    </InputGroupButton>
+                  }
+                />
+                <HoverCardContent align="end" side="top" className="flex w-64 flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium">Context</span>
+                    <span className="text-muted-foreground">
+                      {contextUsedTokens.toLocaleString()} / {activeContextWindow.toLocaleString()}
                     </span>
-                  )}
-                  {charactersError && (
-                    <span className="absolute -bottom-0.5 -left-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
-                  )}
-                </button>
-              }
-            />
-            <TooltipContent
-              side="top"
-              align="end"
-              className="max-w-[280px] whitespace-normal bg-[var(--bg-elevated)] border-[var(--border)] text-[10.5px]"
-            >
-              {charactersTracking
-                ? 'Updating active cast…'
-                : charactersError
-                  ? `Character tracker: ${charactersError}`
-                  : activeCharacterCount > 0
-                    ? `${activeCharacterCount} active character${activeCharacterCount === 1 ? '' : 's'} — view cast`
-                    : 'Active characters'}
-            </TooltipContent>
-          </Tooltip>
+                  </div>
+                  <Progress value={percentUsed} aria-label="Context used" />
+                  <Context className="text-[var(--text-secondary)] leading-relaxed">
+                    <div className="flex justify-between gap-4"><ContextLabel>Session input:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionInputTokens.toLocaleString()}</ContextValue></div>
+                    <div className="flex justify-between gap-4"><ContextLabel>Session output:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionOutputTokens.toLocaleString()}</ContextValue></div>
+                    <div className="flex justify-between gap-4"><ContextLabel>{percentUsed.toFixed(1)}% used:</ContextLabel><ContextValue className="text-[var(--text)]">{percentLeft.toFixed(1)}% left</ContextValue></div>
+                  </Context>
+                </HoverCardContent>
+              </HoverCard>
+            ) : null}
 
-          {/* Circular Context Ring (hidden when no window is known) */}
-          {activeContextWindow ? (
-          <HoverCard>
-            <HoverCardTrigger
-              delay={10}
-              closeDelay={100}
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 px-2 text-[10px] font-mono"
-                >
-                  <ChartNoAxesColumnIncreasing className="size-3" aria-hidden="true" />
-                  <span>{Math.round(percentUsed)}%</span>
-                </Button>
-              }
-            />
-            <HoverCardContent className="flex w-64 flex-col gap-3" align="end">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-medium">Context</span>
-                <span className="text-muted-foreground">
-                  {contextUsedTokens.toLocaleString()} / {activeContextWindow.toLocaleString()}
-                </span>
-              </div>
-              <Progress value={percentUsed} aria-label="Context used" />
-              <Context className="text-[var(--text-secondary)] leading-relaxed">
-                <div className="flex justify-between gap-4"><ContextLabel>Session input:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionInputTokens.toLocaleString()}</ContextValue></div>
-                <div className="flex justify-between gap-4"><ContextLabel>Session output:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionOutputTokens.toLocaleString()}</ContextValue></div>
-                <div className="flex justify-between gap-4"><ContextLabel>{percentUsed.toFixed(1)}% used:</ContextLabel><ContextValue className="text-[var(--text)]">{percentLeft.toFixed(1)}% left</ContextValue></div>
-              </Context>
-            </HoverCardContent>
-          </HoverCard>
-          ) : null}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <InputGroupButton
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={`relative ${activeContextWindow ? '' : 'ml-auto'}`}
+                    onClick={() => setCharactersDialogOpen(true)}
+                    title="Active characters"
+                    aria-label="Open active characters"
+                  >
+                    <Users
+                      className={`size-4 ${charactersTracking ? 'animate-pulse' : ''}`}
+                    />
+                    {activeCharacterCount > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[13px] h-[13px] px-[3px] rounded-full bg-[var(--accent-brown)] text-[var(--text-inverse)] text-[8px] leading-[13px] text-center font-medium tabular-nums">
+                        {activeCharacterCount}
+                      </span>
+                    )}
+                    {charactersError && (
+                      <span className="absolute -bottom-0.5 -left-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                    )}
+                  </InputGroupButton>
+                }
+              />
+              <TooltipContent
+                side="top"
+                align="end"
+                className="max-w-[280px] whitespace-normal bg-[var(--bg-elevated)] border-[var(--border)] text-[10.5px]"
+              >
+                {charactersTracking
+                  ? 'Updating active cast…'
+                  : charactersError
+                    ? `Character tracker: ${charactersError}`
+                    : activeCharacterCount > 0
+                      ? `${activeCharacterCount} active character${activeCharacterCount === 1 ? '' : 's'} — view cast`
+                      : 'Active characters'}
+              </TooltipContent>
+            </Tooltip>
 
-          {/* Action Button: Stop when working, Send/Submit otherwise */}
-          <button
-            onClick={() => {
-              if (isWorking) {
-                handleStop()
-              } else if (mode === 'chat') {
-                handleChat()
-              } else {
-                handleEdit()
-              }
-            }}
-            disabled={!isWorking && !instructionText}
-            className={`
-              flex items-center justify-center transition-[background-color,transform,opacity] duration-150 cursor-pointer select-none border rounded-full w-6 h-6 shrink-0 active:scale-[0.9] 
-              ${isWorking
-                ? 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] border-[var(--border-subtle)] hover:border-[var(--danger-muted)]'
-                : 'bg-[var(--accent-brown)] hover:bg-[var(--accent-brown-hover)] text-[var(--text-inverse)] disabled:bg-[var(--bg-disabled)] disabled:text-[var(--text-disabled)] disabled:border-transparent border-transparent'
-              }
-            `}
-            title={isWorking ? 'Stop generation' : mode === 'chat' ? 'Send Message' : hasSelection ? 'Replace Selection' : 'Insert Content'}
-          >
             {isWorking ? (
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="4" y="4" width="16" height="16" rx="2" />
-              </svg>
+              <InputGroupButton
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="rounded-full"
+                onClick={() => void handleStop()}
+                aria-label="Stop generating"
+                title="Stop generation"
+              >
+                <Square className="size-3.5" />
+              </InputGroupButton>
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" />
-                <polyline points="5 12 12 5 19 12" />
-              </svg>
+              <InputGroupButton
+                type="button"
+                variant="default"
+                size="icon-sm"
+                className="rounded-full"
+                disabled={!instructionText}
+                onClick={() => {
+                  if (mode === 'chat') {
+                    void handleChat()
+                  } else {
+                    void handleEdit()
+                  }
+                }}
+                aria-label={mode === 'chat' ? 'Send message' : 'Apply edit'}
+                title={
+                  mode === 'chat'
+                    ? 'Send message'
+                    : hasSelection
+                      ? 'Replace selection'
+                      : 'Insert content'
+                }
+              >
+                <ArrowUp className="size-4" />
+              </InputGroupButton>
             )}
-          </button>
-        </div>
-      </div>
-    </InputGroup>
-  )
+          </InputGroupAddon>
+        </InputGroup>
+        <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
+          Type @ to attach a workspace reference.{' '}
+          {mode === 'chat'
+            ? 'Chat answers questions without changing the draft.'
+            : hasSelection
+              ? 'Edit replaces the selected text.'
+              : 'Edit inserts at the cursor.'}
+        </p>
+      </>
+    )
+  }
 
   return (
     <div ref={containerRef} className="flex flex-col w-full h-full select-none animate-fade-in">
@@ -2018,450 +2025,464 @@ export function SimpleAssist() {
       {hasHistory && (
         <Chat>
           <MessageScroller>
-          <ChatMessages className="gap-4 pr-1 pt-2 select-text">
-            {displayLogs.map((log) => {
-              const isExpanded = !!expandedIds[log.id]
+            <ChatMessages className="gap-4 pr-1 pt-2 select-text">
+              {displayLogs.map((log) => {
+                const isExpanded = !!expandedIds[log.id]
 
-              const plannerContextFiles: string[] = (() => {
-                if (!log.planner_output) return []
-                try {
-                  const start = log.planner_output.indexOf('{')
-                  const end = log.planner_output.lastIndexOf('}') + 1
-                  if (start !== -1 && end > start) {
-                    const data = JSON.parse(log.planner_output.slice(start, end))
-                    if (Array.isArray(data.context_needed)) {
-                      return data.context_needed
+                const plannerContextFiles: string[] = (() => {
+                  if (!log.planner_output) return []
+                  try {
+                    const start = log.planner_output.indexOf('{')
+                    const end = log.planner_output.lastIndexOf('}') + 1
+                    if (start !== -1 && end > start) {
+                      const data = JSON.parse(log.planner_output.slice(start, end))
+                      if (Array.isArray(data.context_needed)) {
+                        return data.context_needed
+                      }
                     }
+                  } catch {
+                    // Malformed planner output has no context entries.
                   }
-                } catch {
-                  // Malformed planner output has no context entries.
-                }
-                return []
-              })()
+                  return []
+                })()
 
-              return (
-                <Message key={log.id} className="group gap-3">
-                  {/* User Speech Capsule Bubble */}
-                  <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] flex flex-wrap items-center gap-1 animate-scale-in">
-                    <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
-                  </Bubble>
-                  <MessageFooter className="self-end opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                    <Tooltip>
-                      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handlePromptToInput(log)} aria-label="Restore prompt to input"><Undo2 /></Button>} />
-                      <TooltipContent>Restore prompt to input</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => void handleCopyPrompt(log)} aria-label="Copy prompt">
-                        {copiedId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : (
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect width="14" height="14" x="8" y="8" rx="2" />
-                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 1 2 2" />
-                          </svg>
-                        )}
-                      </Button>} />
-                      <TooltipContent>{copiedId === log.id ? 'Copied' : 'Copy prompt'}</TooltipContent>
-                    </Tooltip>
-                  </MessageFooter>
+                return (
+                  <React.Fragment key={log.id}>
+                    {/* User prompt */}
+                    <Message align="end" className="group animate-scale-in">
+                      <MessageContent>
+                        <Bubble align="end" variant="muted" className="font-sans text-[var(--text)]">
+                          <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
+                        </Bubble>
+                        <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                          <Tooltip>
+                            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handlePromptToInput(log)} aria-label="Restore prompt to input"><Undo2 /></Button>} />
+                            <TooltipContent>Restore prompt to input</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger render={
+                              <Button variant="ghost" size="icon-sm" onClick={() => void handleCopyPrompt(log)} aria-label="Copy prompt">
+                                {copiedId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <Copy />}
+                              </Button>
+                            } />
+                            <TooltipContent>{copiedId === log.id ? 'Copied' : 'Copy prompt'}</TooltipContent>
+                          </Tooltip>
+                        </MessageFooter>
+                      </MessageContent>
+                    </Message>
 
-                  {/* AI Assistant Plain Text Response */}
-                  <MessageContent className="w-full py-1 animate-scale-in">
-                    <div className="flex items-center gap-2.5 select-none text-[var(--text-muted)]">
-                      <button
-                        onClick={() => setExpandedIds(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
-                        className="flex items-center gap-0.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-heading)] transition-colors cursor-pointer"
-                        title="Toggle prompt details"
-                      >
-                        <span>Telemetry</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`w-2.5 h-2.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
-                          <path d="m9 18 6-6-6-6" />
-                        </svg>
-                      </button>
-                    </div>
-                    {isExpanded && (
-                      <div className="text-[10px] font-mono text-[var(--text-secondary)] leading-normal select-text whitespace-pre-wrap mt-1 p-2 bg-[var(--bg-expanded)]/50 border border-[var(--border)] rounded-[6px] animate-fade-in w-full flex flex-col gap-3">
-                        {((log.ref_files && log.ref_files.length > 0) || log.selected_text || plannerContextFiles.length > 0) && (
-                          <div className="flex flex-col gap-1 border-b border-[var(--border)] pb-2 mb-1 select-none">
-                            {log.ref_files?.map((file) => (
-                              <div key={file.path} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                                  <circle cx="12" cy="12" r="3" />
-                                </svg>
-                                <span>Read {file.name}</span>
-                              </div>
-                            ))}
-                            {plannerContextFiles.map((filepath) => {
-                              return (
-                                <div key={filepath} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
-                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                                    <circle cx="12" cy="12" r="3" />
-                                  </svg>
-                                  <span>{filepath}</span>
-                                </div>
-                              )
-                            })}
-                            {log.selected_text && (
-                              <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                                  <circle cx="12" cy="12" r="3" />
-                                </svg>
-                                <span>Read editor selection ({log.selected_text.length} Ch)</span>
-                              </div>
-                            )}
-                            {log.tool_calls?.map((t, i) => (
-                              <div key={`tool-${i}`} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                                </svg>
-                                <span>{t.tool}{t.detail ? ` ${t.detail}` : ''}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {log.planner_system_prompt && (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">① Planner</span>
-                            <div><strong>System:</strong> {log.planner_system_prompt}</div>
-                            <div className="mt-1"><strong>User:</strong> {log.planner_user_prompt}</div>
-                            <div className="mt-1"><strong>Output:</strong> {log.planner_output}</div>
-                          </div>
-                        )}
-                        {log.planner_system_prompt && (
-                          <div className="border-t border-[var(--border)] pt-2 mt-1" />
-                        )}
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">{log.planner_system_prompt ? '② Generator' : 'Prompt'}</span>
-                          <div><strong>System:</strong> {log.system_prompt}</div>
-                          <div className="mt-1"><strong>User:</strong> {log.user_prompt}</div>
-                        </div>
-                        {log.post_processing && (
-                          <div className="flex flex-col gap-1 border-t border-[var(--border)] pt-2 mt-1">
-                            <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">Post-processing</span>
-                            {log.post_processing.skipped ? (
-                              <div>Skipped ({log.post_processing.reason || 'not applicable'})</div>
-                            ) : (
-                              <>
-                                {(log.post_processing.passes || []).map((pass, i) => (
-                                  <div key={`pp-${i}`} className="flex items-center gap-1.5">
-                                    <span className="text-[var(--text-muted)]">{pass.hunk ? `hunk ${pass.hunk} · ` : ''}{pass.name}</span>
-                                    <span className={pass.status === 'ok' ? 'text-green-600 dark:text-green-400' : pass.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}>
-                                      {pass.status}
-                                    </span>
-                                    {pass.model && <span className="text-[var(--text-muted)]">{pass.model}</span>}
-                                    {pass.error && <span className="text-[var(--danger)]">{pass.error}</span>}
+                    {/* Assistant response */}
+                    <Message className="group animate-scale-in">
+                      <MessageContent className="w-full">
+                        <button
+                          onClick={() => setExpandedIds(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
+                          className="flex w-fit cursor-pointer select-none items-center gap-0.5 py-0.5 text-[10px] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
+                          title="Toggle prompt details"
+                        >
+                          <span>Telemetry</span>
+                          <ChevronDown className={`size-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`} />
+                        </button>
+                        {isExpanded && (
+                          <div className="text-[10px] font-mono text-[var(--text-secondary)] leading-normal select-text whitespace-pre-wrap mt-1 p-2 bg-[var(--bg-expanded)]/50 border border-[var(--border)] rounded-[6px] animate-fade-in w-full flex flex-col gap-3">
+                            {((log.ref_files && log.ref_files.length > 0) || log.selected_text || plannerContextFiles.length > 0) && (
+                              <div className="flex flex-col gap-1 border-b border-[var(--border)] pb-2 mb-1 select-none">
+                                {log.ref_files?.map((file) => (
+                                  <div key={file.path} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                    <span>Read {file.name}</span>
                                   </div>
                                 ))}
-                                {log.post_processing.skipped_hunks ? (
-                                  <div className="text-[var(--text-muted)]">{log.post_processing.skipped_hunks} hunk(s) not post-processed (cap or minimum length)</div>
-                                ) : null}
-                              </>
+                                {plannerContextFiles.map((filepath) => {
+                                  return (
+                                    <div key={filepath} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                      </svg>
+                                      <span>{filepath}</span>
+                                    </div>
+                                  )
+                                })}
+                                {log.selected_text && (
+                                  <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                    <span>Read editor selection ({log.selected_text.length} Ch)</span>
+                                  </div>
+                                )}
+                                {log.tool_calls?.map((t, i) => (
+                                  <div key={`tool-${i}`} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                                    </svg>
+                                    <span>{t.tool}{t.detail ? ` ${t.detail}` : ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {log.planner_system_prompt && (
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">① Planner</span>
+                                <div><strong>System:</strong> {log.planner_system_prompt}</div>
+                                <div className="mt-1"><strong>User:</strong> {log.planner_user_prompt}</div>
+                                <div className="mt-1"><strong>Output:</strong> {log.planner_output}</div>
+                              </div>
+                            )}
+                            {log.planner_system_prompt && (
+                              <div className="border-t border-[var(--border)] pt-2 mt-1" />
+                            )}
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">{log.planner_system_prompt ? '② Generator' : 'Prompt'}</span>
+                              <div><strong>System:</strong> {log.system_prompt}</div>
+                              <div className="mt-1"><strong>User:</strong> {log.user_prompt}</div>
+                            </div>
+                            {log.post_processing && (
+                              <div className="flex flex-col gap-1 border-t border-[var(--border)] pt-2 mt-1">
+                                <span className="text-[9px] uppercase tracking-widest font-sans text-[var(--text-muted)] font-semibold">Post-processing</span>
+                                {log.post_processing.skipped ? (
+                                  <div>Skipped ({log.post_processing.reason || 'not applicable'})</div>
+                                ) : (
+                                  <>
+                                    {(log.post_processing.passes || []).map((pass, i) => (
+                                      <div key={`pp-${i}`} className="flex items-center gap-1.5">
+                                        <span className="text-[var(--text-muted)]">{pass.hunk ? `hunk ${pass.hunk} · ` : ''}{pass.name}</span>
+                                        <span className={pass.status === 'ok' ? 'text-green-600 dark:text-green-400' : pass.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}>
+                                          {pass.status}
+                                        </span>
+                                        {pass.model && <span className="text-[var(--text-muted)]">{pass.model}</span>}
+                                        {pass.error && <span className="text-[var(--danger)]">{pass.error}</span>}
+                                      </div>
+                                    ))}
+                                    {log.post_processing.skipped_hunks ? (
+                                      <div className="text-[var(--text-muted)]">{log.post_processing.skipped_hunks} hunk(s) not post-processed (cap or minimum length)</div>
+                                    ) : null}
+                                  </>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}
-                      </div>
-                    )}
-                    {/* Thinking dropdown — visible when thinking output exists */}
-                    {log.thinking_output && (
-                      <div className="mt-0.5">
-                        <ThinkingDropdown text={log.thinking_output} defaultOpen={false} />
-                      </div>
-                    )}
 
-                    {/* Always-visible context rows — ref files + planner context + selection */}
-                    {((log.ref_files && log.ref_files.length > 0) || log.selected_text || plannerContextFiles.length > 0) && (() => {
-                      const uniqueFiles = new Map<string, string>()
-                      log.ref_files?.forEach(f => uniqueFiles.set(f.name, f.name))
-                      // Only add planner files not already shown as user-tagged chips
-                      const refFileNames = new Set((log.ref_files || []).map(f => f.name))
-                      plannerContextFiles.forEach(f => {
-                        const name = f.split('/').pop() || f
-                        if (!refFileNames.has(name)) uniqueFiles.set(name, name)
-                      })
+                        {log.thinking_output && (
+                          <ThinkingDetails text={log.thinking_output} />
+                        )}
 
-                      return (
-                        <div className="flex flex-col gap-1 mt-1 select-none">
-                          {Array.from(uniqueFiles.values()).map((name, i) => (
-                            <div key={i} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] font-sans">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                              <span>Read {name}</span>
-                            </div>
-                          ))}
-                          {log.selected_text && (
-                            <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] font-sans">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                              <span>Read editor selection ({log.selected_text.length} ch)</span>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
+                        {/* Always-visible context rows — ref files + planner context + selection */}
+                        {((log.ref_files && log.ref_files.length > 0) || log.selected_text || plannerContextFiles.length > 0) && (() => {
+                          const uniqueFiles = new Map<string, string>()
+                          log.ref_files?.forEach(f => uniqueFiles.set(f.name, f.name))
+                          // Only add planner files not already shown as user-tagged chips
+                          const refFileNames = new Set((log.ref_files || []).map(f => f.name))
+                          plannerContextFiles.forEach(f => {
+                            const name = f.split('/').pop() || f
+                            if (!refFileNames.has(name)) uniqueFiles.set(name, name)
+                          })
 
-                    <div className={`text-xs font-sans leading-relaxed select-text mt-1 ${log.success === false ? 'text-[var(--danger)] font-medium whitespace-pre-wrap' : 'text-[var(--text)]'}`}>
-                      {log.success === false ? log.output : log.output ? (
-                        <ContextMenu>
-                          <ContextMenuTrigger className="block select-text">
-                            <AssistMarkdown className="assist-markdown">{log.output}</AssistMarkdown>
-                          </ContextMenuTrigger>
-                          <ContextMenuContent className="w-40 bg-[var(--bg-elevated)] border-[var(--border)]">
-                            <ContextMenuItem
-                              onClick={() => {
-                                const editor = useEditorStore.getState().editor
-                                if (editor && !editor.isDestroyed) {
-                                  editor.chain().focus().insertContent(log.output).run()
-                                }
-                              }}
-                              className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
-                              title="Insert raw markdown at cursor"
-                            >
-                              Insert at cursor
-                            </ContextMenuItem>
-                            <ContextMenuItem
-                              onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(log.output)
-                                  toast.success('Copied to clipboard')
-                                } catch (err) {
-                                  console.error('Failed to copy', err)
-                                  toast.error('Could not copy to clipboard.')
-                                }
-                              }}
-                              className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
-                            >
-                              Copy
-                            </ContextMenuItem>
-                            <ContextMenuSeparator className="bg-[var(--border)]" />
-                            <ContextMenuSub>
-                              <ContextMenuSubTrigger
-                                disabled={!!runningPass}
-                                className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
-                              >
-                                Run post-processing pass
-                              </ContextMenuSubTrigger>
-                              <ContextMenuSubContent className="w-56 bg-[var(--bg-elevated)] border-[var(--border)]">
-                                {oneOffPasses.length === 0 ? (
-                                  <ContextMenuItem
-                                    disabled
-                                    className="text-[11px] text-[var(--text-muted)]"
+                          return (
+                            <Trace className="gap-1 mt-1 select-none">
+                              {Array.from(uniqueFiles.values()).map((name, i) => (
+                                <TraceLine key={i} className="text-[10px]">
+                                  <TraceIcon>
+                                    <Eye className="size-3.5" />
+                                  </TraceIcon>
+                                  <TraceTitle>Read {name}</TraceTitle>
+                                </TraceLine>
+                              ))}
+                              {log.selected_text && (
+                                <TraceLine className="text-[10px]">
+                                  <TraceIcon>
+                                    <Eye className="size-3.5" />
+                                  </TraceIcon>
+                                  <TraceTitle>Read editor selection ({log.selected_text.length} ch)</TraceTitle>
+                                </TraceLine>
+                              )}
+                            </Trace>
+                          )
+                        })()}
+
+                        <div className={log.success === false ? 'text-xs font-sans font-medium leading-relaxed text-[var(--danger)] whitespace-pre-wrap select-text mt-1' : 'text-xs font-sans leading-relaxed select-text mt-1 text-[var(--text)]'}>
+                          {log.success === false ? log.output : log.output ? (
+                            <ContextMenu>
+                              <ContextMenuTrigger className="block select-text">
+                                <AssistMarkdown className="assist-markdown">{log.output}</AssistMarkdown>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent className="w-40 bg-[var(--bg-elevated)] border-[var(--border)]">
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    const activeEditor = useEditorStore.getState().editor
+                                    if (activeEditor && !activeEditor.isDestroyed) {
+                                      activeEditor.chain().focus().insertContent(log.output).run()
+                                    }
+                                  }}
+                                  className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                                  title="Insert raw markdown at cursor"
+                                >
+                                  Insert at cursor
+                                </ContextMenuItem>
+                                <ContextMenuItem
+                                  onClick={async () => {
+                                    try {
+                                      await navigator.clipboard.writeText(log.output)
+                                      toast.success('Copied to clipboard')
+                                    } catch (err) {
+                                      console.error('Failed to copy', err)
+                                      toast.error('Could not copy to clipboard.')
+                                    }
+                                  }}
+                                  className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                                >
+                                  Copy
+                                </ContextMenuItem>
+                                <ContextMenuSeparator className="bg-[var(--border)]" />
+                                <ContextMenuSub>
+                                  <ContextMenuSubTrigger
+                                    disabled={!!runningPass}
+                                    className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
                                   >
-                                    No passes configured
-                                  </ContextMenuItem>
-                                ) : (
-                                  oneOffPasses.map((pass) => {
-                                    const isRunning =
-                                      runningPass?.logId === log.id &&
-                                      runningPass.passId === pass.id
-                                    return (
+                                    Run post-processing pass
+                                  </ContextMenuSubTrigger>
+                                  <ContextMenuSubContent className="w-56 bg-[var(--bg-elevated)] border-[var(--border)]">
+                                    {oneOffPasses.length === 0 ? (
                                       <ContextMenuItem
-                                        key={pass.id}
-                                        disabled={!!runningPass}
-                                        onClick={() => void handleRunPostProcessPass(log, pass)}
-                                        className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
-                                        title={`Run ${pass.name} on this response only`}
+                                        disabled
+                                        className="text-[11px] text-[var(--text-muted)]"
                                       >
-                                        {isRunning ? (
-                                          <Loader2 className="w-3 h-3 animate-spin" />
-                                        ) : null}
-                                        <span className="flex-1 truncate">{pass.name}</span>
-                                        {!pass.enabled ? (
-                                          <span className="text-[9px] text-[var(--text-muted)]">
-                                            off
-                                          </span>
-                                        ) : null}
+                                        No passes configured
                                       </ContextMenuItem>
-                                    )
-                                  })
-                                )}
-                              </ContextMenuSubContent>
-                            </ContextMenuSub>
-                          </ContextMenuContent>
-                        </ContextMenu>
-                      ) : null}
-                    </div>
-                    {log.success !== false && log.output && (
-                      <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                        <Tooltip>
-                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => void handleCopyResponse(log)} aria-label="Copy response">
-                            {copiedResponseId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <span className="text-[10px]">Copy</span>}
-                          </Button>} />
-                          <TooltipContent>{copiedResponseId === log.id ? 'Copied' : 'Copy response'}</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleInsertResponse(log)} aria-label="Insert response"><span className="text-[10px]">Insert</span></Button>} />
-                          <TooltipContent>Insert response at cursor</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleRetry(log)} aria-label="Retry response"><Undo2 /></Button>} />
-                          <TooltipContent>Retry response</TooltipContent>
-                        </Tooltip>
-                      </MessageFooter>
-                    )}
-                  </MessageContent>
-                </Message>
-              )
-            })}
+                                    ) : (
+                                      oneOffPasses.map((pass) => {
+                                        const isRunning =
+                                          runningPass?.logId === log.id &&
+                                          runningPass.passId === pass.id
+                                        return (
+                                          <ContextMenuItem
+                                            key={pass.id}
+                                            disabled={!!runningPass}
+                                            onClick={() => void handleRunPostProcessPass(log, pass)}
+                                            className="text-[11px] text-[var(--text-secondary)] focus:bg-[var(--bg-hover)] focus:text-[var(--text-heading)]"
+                                            title={`Run ${pass.name} on this response only`}
+                                          >
+                                            {isRunning ? (
+                                              <Loader2 className="w-3 h-3 animate-spin" />
+                                            ) : null}
+                                            <span className="flex-1 truncate">{pass.name}</span>
+                                            {!pass.enabled ? (
+                                              <span className="text-[9px] text-[var(--text-muted)]">
+                                                off
+                                              </span>
+                                            ) : null}
+                                          </ContextMenuItem>
+                                        )
+                                      })
+                                    )}
+                                  </ContextMenuSubContent>
+                                </ContextMenuSub>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          ) : null}
+                        </div>
 
-            {isWorking && activeInstruction && (
-              <Message className="gap-2.5 animate-fade-in">
-                {/* User Prompt */}
-                <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] opacity-70">
-                  <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
-                </Bubble>
-                {/* Context Readings Logs */}
-                {activeRefFiles.map((file) => (
-                  <div key={file.path} className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] font-sans select-none ml-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                    <span>Reading {file.name}</span>
-                  </div>
-                ))}
-                {/* Planner context files — only show ones the user didn't already tag */}
-                {plannerContextFiles
-                  .filter(filepath => {
-                    const name = filepath.split('/').pop() || filepath
-                    return !activeRefFiles.some(f => f.name === name)
-                  })
-                  .map((filepath) => {
-                    const name = filepath.split('/').pop() || filepath
-                    return (
-                      <div key={filepath} className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] font-sans select-none ml-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                        <span>Reading {name}</span>
+                        {log.success !== false && log.output && (
+                          <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button variant="ghost" size="icon-sm" onClick={() => void handleCopyResponse(log)} aria-label="Copy response">
+                                  {copiedResponseId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <Copy />}
+                                </Button>
+                              } />
+                              <TooltipContent>{copiedResponseId === log.id ? 'Copied' : 'Copy response'}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleInsertResponse(log)} aria-label="Insert response"><CornerDownLeft /></Button>} />
+                              <TooltipContent>Insert response at cursor</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handleRetry(log)} aria-label="Retry response"><Undo2 /></Button>} />
+                              <TooltipContent>Retry response</TooltipContent>
+                            </Tooltip>
+                          </MessageFooter>
+                        )}
+                      </MessageContent>
+                    </Message>
+                  </React.Fragment>
+                )
+              })}
+
+              {isWorking && activeInstruction && (
+                <>
+                  <Message align="end" className="animate-fade-in">
+                    <MessageContent>
+                      <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] opacity-70">
+                        <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
+                      </Bubble>
+                    </MessageContent>
+                  </Message>
+
+                  <Message className="group animate-fade-in">
+                    <MessageContent className="w-full">
+                      {(activeRefFiles.length > 0 || plannerContextFiles.length > 0) && (
+                        <Trace className="gap-1 select-none">
+                          {activeRefFiles.map((file) => (
+                            <TraceLine key={file.path} className="text-[10px]">
+                              <TraceIcon>
+                                <Eye className="size-3.5" />
+                              </TraceIcon>
+                              <TraceTitle>Reading {file.name}</TraceTitle>
+                            </TraceLine>
+                          ))}
+                          {plannerContextFiles
+                            .filter(filepath => {
+                              const name = filepath.split('/').pop() || filepath
+                              return !activeRefFiles.some(f => f.name === name)
+                            })
+                            .map((filepath) => {
+                              const name = filepath.split('/').pop() || filepath
+                              return (
+                                <TraceLine key={filepath} className="text-[10px]">
+                                  <TraceIcon>
+                                    <Eye className="size-3.5" />
+                                  </TraceIcon>
+                                  <TraceTitle>Reading {name}</TraceTitle>
+                                </TraceLine>
+                              )
+                            })}
+                        </Trace>
+                      )}
+
+                      {activeToolRows.length > 0 && (
+                        <Trace className="gap-1">
+                          {activeToolRows.map((t, i) => (
+                            <TraceLine key={`htool-${i}`} className="text-[10px]">
+                              <TraceIcon>
+                                <Wrench className="size-3.5 text-[var(--text-muted)]" />
+                              </TraceIcon>
+                              <TraceTitle>{t.tool}{t.detail ? ` ${t.detail}` : ''}</TraceTitle>
+                            </TraceLine>
+                          ))}
+                        </Trace>
+                      )}
+
+                      {streamingThinkingText && (
+                        <ThinkingDetails text={streamingThinkingText} open label="Thinking…" />
+                      )}
+
+                      {(mode === 'chat' || activeHarness !== 'none') && streamingChatText && (
+                        <>
+                          <AssistMarkdown streaming className="assist-markdown">{streamingChatText}</AssistMarkdown>
+                          <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => {
+                                    const activeEditor = useEditorStore.getState().editor
+                                    if (activeEditor && !activeEditor.isDestroyed) {
+                                      activeEditor.chain().focus().insertContent(streamingChatText).run()
+                                    }
+                                  }}
+                                  aria-label="Insert response"
+                                >
+                                  <CornerDownLeft />
+                                </Button>
+                              } />
+                              <TooltipContent>Insert at cursor</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={async () => {
+                                    try {
+                                      await navigator.clipboard.writeText(streamingChatText)
+                                      toast.success('Copied to clipboard')
+                                    } catch (err) {
+                                      console.error('Failed to copy', err)
+                                      toast.error('Could not copy to clipboard.')
+                                    }
+                                  }}
+                                  aria-label="Copy response"
+                                >
+                                  <Copy />
+                                </Button>
+                              } />
+                              <TooltipContent>Copy</TooltipContent>
+                            </Tooltip>
+                          </MessageFooter>
+                        </>
+                      )}
+
+                      <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        <span className="animate-shimmer">
+                          {postProcessStatus
+                            ? `Post-processing${postProcessStatus.name ? ` · ${postProcessStatus.name}` : ''}${postProcessStatus.total ? ` (${Math.min(postProcessStatus.index + 1, postProcessStatus.total)}/${postProcessStatus.total})…` : '…'}`
+                            : activeHarness !== 'none' && isWorking
+                              ? `${harnessLabel(activeHarness)} working…`
+                              : isPlanning
+                                ? 'Planning…'
+                                : isGenerating
+                                  ? 'Generating…'
+                                  : mode === 'edit'
+                                    ? 'Thinking about the edit…'
+                                    : 'Thinking…'}
+                        </span>
                       </div>
-                    )
-                  })}
+                    </MessageContent>
+                  </Message>
+                </>
+              )}
 
-                {/* Harness tool calls (structured harnesses) */}
-                {activeToolRows.length > 0 && (
-                  <Trace className="ml-1 gap-1">
-                    {activeToolRows.map((t, i) => (
-                      <TraceLine key={`htool-${i}`} className="text-[11px] font-sans">
-                        <TraceIcon>
-                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                          </svg>
-                        </TraceIcon>
-                        <TraceTitle>{t.tool}{t.detail ? ` ${t.detail}` : ''}</TraceTitle>
-                      </TraceLine>
-                    ))}
-                  </Trace>
-                )}
+              {errorText && (
+                <div className="self-start rounded-[8px] border border-[var(--danger-muted)] bg-[var(--danger-bg)] px-2.5 py-2 text-[11px] text-[var(--danger)] select-none">
+                  {errorText}
+                </div>
+              )}
 
-                {streamingThinkingText && (
-                  <div className="self-start w-full">
-                    <ThinkingDropdown text={streamingThinkingText} defaultOpen={true} />
-                  </div>
-                )}
+              {noticeText && (
+                <div className="self-start rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[11px] text-[var(--text-secondary)] select-none">
+                  {noticeText}
+                </div>
+              )}
 
-                {/* Live chat stream render (also harness progress output) */}
-                {(mode === 'chat' || activeHarness !== 'none') && streamingChatText && (
-                  <div className="flex flex-col gap-1.5 self-start w-full select-text max-w-full py-1 animate-scale-in relative group">
-                    <div className="text-xs font-sans leading-relaxed select-text text-[var(--text)]">
-                      <AssistMarkdown streaming className="assist-markdown">{streamingChatText}</AssistMarkdown>
-                    </div>
-                    {/* Hover context menu */}
-                    <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex flex-col gap-0.5 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] shadow-lg z-10 p-0.5 min-w-[120px]">
-                      <button
-                        onClick={() => {
-                          const editor = useEditorStore.getState().editor
-                          if (editor && !editor.isDestroyed) {
-                            editor.chain().focus().insertContent(streamingChatText).run()
-                          }
-                        }}
-                        className="px-2 py-1 text-[10px] text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-heading)] rounded-[4px] transition-colors cursor-pointer"
-                        title="Insert raw markdown at cursor"
-                      >
-                        Insert at cursor
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(streamingChatText)
-                            toast.success('Copied to clipboard')
-                          } catch (err) {
-                            console.error('Failed to copy', err)
-                            toast.error('Could not copy to clipboard.')
-                          }
-                        }}
-                        className="px-2 py-1 text-[10px] text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-heading)] rounded-[4px] transition-colors cursor-pointer"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Phase-aware status indicator */}
-                <Trace ref={outputRef} className="py-1">
-                  <TraceLine className="text-xs font-serif italic">
-                  <div className={`status-indicator-square ${isPlanning ? 'animate-planning' : isGenerating ? 'animate-generating-pulse' : ''}`}>
-                    <div className={`status-indicator-inner ${isGenerating ? 'animate-orbit' : ''}`} />
-                  </div>
-                  <TraceIcon><span className="animate-shimmer">
-                    {postProcessStatus
-                      ? `Post-processing${postProcessStatus.name ? ` · ${postProcessStatus.name}` : ''}${postProcessStatus.total ? ` (${Math.min(postProcessStatus.index + 1, postProcessStatus.total)}/${postProcessStatus.total})` : ''}…`
-                      : activeHarness !== 'none' && isWorking ? `${harnessLabel(activeHarness)} working…` : isPlanning ? 'Planning...' : isGenerating ? 'Generating...' : 'Thinking about the edit...'}
-                  </span></TraceIcon>
-                  <TraceTitle className="animate-shimmer">{postProcessStatus ? 'Working' : isPlanning ? 'Planning' : isGenerating ? 'Generating' : 'Thinking'}</TraceTitle>
-                  </TraceLine>
-                </Trace>
-              </Message>
-            )}
-
-            {errorText && (
-              <div className="flex items-center gap-1.5 text-xs text-[var(--danger)] bg-[var(--danger-bg)] border border-[var(--danger-muted)] rounded-[8px] px-2.5 py-2 font-sans self-start select-none animate-fade-in" ref={outputRef}>
-                <span>{errorText}</span>
-              </div>
-            )}
-
-            {noticeText && (
-              <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-[8px] px-2.5 py-2 font-sans self-start select-none animate-fade-in">
-                <span>{noticeText}</span>
-              </div>
-            )}
-          </ChatMessages>
+              <div ref={bottomRef} />
+            </ChatMessages>
           </MessageScroller>
         </Chat>
       )}
 
       {!hasHistory && (
-        <div className="flex-1 flex flex-col justify-center px-5 py-10 animate-fade-in max-w-[300px] mx-auto select-none font-sans text-left">
-          <div className="text-center mb-6">
-            <div className="mt-3 text-[18px] font-medium text-[var(--text-heading)] font-serif">
-              M<em>a</em>rg<em>i</em>n
-            </div>
-            <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--text-muted)] font-sans">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-10 text-center animate-fade-in select-none">
+          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-hover)] text-[var(--accent-brown)]">
+            <Brain size={18} />
+          </div>
+          <div className="max-w-[420px]">
+            <p className="text-[15px] font-medium text-[var(--text-heading)] font-serif">
               Edit, ask, and pull context into the draft.
             </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+              Type @ to reference a markdown file. Switch between Edit and Chat, or select
+              text to guide the next change.
+            </p>
           </div>
-
-          <div className="flex flex-col gap-2.5 text-[11px] text-[var(--text-secondary)]">
-            <div className="flex gap-2.5 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2">
-              <AtSign size={14} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-              <p className="leading-normal text-[var(--text)]">Type <code className="font-mono text-[9.5px] bg-[var(--bg-hover)] px-1 py-0.5 rounded border border-[var(--border-subtle)] text-[var(--text)]">@</code> to add markdown files.</p>
-            </div>
-
-            <div className="flex gap-2.5 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2">
-              <Code2 size={14} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-              <p className="leading-normal text-[var(--text)]"><strong className="font-medium">Edit</strong> changes text, <strong className="font-medium">Chat</strong> answers questions.</p>
-            </div>
-
-            <div className="flex gap-2.5 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2">
-              <MousePointer2 size={14} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-              <p className="leading-normal text-[var(--text)]">Place the cursor or highlight text to guide the edit.</p>
-            </div>
+          <div className="flex max-w-[520px] flex-wrap justify-center gap-1.5">
+            {ASSIST_SUGGESTIONS.map((suggestion) => (
+              <Button
+                key={suggestion}
+                variant="outline"
+                size="sm"
+                className="text-[10.5px]"
+                onClick={() => setComposerText(suggestion)}
+              >
+                {suggestion}
+              </Button>
+            ))}
           </div>
         </div>
       )}
