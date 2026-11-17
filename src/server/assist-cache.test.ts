@@ -336,7 +336,8 @@ describe('scene planner prompt layout', () => {
     cursor_paragraph_text: 'The current paragraph.',
     ref_files: null,
     available_files: [],
-    active_filename: 'chapters/c1.md',
+    active_filename: 'c1.md',
+    active_file_path: 'chapters/c1.md',
     skip_planner: true,
     harness: 'none',
     endpoint_id: 'local',
@@ -380,6 +381,9 @@ describe('scene planner prompt layout', () => {
     expect(built.user).toContain('CURRENT_DRAFT:\nStart of the draft.')
     expect(built.user).toContain('CURSOR_PARAGRAPH:\nThe current paragraph.')
     expect(built.user.endsWith('USER_MESSAGE:\nWhat happens next?')).toBe(true)
+    expect(built.files).toContain(
+      '--- ACTIVE FILE: chapters/c1.md ---\nStart of the draft.\n\nThe current paragraph.',
+    )
     expect(built.files).toContain('--- FILE: characters/elara.md ---\ncontent-of-characters/elara.md')
     expect(built.history).toEqual([
       { role: 'user', content: 'plan q1' },
@@ -409,6 +413,7 @@ describe('simple assist request normalization', () => {
   it('defaults endpoint_id to null', () => {
     const req = normalizeSimpleAssistRequest({ content: '', message: 'hi' })
     expect(req.endpoint_id).toBeNull()
+    expect(req.active_file_path).toBeNull()
     expect(req.mode).toBe('chat')
     expect(req.harness).toBe('api')
   })

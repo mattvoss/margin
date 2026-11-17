@@ -92,6 +92,8 @@ export interface SimpleAssistRequest {
   ref_files: Array<Record<string, unknown>> | null
   available_files: Array<{ path: string; name: string }>
   active_filename: string | null
+  /** Workspace-relative path of the currently open file, when known. */
+  active_file_path?: string | null
   skip_planner: boolean
   harness: string | null
   /** Override the active endpoint for this request (planner model picker). */
@@ -115,6 +117,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
       : null,
     available_files: arr(input.available_files),
     active_filename: str(input.active_filename) ?? null,
+    active_file_path: str(input.active_file_path) ?? null,
     skip_planner: input.skip_planner === true,
     harness: typeof input.harness === 'string' ? input.harness : 'api',
     endpoint_id: str(input.endpoint_id) ?? null,
@@ -1206,14 +1209,24 @@ export async function composeScenePlannerMessages(
       })
 
   const fileParts: string[] = []
+  const activeFilePath =
+    req.active_file_path ??
+    req.available_files.find((file) => file.name === req.active_filename)?.path ??
+    req.active_filename
+  const alreadySeen = new Set<string>()
+  if (activeFilePath) {
+    alreadySeen.add(activeFilePath)
+    fileParts.push(`--- ACTIVE FILE: ${activeFilePath} ---\n${req.content ?? ''}`)
+  }
   if (tagged.length > 0) {
     const ignored = new Set(settings.ignored_ref_files ?? [])
     for (const p of tagged) {
-      if (isBlocked(p, ignored)) continue
+      if (p === activeFilePath || isBlocked(p, ignored)) continue
       await injectContextFile(fileParts, p, p, deps.readFile)
     }
   }
-  await injectPinnedRefFiles(fileParts, new Set(tagged), settings, req.available_files, deps.readFile)
+  for (const p of tagged) alreadySeen.add(p)
+  await injectPinnedRefFiles(fileParts, alreadySeen, settings, req.available_files, deps.readFile)
   const files = joinFilesMessage(fileParts)
 
   const history =
@@ -1222,7 +1235,7 @@ export async function composeScenePlannerMessages(
       : []
 
   const userParts: string[] = []
-  if (req.active_filename) userParts.push(`ACTIVE_FILE: ${req.active_filename}`)
+  if (activeFilePath) userParts.push(`ACTIVE_FILE: ${activeFilePath}`)
 
   const draft = (req.content ?? '').replace(/\r\n/g, '\n').trim()
   if (draft) {

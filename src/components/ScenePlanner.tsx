@@ -19,10 +19,12 @@ import {
   Loader2,
   Plus,
   Square,
+  Users,
   Wrench,
   X,
 } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
+import { useCharactersStore } from '../stores/charactersStore'
 import { useSettingsStore, type AppSettings } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
@@ -284,6 +286,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   const settings = useSettingsStore((s) => s.settings)
   const setShowSettings = useSettingsStore((s) => s.setShowSettings)
   const setSettingsTab = useSettingsStore((s) => s.setSettingsTab)
+  const setCharactersDialogOpen = useCharactersStore((s) => s.setDialogOpen)
   const currentFilePath = useEditorStore((s) => s.currentFilePath)
   const openedFiles = useEditorStore((s) => s.openedFiles)
   const workspace = settings.linked_workspace_dir ?? 'sample'
@@ -533,6 +536,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
         ref_files: composer.refs,
         available_files: mentionFiles,
         active_filename: activeFilename,
+        active_file_path: state.currentFilePath,
         cursor_paragraph_text: cursorParagraph() || null,
         skip_planner: true,
       }
@@ -969,6 +973,16 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
             />
             <InputGroupAddon align="block-end">
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setCharactersDialogOpen(true)}
+                aria-label="Open character dialog"
+                title="Characters"
+              >
+                <Users className="size-4" />
+              </InputGroupButton>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
