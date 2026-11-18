@@ -2052,9 +2052,9 @@ export function SimpleAssist() {
                 return (
                   <React.Fragment key={log.id}>
                     {/* User prompt */}
-                    <Message align="end" className="group animate-scale-in">
+                    <Message align="end" className="group">
                       <MessageContent>
-                        <Bubble align="end" variant="muted" className="font-sans text-[var(--text)]">
+                        <Bubble align="end" variant="muted" className="text-[var(--text)]">
                           <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
                         </Bubble>
                         <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
@@ -2075,7 +2075,7 @@ export function SimpleAssist() {
                     </Message>
 
                     {/* Assistant response */}
-                    <Message className="group animate-scale-in">
+                    <Message className="group">
                       <MessageContent className="w-full">
                         <button
                           onClick={() => setExpandedIds(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
@@ -2208,7 +2208,7 @@ export function SimpleAssist() {
                           )
                         })()}
 
-                        <div className={log.success === false ? 'text-xs font-sans font-medium leading-relaxed text-[var(--danger)] whitespace-pre-wrap select-text mt-1' : 'text-xs font-sans leading-relaxed select-text mt-1 text-[var(--text)]'}>
+                        <div className={log.success === false ? 'text-xs font-sans font-medium leading-relaxed text-[var(--danger)] whitespace-pre-wrap select-text' : 'select-text'}>
                           {log.success === false ? log.output : log.output ? (
                             <ContextMenu>
                               <ContextMenuTrigger className="block select-text">
@@ -2318,15 +2318,15 @@ export function SimpleAssist() {
 
               {isWorking && activeInstruction && (
                 <>
-                  <Message align="end" className="animate-fade-in">
+                  <Message align="end">
                     <MessageContent>
-                      <Bubble align="end" variant="muted" className="font-sans text-[var(--text)] opacity-70">
+                      <Bubble align="end" variant="muted" className="text-[var(--text)] opacity-70">
                         <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
                       </Bubble>
                     </MessageContent>
                   </Message>
 
-                  <Message className="group animate-fade-in">
+                  <Message className="group">
                     <MessageContent className="w-full">
                       {(activeRefFiles.length > 0 || plannerContextFiles.length > 0) && (
                         <Trace className="gap-1 select-none">
