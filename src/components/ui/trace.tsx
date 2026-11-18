@@ -22,7 +22,7 @@ function TraceLine({
   className,
   status,
   ...props
-}: React.ComponentProps<'div'> & { status?: 'running' | 'error' }) {
+}: React.ComponentProps<'div'> & { status?: 'running' | 'pending' | 'error' }) {
   return (
     <div
       data-slot="trace-line"
@@ -30,6 +30,7 @@ function TraceLine({
       className={cn(
         'flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground',
         status === 'running' && 'text-[var(--text-secondary)]',
+        status === 'pending' && 'text-[var(--text-muted)]',
         status === 'error' && 'text-[var(--danger)]',
         className,
       )}

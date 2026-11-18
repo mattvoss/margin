@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Brain, ChevronDown, Loader2, Wrench } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { Brain, Check, ChevronDown, Circle, CircleDot, CircleX, ListTodo, Loader2, Wrench } from 'lucide-react'
+import type { AssistPlanStep } from './assist-plan'
 import {
   Trace,
   TraceCollapsible,
@@ -8,7 +9,63 @@ import {
   TraceIcon,
   TraceLine,
   TraceTitle,
+  TraceDescription,
 } from '@/components/ui/trace'
+
+export function AssistPlanTrace({
+  title,
+  steps,
+  children,
+}: {
+  title: string
+  steps: AssistPlanStep[]
+  children?: ReactNode
+}) {
+  const [open, setOpen] = useState<boolean>()
+  const doneCount = steps.filter((step) => step.status === 'done').length
+  const running = steps.some((step) => step.status === 'running')
+  const hasError = steps.some((step) => step.status === 'error')
+  const header = (
+    <TraceLine
+      status={hasError ? 'error' : running ? 'running' : undefined}
+      className="w-fit cursor-pointer select-none py-0.5 text-[10px]"
+    >
+      <TraceIcon><ListTodo className="size-3" /></TraceIcon>
+      <TraceTitle>{title}</TraceTitle>
+      <TraceDescription>{doneCount} of {steps.length} done</TraceDescription>
+      <ChevronDown className={`size-3 transition-transform ${open ?? running ? 'rotate-180' : ''}`} />
+    </TraceLine>
+  )
+
+  return (
+    <Trace>
+      <TraceCollapsible open={open ?? running} onOpenChange={setOpen}>
+        <TraceCollapsibleTrigger>{header}</TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <Trace className="gap-1">
+            {steps.map((step) => (
+              <TraceLine
+                key={step.id}
+                status={step.status === 'done' ? undefined : step.status}
+                className="text-[10px]"
+              >
+                <TraceIcon>
+                  {step.status === 'done' ? <Check className="size-3" /> : null}
+                  {step.status === 'running' ? <CircleDot className="size-3" /> : null}
+                  {step.status === 'pending' ? <Circle className="size-3" /> : null}
+                  {step.status === 'error' ? <CircleX className="size-3" /> : null}
+                </TraceIcon>
+                <TraceTitle>{step.title}</TraceTitle>
+                {step.description ? <TraceDescription>{step.description}</TraceDescription> : null}
+              </TraceLine>
+            ))}
+            {children}
+          </Trace>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  )
+}
 
 export function ReasoningTrace({
   text,

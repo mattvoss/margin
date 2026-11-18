@@ -21,7 +21,8 @@ import {
 } from '../lib/postProcessing'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { AssistMarkdown } from './AssistMarkdown'
-import { ReasoningTrace, ToolTrace } from './AssistActivity'
+import { AssistPlanTrace, ReasoningTrace, ToolTrace } from './AssistActivity'
+import { buildAssistPlan } from './assist-plan'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -373,7 +374,12 @@ export function SimpleAssist() {
   const [plannerContextFiles, setPlannerContextFiles] = useState<string[]>([])
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
-  const [postProcessStatus, setPostProcessStatus] = useState<{ index: number; total: number; name?: string } | null>(null)
+  const [postProcessStatus, setPostProcessStatus] = useState<{
+    index: number
+    total: number
+    name?: string
+    phase?: 'running' | 'done' | 'error'
+  } | null>(null)
   const [runningPass, setRunningPass] = useState<{ logId: string; passId: string } | null>(null)
   const [instructionText, setInstructionText] = useState('')
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
@@ -447,6 +453,21 @@ export function SimpleAssist() {
   const oneOffPasses = useMemo(
     () => activePostProcessPreset(normalizePostProcessing(settings?.post_processing)).passes,
     [settings?.post_processing],
+  )
+  const activeAssistPlan = useMemo(
+    () => buildAssistPlan({
+      mode,
+      harnessActive: activeHarness !== 'none',
+      harnessName:
+        activeHarness !== 'none'
+          ? harnessList.find((harnessOption) => harnessOption.id === activeHarness)?.name ??
+            activeHarness
+          : undefined,
+      isPlanning,
+      isGenerating,
+      postProcess: postProcessStatus,
+    }),
+    [mode, activeHarness, harnessList, isPlanning, isGenerating, postProcessStatus],
   )
 
   const handleRunPostProcessPass = async (log: SimpleLogEntry, pass: PostProcessPass) => {
@@ -1031,19 +1052,29 @@ export function SimpleAssist() {
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
           } else if (status === 'post_processing_start') {
-            setPostProcessStatus({ index: 0, total: Number(data.total) || 0 })
+            setPostProcessStatus({
+              index: 0,
+              total: Number(data.total) || 0,
+              phase: 'running',
+            })
           } else if (status === 'post_processing_pass') {
             setPostProcessStatus({
               index: Number(data.index) || 0,
               total: Number(data.total) || 0,
               name: String(data.name || ''),
+              phase: 'running',
             })
           } else if (status === 'post_processing_pass_done') {
-            setPostProcessStatus(prev => prev ? { ...prev, index: Number(data.index) || prev.index } : prev)
+            setPostProcessStatus(prev => prev ? {
+              ...prev,
+              index: Number(data.index) || prev.index,
+              phase: data.result_status === 'failed' ? 'error' : 'done',
+            } : prev)
             if (data.result_status === 'failed') {
               setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
             }
           } else if (status === 'post_processing_skipped') {
+            setPostProcessStatus(null)
             const reason = String(data.reason || '')
             if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
@@ -1301,19 +1332,29 @@ export function SimpleAssist() {
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
           } else if (status === 'post_processing_start') {
-            setPostProcessStatus({ index: 0, total: Number(data.total) || 0 })
+            setPostProcessStatus({
+              index: 0,
+              total: Number(data.total) || 0,
+              phase: 'running',
+            })
           } else if (status === 'post_processing_pass') {
             setPostProcessStatus({
               index: Number(data.index) || 0,
               total: Number(data.total) || 0,
               name: String(data.name || ''),
+              phase: 'running',
             })
           } else if (status === 'post_processing_pass_done') {
-            setPostProcessStatus(prev => prev ? { ...prev, index: Number(data.index) || prev.index } : prev)
+            setPostProcessStatus(prev => prev ? {
+              ...prev,
+              index: Number(data.index) || prev.index,
+              phase: data.result_status === 'failed' ? 'error' : 'done',
+            } : prev)
             if (data.result_status === 'failed') {
               setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
             }
           } else if (status === 'post_processing_skipped') {
+            setPostProcessStatus(null)
             const reason = String(data.reason || '')
             if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
@@ -2351,18 +2392,23 @@ export function SimpleAssist() {
                         </Trace>
                       )}
 
-                      {activeToolRows.length > 0 && (
-                        <Trace className="gap-1">
-                          {activeToolRows.map((t, i) => (
-                            <ToolTrace
-                              key={`htool-${i}`}
-                              tool={t.tool}
-                              detail={t.detail}
-                              running
-                            />
-                          ))}
-                        </Trace>
-                      )}
+                      <AssistPlanTrace
+                        title={activeAssistPlan.title}
+                        steps={activeAssistPlan.steps}
+                      >
+                        {activeToolRows.length > 0 && (
+                          <Trace className="mt-1 gap-1 border-t border-[var(--border-subtle)] pt-1">
+                            {activeToolRows.map((tool, i) => (
+                              <ToolTrace
+                                key={`htool-${i}`}
+                                tool={tool.tool}
+                                detail={tool.detail}
+                                running
+                              />
+                            ))}
+                          </Trace>
+                        )}
+                      </AssistPlanTrace>
 
                       {streamingThinkingText && (
                         <ReasoningTrace text={streamingThinkingText} running />
@@ -2415,22 +2461,6 @@ export function SimpleAssist() {
                         </>
                       )}
 
-                      <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        <span className="animate-shimmer">
-                          {postProcessStatus
-                            ? `Post-processing${postProcessStatus.name ? ` · ${postProcessStatus.name}` : ''}${postProcessStatus.total ? ` (${Math.min(postProcessStatus.index + 1, postProcessStatus.total)}/${postProcessStatus.total})…` : '…'}`
-                            : activeHarness !== 'none' && isWorking
-                              ? `${harnessLabel(activeHarness)} working…`
-                              : isPlanning
-                                ? 'Planning…'
-                                : isGenerating
-                                  ? 'Generating…'
-                                  : mode === 'edit'
-                                    ? 'Thinking about the edit…'
-                                    : 'Thinking…'}
-                        </span>
-                      </div>
                       </MessageContent>
                     </Message>
                   </MessageScrollerItem>
