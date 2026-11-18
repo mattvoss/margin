@@ -32,6 +32,25 @@ export interface MemorySearchResult {
   accessCount: number
 }
 
+export interface MemoryListItem extends MemorySearchResult {
+  workspaceKey: string
+  sessionId: string | null
+  createdAt: string
+  updatedAt: string
+  archived: boolean
+}
+
+export interface MemorySummary {
+  memoryId: string
+  kind: MemoryKind
+  content: string
+  createdAt: string
+  updatedAt: string
+  archived: boolean
+  strength: number
+  accessCount: number
+}
+
 export function formatMemoryContext(memories: MemorySearchResult[], maxChars: number): string {
   const header =
     '--- REMEMBERED CONTEXT ---\n' +
@@ -302,6 +321,71 @@ export async function searchMemories(
     strength: Number(row.strength),
     accessCount: Number(row.access_count),
   }))
+}
+
+export async function listMemories(
+  store: MemoryStore,
+  input: { workspaceKey: string; includeArchived?: boolean; kind?: MemoryKind },
+): Promise<MemoryListItem[]> {
+  const workspaceKey = validateText(input.workspaceKey, 'workspaceKey')
+  const rows = await store.all<{
+    memory_id: string
+    workspace_key: string
+    session_id: string | null
+    kind: MemoryKind
+    content: string
+    strength: number
+    access_count: number
+    created_at: string
+    updated_at: string
+    archived: boolean
+  }>(
+    `
+      SELECT memory_id, workspace_key, session_id, kind, content, strength,
+             access_count, created_at, updated_at, archived
+      FROM memories
+      WHERE workspace_key = ?
+        AND (? OR archived = false)
+        AND (? IS NULL OR kind = ?)
+      ORDER BY updated_at DESC, memory_id ASC
+    `,
+    workspaceKey,
+    input.includeArchived === true,
+    input.kind ?? null,
+    input.kind ?? null,
+  )
+  return rows.map(row => ({
+    memoryId: row.memory_id,
+    workspaceKey: row.workspace_key,
+    sessionId: row.session_id,
+    kind: row.kind,
+    content: row.content,
+    score: 0,
+    strength: Number(row.strength),
+    accessCount: Number(row.access_count),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    archived: Boolean(row.archived),
+  }))
+}
+
+export async function archiveMemory(
+  store: MemoryStore,
+  input: { workspaceKey: string; memoryId: string },
+): Promise<boolean> {
+  const workspaceKey = validateText(input.workspaceKey, 'workspaceKey')
+  const memoryId = validateText(input.memoryId, 'memoryId')
+  const rows = await store.all<{ memory_id: string }>(
+    `
+      UPDATE memories
+      SET archived = true, updated_at = now()
+      WHERE memory_id = ? AND workspace_key = ? AND archived = false
+      RETURNING memory_id
+    `,
+    memoryId,
+    workspaceKey,
+  )
+  return rows.length > 0
 }
 
 export async function openMemoryStore(databasePath: string): Promise<MemoryStore> {

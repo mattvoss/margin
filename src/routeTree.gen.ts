@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHarnessesRouteImport } from './routes/api.harnesses'
+import { Route as ApiMemoryRouteImport } from './routes/api.memory'
 import { Route as ApiSettingsRouteImport } from './routes/api.settings'
 import { Route as ApiAssistCharactersRouteImport } from './routes/api.assist.characters'
 import { Route as ApiAssistPostProcessRouteImport } from './routes/api.assist.post-process'
@@ -20,6 +21,7 @@ import { Route as ApiImagesGenerateRouteImport } from './routes/api.images.gener
 import { Route as ApiImagesLogsRouteImport } from './routes/api.images.logs'
 import { Route as ApiImagesRevealRouteImport } from './routes/api.images.reveal'
 import { Route as ApiImagesStylesRouteImport } from './routes/api.images.styles'
+import { Route as ApiMemorySplatRouteImport } from './routes/api.memory.$'
 import { Route as ApiSettingsEnvDefaultRouteImport } from './routes/api.settings.env-default'
 import { Route as ApiSettingsTestEndpointRouteImport } from './routes/api.settings.test-endpoint'
 import { Route as ApiSettingsTestImageProviderRouteImport } from './routes/api.settings.test-image-provider'
@@ -56,6 +58,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiHarnessesRoute = ApiHarnessesRouteImport.update({
   id: '/api/harnesses',
   path: '/api/harnesses',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMemoryRoute = ApiMemoryRouteImport.update({
+  id: '/api/memory',
+  path: '/api/memory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSettingsRoute = ApiSettingsRouteImport.update({
@@ -102,6 +109,11 @@ const ApiImagesStylesRoute = ApiImagesStylesRouteImport.update({
   id: '/api/images/styles',
   path: '/api/images/styles',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMemorySplatRoute = ApiMemorySplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiSettingsEnvDefaultRoute = ApiSettingsEnvDefaultRouteImport.update({
   id: '/env-default',
@@ -247,6 +259,7 @@ const ApiAssistSimpleStopSplatRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
+  '/api/memory': typeof ApiMemoryRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/post-process': typeof ApiAssistPostProcessRoute
@@ -256,6 +269,7 @@ export interface FileRoutesByFullPath {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
+  '/api/memory/$': typeof ApiMemorySplatRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -287,6 +301,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
+  '/api/memory': typeof ApiMemoryRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/post-process': typeof ApiAssistPostProcessRoute
@@ -296,6 +311,7 @@ export interface FileRoutesByTo {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
+  '/api/memory/$': typeof ApiMemorySplatRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -328,6 +344,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
+  '/api/memory': typeof ApiMemoryRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/post-process': typeof ApiAssistPostProcessRoute
@@ -337,6 +354,7 @@ export interface FileRoutesById {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
+  '/api/memory/$': typeof ApiMemorySplatRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -370,6 +388,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api/harnesses'
+    | '/api/memory'
     | '/api/settings'
     | '/api/assist/characters'
     | '/api/assist/post-process'
@@ -379,6 +398,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
+    | '/api/memory/$'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -410,6 +430,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api/harnesses'
+    | '/api/memory'
     | '/api/settings'
     | '/api/assist/characters'
     | '/api/assist/post-process'
@@ -419,6 +440,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
+    | '/api/memory/$'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -450,6 +472,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api/harnesses'
+    | '/api/memory'
     | '/api/settings'
     | '/api/assist/characters'
     | '/api/assist/post-process'
@@ -459,6 +482,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
+    | '/api/memory/$'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -491,6 +515,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiHarnessesRoute: typeof ApiHarnessesRouteWithChildren
+  ApiMemoryRoute: typeof ApiMemoryRouteWithChildren
   ApiSettingsRoute: typeof ApiSettingsRouteWithChildren
   ApiAssistCharactersRoute: typeof ApiAssistCharactersRoute
   ApiAssistPostProcessRoute: typeof ApiAssistPostProcessRoute
@@ -530,6 +555,13 @@ declare module '@tanstack/react-router' {
       path: '/api/harnesses'
       fullPath: '/api/harnesses'
       preLoaderRoute: typeof ApiHarnessesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/memory': {
+      id: '/api/memory'
+      path: '/api/memory'
+      fullPath: '/api/memory'
+      preLoaderRoute: typeof ApiMemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/settings': {
@@ -594,6 +626,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/images/styles'
       preLoaderRoute: typeof ApiImagesStylesRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/memory/$': {
+      id: '/api/memory/$'
+      path: '/$'
+      fullPath: '/api/memory/$'
+      preLoaderRoute: typeof ApiMemorySplatRouteImport
+      parentRoute: typeof ApiMemoryRoute
     }
     '/api/settings/env-default': {
       id: '/api/settings/env-default'
@@ -799,6 +838,18 @@ const ApiHarnessesRouteWithChildren = ApiHarnessesRoute._addFileChildren(
   ApiHarnessesRouteChildren,
 )
 
+interface ApiMemoryRouteChildren {
+  ApiMemorySplatRoute: typeof ApiMemorySplatRoute
+}
+
+const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
+  ApiMemorySplatRoute: ApiMemorySplatRoute,
+}
+
+const ApiMemoryRouteWithChildren = ApiMemoryRoute._addFileChildren(
+  ApiMemoryRouteChildren,
+)
+
 interface ApiSettingsRouteChildren {
   ApiSettingsEnvDefaultRoute: typeof ApiSettingsEnvDefaultRoute
   ApiSettingsTestEndpointRoute: typeof ApiSettingsTestEndpointRoute
@@ -892,6 +943,7 @@ const ApiWorkspaceProfilesRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiHarnessesRoute: ApiHarnessesRouteWithChildren,
+  ApiMemoryRoute: ApiMemoryRouteWithChildren,
   ApiSettingsRoute: ApiSettingsRouteWithChildren,
   ApiAssistCharactersRoute: ApiAssistCharactersRoute,
   ApiAssistPostProcessRoute: ApiAssistPostProcessRoute,

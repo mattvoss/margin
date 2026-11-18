@@ -8,6 +8,8 @@ import {
   formatMemoryContext,
   memoryConfig,
   openMemoryStore,
+  archiveMemory,
+  listMemories,
   saveMemory,
   searchMemories,
 } from './memory.server'
@@ -151,6 +153,27 @@ describe('memory store', () => {
         embedding: [],
       }),
     ).rejects.toThrow('embedding')
+
+    await closeMemoryStore(store)
+  })
+
+  it('lists and archives memories within a workspace', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    const id = await saveMemory(store, {
+      workspaceKey: 'workspace-a',
+      kind: 'fact',
+      content: 'A removable fact.',
+      embedding: [1, 0],
+    })
+
+    expect(await listMemories(store, { workspaceKey: 'workspace-a' })).toHaveLength(1)
+    await archiveMemory(store, { workspaceKey: 'workspace-a', memoryId: id })
+    expect(await listMemories(store, { workspaceKey: 'workspace-a' })).toHaveLength(0)
+    await expect(
+      archiveMemory(store, { workspaceKey: 'workspace-b', memoryId: id }),
+    ).resolves.toBe(false)
 
     await closeMemoryStore(store)
   })
