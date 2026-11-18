@@ -19,7 +19,6 @@ import {
   normalizePostProcessing,
   type PostProcessPass,
 } from '../lib/postProcessing'
-import { HarnessIcon } from './HarnessIcon'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { AssistMarkdown } from './AssistMarkdown'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -52,11 +51,12 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { FileEntry } from '../stores/editorStore'
@@ -534,6 +534,19 @@ export function SimpleAssist() {
     setShowSettings(true)
     setShowHarnessDropdown(false)
   }
+
+  const handleManageHarnesses = () => {
+    setSettingsTab('harnesses')
+    setShowSettings(true)
+    setShowHarnessDropdown(false)
+  }
+
+  const handlePickHarness = (id: string) => {
+    updateSettings({ default_harness: id })
+    setShowHarnessDropdown(false)
+  }
+
+  const installedHarnesses = harnessList.filter(h => h.installed)
   // Single source of truth: the panel, SettingsModal, and bubble menu all
   // read/write settings.default_harness, so they can never disagree.
   const harness = settings?.default_harness || 'none'
@@ -1531,8 +1544,13 @@ export function SimpleAssist() {
   const hasHistory = filteredLogs.length > 0 || isWorking || !!errorText || !!noticeText
 
   const renderInputCard = () => {
+    const activeEndpoint = settings?.active_endpoint
+      ? settings.endpoints?.[settings.active_endpoint]
+      : undefined
     const composerModelLabel =
-      harness === 'none' ? activeEndpointName || 'Endpoint' : harnessLabel(harness)
+      harness !== 'none'
+        ? harnessLabel(harness)
+        : activeEndpoint?.model || activeEndpointName || 'Endpoint'
 
     return (
       <>
@@ -1599,100 +1617,81 @@ export function SimpleAssist() {
             </InputGroupButton>
             <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
               <DropdownMenuTrigger
-                aria-label={
-                  harness === 'none'
-                    ? activeEndpointName
-                      ? `Endpoint — ${activeEndpointName}`
-                      : 'Endpoint'
-                    : harnessLabel(harness)
-                }
+                aria-label={`Model: ${composerModelLabel}`}
                 render={
                   <InputGroupButton
                     size="sm"
                     variant="outline"
                     className="max-w-[230px] justify-start gap-1.5"
                   >
-                    <HarnessIcon id={harness} className="size-3.5 shrink-0" />
                     <span className="truncate">{composerModelLabel}</span>
-                    <ChevronDown
-                      className={`size-3.5 shrink-0 opacity-60 transition-transform duration-150 ${showHarnessDropdown ? 'rotate-180' : ''}`}
-                    />
+                    <ChevronDown className="size-3.5 opacity-60 shrink-0" />
                   </InputGroupButton>
                 }
               />
-              <DropdownMenuContent side="top" align="start" className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className={harness === 'none' ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}>
-                    <HarnessIcon id="none" className="w-3.5 h-3.5" />
-                    <span className="text-[11px] truncate flex-1">Endpoint</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[180px] bg-[var(--bg-elevated)] border-[var(--border-sidebar)]/70">
-                    {endpointEntries.length === 0 ? (
-                      <div className="px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
-                        No endpoints yet
-                      </div>
-                    ) : (
-                      endpointEntries.map(([id, ep]) => {
-                        const isActive = harness === 'none' && settings?.active_endpoint === id
-                        const displayName = id.replace('_', ' ')
-                        return (
-                          <DropdownMenuItem
-                            key={id}
-                            onClick={() => handlePickEndpoint(id)}
-                            className={isActive ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
-                          >
-                            <span className="flex-1 min-w-0">
-                              <span className="flex items-center gap-1.5">
-                                <span className="text-[11px] truncate min-w-0 capitalize" title={displayName}>{displayName}</span>
-                                {ep.supports_vision && (
-                                  <span title="Supports image input" className="flex shrink-0 text-[var(--text-muted)]">
-                                    <Eye size={11} />
-                                  </span>
-                                )}
-                                {ep.is_thinking !== false ? (
-                                  <span title="Thinking enabled" className="flex shrink-0 text-[var(--text-muted)]">
-                                    <Brain size={11} />
-                                  </span>
-                                ) : (
-                                  <span title="Thinking disabled" className="flex shrink-0 text-[var(--text-muted)] opacity-50">
-                                    <Brain size={11} />
-                                  </span>
-                                )}
-                              </span>
-                              {ep.model && (
-                                <span className="block text-[10px] leading-tight truncate text-[var(--text-muted)]" title={ep.model}>{ep.model}</span>
-                              )}
+              <DropdownMenuContent align="start" side="top" className="w-64">
+                <DropdownMenuRadioGroup
+                  value={
+                    harness !== 'none'
+                      ? `harness:${harness}`
+                      : settings?.active_endpoint
+                        ? `endpoint:${settings.active_endpoint}`
+                        : ''
+                  }
+                  onValueChange={(value) => {
+                    if (value.startsWith('endpoint:')) {
+                      handlePickEndpoint(value.slice('endpoint:'.length))
+                    } else if (value.startsWith('harness:')) {
+                      handlePickHarness(value.slice('harness:'.length))
+                    }
+                  }}
+                >
+                  {endpointEntries.length > 0 && (
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>Endpoints</DropdownMenuLabel>
+                      {endpointEntries.map(([id, endpoint]) => (
+                        <DropdownMenuRadioItem key={id} value={`endpoint:${id}`}>
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate capitalize">{id.replace(/_/g, ' ')}</span>
+                            <span className="truncate text-[10px] font-normal text-[var(--text-muted)]">
+                              {endpoint.model || 'No model set'}
                             </span>
-                            <Check size={14} className={`shrink-0 ${isActive ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
-                          </DropdownMenuItem>
-                        )
-                      })
-                    )}
-                    <DropdownMenuSeparator className="bg-[var(--border-sidebar)]/60" />
-                    <DropdownMenuItem
-                      onClick={handleManageEndpoints}
-                      className="text-[11px] text-[var(--text-secondary)]"
-                    >
-                      Manage endpoints
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                {harnessList.map(h => (
-                  <DropdownMenuItem
-                    key={h.id}
-                    disabled={!h.installed}
-                    onClick={() => {
-                      updateSettings({ default_harness: h.id })
-                      setShowHarnessDropdown(false)
-                    }}
-                    className={harness === h.id ? 'text-[var(--text-heading)]' : 'text-[var(--text-secondary)]'}
-                  >
-                    <HarnessIcon id={h.id} className="w-3.5 h-3.5" />
-                    <span className="text-[11px] truncate flex-1">{h.name}</span>
-                    {h.installed ? null : <span className="text-[9px] text-[var(--text-muted)] shrink-0">not installed</span>}
-                    <Check size={14} className={`shrink-0 ${harness === h.id ? 'text-[var(--accent-brown)]' : 'invisible'}`} />
-                  </DropdownMenuItem>
-                ))}
+                          </span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  )}
+                  {endpointEntries.length > 0 && installedHarnesses.length > 0 && (
+                    <DropdownMenuSeparator />
+                  )}
+                  {installedHarnesses.length > 0 && (
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>Agents</DropdownMenuLabel>
+                      {installedHarnesses.map((h) => (
+                        <DropdownMenuRadioItem key={h.id} value={`harness:${h.id}`}>
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate">{h.name}</span>
+                            <span className="truncate text-[10px] font-normal text-[var(--text-muted)]">
+                              {settings?.harnesses?.[h.id]?.model || 'Harness default model'}
+                            </span>
+                          </span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  )}
+                </DropdownMenuRadioGroup>
+                {endpointEntries.length === 0 && installedHarnesses.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">
+                    No models configured.
+                  </div>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleManageEndpoints}>
+                  Manage endpoints
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleManageHarnesses}>
+                  Manage agent harnesses
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
