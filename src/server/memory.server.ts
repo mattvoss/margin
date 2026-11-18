@@ -419,6 +419,24 @@ export async function archiveMemory(
   return rows.length > 0
 }
 
+export async function consolidateMemories(store: MemoryStore, workspaceKey?: string): Promise<void> {
+  const filter = workspaceKey ? 'AND workspace_key = ?' : ''
+  await store.run(
+    `
+      UPDATE memories
+      SET strength = GREATEST(
+        0.3,
+        strength * POWER(0.95, date_diff('day', COALESCE(last_accessed, created_at), now()))
+      ),
+          updated_at = now()
+      WHERE archived = false
+        AND COALESCE(last_accessed, created_at) < now()
+        ${filter}
+    `,
+    ...(workspaceKey ? [validateText(workspaceKey, 'workspaceKey')] : []),
+  )
+}
+
 export async function openMemoryStore(databasePath: string): Promise<MemoryStore> {
   const database = await new Promise<duckdb.Database>((resolve, reject) => {
     const instance = new duckdb.Database(databasePath, error => {

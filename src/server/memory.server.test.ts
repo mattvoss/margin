@@ -12,6 +12,7 @@ import {
   listMemories,
   saveMemory,
   saveMemoryText,
+  consolidateMemories,
   searchMemories,
 } from './memory.server'
 
@@ -219,6 +220,29 @@ describe('memory store', () => {
     expect(results).toHaveLength(1)
     const after = await listMemories(store, { workspaceKey: 'workspace-a' })
     expect(after[0]?.accessCount).toBe(1)
+
+    await closeMemoryStore(store)
+  })
+
+  it('decays stale memories without deleting them', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    await saveMemory(store, {
+      workspaceKey: 'workspace-a',
+      kind: 'fact',
+      content: 'An old fact.',
+      embedding: [1, 0],
+    })
+    await store.run(
+      "UPDATE memories SET last_accessed = now() - INTERVAL '30 days', strength = 1.0 WHERE workspace_key = ?",
+      'workspace-a',
+    )
+
+    await consolidateMemories(store, 'workspace-a')
+    const memories = await listMemories(store, { workspaceKey: 'workspace-a' })
+    expect(memories[0]?.strength).toBeLessThan(1)
+    expect(memories[0]?.strength).toBeGreaterThanOrEqual(0.3)
 
     await closeMemoryStore(store)
   })
