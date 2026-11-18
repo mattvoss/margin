@@ -3,8 +3,19 @@
  *
  * TypeScript port of `llm.py` (+ `config.py` env defaults and
  * `_resolve_simple_assist_client` from `api/routers/assist.py`) for the
- * TanStack Start server layer. Uses global `fetch` only — no dependencies.
+ * TanStack Start server layer. Transport is the AI SDK's OpenAI provider;
+ * a thin fetch wrapper merges llama.cpp-specific body fields and keeps the
+ * raw response shape the old client exposed.
  */
+
+import { createOpenAI } from '@ai-sdk/openai'
+import {
+  generateText,
+  streamText,
+  type LanguageModelUsage,
+  type ModelMessage,
+} from 'ai'
+import { ThinkingTagFilter } from './thinking-filter.server'
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -151,7 +162,6 @@ export function tokenDefaults(): Record<string, number> {
   };
 }
 
-const OPENING_TAGS = ['<|channel|>', '<think>'];
 const CLOSING_TAGS = [
   '<channel|>',
   '<|channel|>',
@@ -180,9 +190,9 @@ export class LLMClient {
   lastUsage: TokenUsage | null = null;
   /** Reasoning text captured during the last call (streaming or blocking). */
   lastThinking: string | null = null;
-  /** `finish_reason` from the last blocking response, when the server sent one. */
+  /** `finish_reason` from the last call, when the server sent one. */
   lastFinishReason: string | null = null;
-  /** Length of `message.content` from the last blocking response. */
+  /** Length of generated answer text captured during the last call. */
   lastContentChars: number | null = null;
   /** llama.cpp `timings` object from the last call (null on OpenAI servers). */
   lastTimings: LlmTimings | null = null;
@@ -199,12 +209,6 @@ export class LLMClient {
     this.customOpeningTags = opts.customOpeningTags ?? [];
     this.customClosingTags = opts.customClosingTags ?? [];
     this.lastModelUsed = this.model;
-  }
-
-  private headers(): Record<string, string> {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey) h['Authorization'] = `Bearer ${this.apiKey}`;
-    return h;
   }
 
   /** Build a /chat/completions payload. Omits max_tokens when token limits are disabled. */
@@ -236,28 +240,37 @@ export class LLMClient {
     return payload;
   }
 
-  private payloadWithMessages(
-    messages: ChatMessage[],
-    stream: boolean,
-    opts: GenerateOptions = {},
-  ): ChatPayload {
-    const payload: ChatPayload = {
-      model: this.model,
-      messages,
-      temperature: opts.temperature ?? this.temperature,
-      stream,
-    };
-    if (stream) payload.stream_options = { include_usage: true };
-    if (!isTokenLimitsDisabled() && opts.maxTokens != null) {
-      payload.max_tokens = opts.maxTokens;
-    }
-    if (opts.cachePrompt != null) payload.cache_prompt = opts.cachePrompt;
-    if (opts.nKeep != null) payload.n_keep = opts.nKeep;
-    if (opts.slotId != null) payload.id_slot = opts.slotId;
+  /**
+   * llama.cpp-specific request-body fields. The OpenAI provider only exposes
+   * standard options, so a fetch wrapper merges these into the JSON body.
+   */
+  private requestBody(opts: GenerateOptions): Record<string, unknown> {
+    const extra: Record<string, unknown> = {};
+    if (opts.cachePrompt != null) extra['cache_prompt'] = opts.cachePrompt;
+    if (opts.nKeep != null) extra['n_keep'] = opts.nKeep;
+    if (opts.slotId != null) extra['id_slot'] = opts.slotId;
     if (opts.enableThinking === false) {
-      payload.chat_template_kwargs = { enable_thinking: false };
+      extra['chat_template_kwargs'] = { enable_thinking: false };
     }
-    return payload;
+    return extra;
+  }
+
+  private createModel(opts: GenerateOptions) {
+    const extra = this.requestBody(opts);
+    const provider = createOpenAI({
+      baseURL: this.baseUrl,
+      // Local OpenAI-compatible servers usually accept any key; the provider
+      // requires one to be present for its headers.
+      apiKey: this.apiKey || 'lm-studio',
+      name: 'margin',
+      fetch: createRequestBodyFetch(extra),
+    });
+    return provider.chat(this.model);
+  }
+
+  private tokenLimit(opts: GenerateOptions): number | undefined {
+    if (isTokenLimitsDisabled() || opts.maxTokens == null) return undefined;
+    return opts.maxTokens;
   }
 
   private rememberUsage(data: unknown): void {
@@ -323,141 +336,88 @@ export class LLMClient {
     this.lastFinishReason = null;
     this.lastThinking = null;
     this.lastContentChars = null;
-    const payload = this.payloadWithMessages(messages, true, opts);
-    yield* this.runStream(payload, opts);
-  }
 
-  private async *runStream(
-    payload: ChatPayload,
-    opts: GenerateOptions = {},
-  ): AsyncGenerator<string> {
-    const signal = opts.signal;
-    const openings = [...OPENING_TAGS, ...this.customOpeningTags];
-    const closings = [...CLOSING_TAGS, ...this.customClosingTags];
-    const maxTagLen = Math.max(...[...openings, ...closings].map((t) => t.length), 12);
+    const maxTokens = this.tokenLimit(opts);
+    const result = streamText({
+      model: this.createModel(opts),
+      messages: messages as ModelMessage[],
+      allowSystemInMessages: true,
+      temperature: opts.temperature ?? this.temperature,
+      abortSignal: opts.signal,
+      // Raw chunks carry llama.cpp telemetry and `reasoning_content`, which
+      // the OpenAI provider's schema intentionally drops.
+      include: { rawChunks: true },
+      ...(maxTokens != null ? { maxOutputTokens: maxTokens } : {}),
+    });
 
+    const filter = new ThinkingTagFilter(
+      this.isThinking,
+      this.customOpeningTags,
+      this.customClosingTags,
+    );
     let thinking = '';
-    let inThinking = false;
-    let thinkingBuffer = '';
-    let pending = '';
-
+    let contentChars = 0;
     const takeThinking = (text: string): void => {
       thinking += text;
       if (text) opts.onThinking?.(text);
     };
 
-    let resp: Response;
     try {
-      resp = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(payload),
-        signal,
-      });
-    } catch (e) {
-      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`, {
-        cause: e,
-      });
-    }
-    if (!resp.ok || !resp.body) {
-      const detail = await resp.text().catch(() => '');
-      throw new Error(
-        `LMStudio API error (${resp.status}): ${detail.slice(0, 300)}`,
-      );
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const dataStr = trimmed.slice(5).trim();
-          if (dataStr === '[DONE]') continue;
-          let data: unknown;
-          try {
-            data = JSON.parse(dataStr);
-          } catch {
-            continue;
-          }
-          this.rememberUsage(data);
-          const choices =
-            typeof data === 'object' && data !== null && 'choices' in data
-              ? (data as { choices?: Array<{ delta?: Record<string, string> }> }).choices
-              : undefined;
-          if (!choices || choices.length === 0) continue;
-          const delta = choices[0].delta ?? {};
-
-          const reasoning = delta['reasoning_content'] ?? '';
+      for await (const part of result.fullStream) {
+        if (part.type === 'raw') {
+          this.rememberUsage(part.rawValue);
+          const reasoning = streamingReasoning(part.rawValue);
           if (reasoning) {
             if (this.isThinking) takeThinking(reasoning);
             else yield reasoning;
           }
-
-          const content = delta['content'] ?? '';
-          if (!content) continue;
-          if (!this.isThinking) {
-            yield content;
-          } else if (inThinking) {
-            thinkingBuffer += content;
-            let closed = false;
-            for (const close of closings) {
-              const idx = thinkingBuffer.indexOf(close);
-              if (idx === -1) continue;
-              takeThinking(thinkingBuffer.slice(0, idx));
-              const rest = thinkingBuffer.slice(idx + close.length);
-              thinkingBuffer = '';
-              inThinking = false;
-              closed = true;
-              if (rest) yield rest;
-              break;
-            }
-            if (!closed) {
-              // Fail-safe: reasoning block too long, keep capturing but
-              // don't grow the buffer unboundedly.
-              if (thinkingBuffer.length > 6000) {
-                takeThinking(thinkingBuffer);
-                thinkingBuffer = '';
-                inThinking = false;
-              }
-            }
-          } else {
-            pending += content;
-            let opened = false;
-            for (const open of openings) {
-              const idx = pending.indexOf(open);
-              if (idx === -1) continue;
-              const before = pending.slice(0, idx);
-              if (before) yield before;
-              inThinking = true;
-              thinkingBuffer = pending.slice(idx + open.length);
-              pending = '';
-              opened = true;
-              break;
-            }
-            if (!opened && pending.length > maxTagLen) {
-              const safe = pending.slice(0, pending.length - maxTagLen);
-              yield safe;
-              pending = pending.slice(pending.length - maxTagLen);
-            }
+        } else if (part.type === 'text-delta') {
+          const pushed = filter.push(part.text);
+          if (pushed.thinking) takeThinking(pushed.thinking);
+          if (pushed.text) {
+            contentChars += pushed.text.length;
+            yield pushed.text;
           }
+        } else if (part.type === 'reasoning-delta') {
+          // Providers that surface reasoning as a first-class part.
+          if (this.isThinking) takeThinking(part.text);
+          else {
+            contentChars += part.text.length;
+            yield part.text;
+          }
+        } else if (part.type === 'finish') {
+          this.lastFinishReason = part.rawFinishReason ?? part.finishReason ?? null;
+          this.rememberUnifiedUsage(part.totalUsage);
+        } else if (part.type === 'error') {
+          throw part.error;
         }
       }
-    } finally {
-      reader.releaseLock();
+    } catch (error) {
+      throw llmError(error);
     }
-    if (pending && !inThinking) yield pending;
-    // Unclosed thinking block at end of stream: treat the remainder as
-    // reasoning (mirrors the fail-safe flush in llm.py).
-    if (thinkingBuffer) takeThinking(thinkingBuffer);
+
+    const tail = filter.flush();
+    if (tail.thinking) takeThinking(tail.thinking);
+    if (tail.text) {
+      contentChars += tail.text.length;
+      yield tail.text;
+    }
     this.lastThinking = thinking || null;
+    this.lastContentChars = contentChars;
+  }
+
+  /** Fill usage from the SDK when the provider did not echo a raw object. */
+  private rememberUnifiedUsage(usage: LanguageModelUsage): void {
+    if (this.lastUsage) return;
+    const input = usage.inputTokens;
+    const output = usage.outputTokens;
+    const total = usage.totalTokens;
+    if (input == null && output == null && total == null) return;
+    this.lastUsage = {
+      prompt_tokens: input ?? 0,
+      completion_tokens: output ?? 0,
+      total_tokens: total ?? (input ?? 0) + (output ?? 0),
+    };
   }
 
   /** Blocking (non-streaming) generation, mirroring `generate_to_completion`. */
@@ -484,52 +444,40 @@ export class LLMClient {
     this.lastThinking = null;
     this.lastFinishReason = null;
     this.lastContentChars = null;
-    const payload = this.payloadWithMessages(messages, false, opts);
-    let resp: Response;
-    try {
-      resp = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(payload),
-        signal: opts.signal,
-      });
-    } catch (e) {
-      throw new Error(`LMStudio API error: ${e instanceof Error ? e.message : String(e)}`, {
-        cause: e,
-      });
-    }
-    if (!resp.ok) {
-      const detail = await resp.text().catch(() => '');
-      throw new Error(
-        `LMStudio API error (${resp.status}): ${detail.slice(0, 300)}`,
-      );
-    }
-    const data = (await resp.json()) as {
-      model?: string;
-      choices?: Array<{
-        message?: {
-          content?: unknown;
-          reasoning_content?: unknown;
-          reasoning?: unknown;
-        };
-        finish_reason?: unknown;
-      }>;
-    };
+
+    const maxTokens = this.tokenLimit(opts);
+    const result = await generateText({
+      model: this.createModel(opts),
+      messages: messages as ModelMessage[],
+      allowSystemInMessages: true,
+      temperature: opts.temperature ?? this.temperature,
+      abortSignal: opts.signal,
+      // `response.body` is the provider's raw JSON, which keeps llama.cpp
+      // timings and `reasoning_content` that the SDK result otherwise drops.
+      include: { responseBody: true },
+      ...(maxTokens != null ? { maxOutputTokens: maxTokens } : {}),
+    }).catch((error: unknown) => {
+      throw llmError(error);
+    });
+
+    // `response.body` is the provider's raw JSON, so llama.cpp timings and
+    // `reasoning_content` survive the SDK's schema conversion.
+    const data = result.response.body;
     this.rememberUsage(data);
     if (!this.lastUsage) {
-      this.lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      this.rememberUnifiedUsage(result.usage);
+      if (!this.lastUsage) {
+        this.lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      }
     }
-    this.lastModelUsed = data.model ?? this.model;
+    this.lastModelUsed = result.response.modelId || this.model;
 
-    const choice = data.choices?.[0];
-    const content = contentText(choice?.message?.content);
+    const content = typeof result.text === 'string' ? result.text : '';
     this.lastContentChars = content.length;
-    const reasoning =
-      contentText(choice?.message?.reasoning_content) ||
-      contentText(choice?.message?.reasoning);
+    const reasoning = blockingReasoning(data);
     this.lastThinking = reasoning || null;
     this.lastFinishReason =
-      typeof choice?.finish_reason === 'string' ? choice.finish_reason : null;
+      result.rawFinishReason ?? result.finishReason ?? null;
 
     const source = content.trim()
       ? content
@@ -570,6 +518,164 @@ export class LLMClient {
     text = text.trim().replace(/^[*+-]\s*\n?/, '');
     return text.trim();
   }
+}
+
+/**
+ * Wrap fetch so the provider request carries llama.cpp fields and, for
+ * blocking calls, so content arrays are flattened into the string shape the
+ * provider's schema expects. Both are compatibility shims for local servers.
+ */
+function createRequestBodyFetch(extra: Record<string, unknown>) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await globalThis.fetch(input, mergeRequestBody(init, extra));
+    if (!response.ok) return response;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('json')) {
+      return normalizeJsonResponse(response);
+    }
+    return response;
+  };
+}
+
+function mergeRequestBody(
+  init: RequestInit | undefined,
+  extra: Record<string, unknown>,
+): RequestInit | undefined {
+  if (!init || typeof init.body !== 'string' || Object.keys(extra).length === 0) {
+    return init;
+  }
+  try {
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    const merged = { ...body, ...extra };
+    const baseTemplate = body['chat_template_kwargs'];
+    const extraTemplate = extra['chat_template_kwargs'];
+    if (
+      baseTemplate &&
+      typeof baseTemplate === 'object' &&
+      extraTemplate &&
+      typeof extraTemplate === 'object'
+    ) {
+      merged['chat_template_kwargs'] = { ...baseTemplate, ...extraTemplate };
+    }
+    return { ...init, body: JSON.stringify(merged) };
+  } catch {
+    return init;
+  }
+}
+
+async function normalizeJsonResponse(response: Response): Promise<Response> {
+  if (!response.ok) return response;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('json')) return response;
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return response;
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders(response),
+    });
+  }
+
+  normalizeChoices(data);
+  const choices =
+    typeof data === 'object' && data !== null && 'choices' in data
+      ? (data as { choices?: unknown }).choices
+      : undefined;
+  if (Array.isArray(choices)) {
+    for (const choice of choices) {
+      if (!choice || typeof choice !== 'object') continue;
+      const message = (choice as { message?: unknown }).message;
+      if (!message || typeof message !== 'object') continue;
+      const record = message as Record<string, unknown>;
+      if (typeof record['content'] !== 'string') {
+        record['content'] = contentText(record['content']);
+      }
+    }
+  }
+
+  return new Response(JSON.stringify(data), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders(response),
+  });
+}
+
+/**
+ * OpenAI-compatible servers always send `index`, but fixtures and a few
+ * minimal servers omit it; the provider's schema requires a number.
+ */
+function normalizeChoices(data: unknown): void {
+  if (!data || typeof data !== 'object') return;
+  const choices = (data as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) return;
+  choices.forEach((choice, index) => {
+    if (!choice || typeof choice !== 'object') return;
+    const record = choice as Record<string, unknown>;
+    if (typeof record['index'] !== 'number') record['index'] = index;
+  });
+}
+
+function responseHeaders(response: Response): Headers {
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  headers.delete('content-encoding');
+  return headers;
+}
+
+function blockingReasoning(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const choices = (data as {
+    choices?: Array<{
+      message?: { reasoning_content?: unknown; reasoning?: unknown };
+    }>;
+  }).choices;
+  const message = choices?.[0]?.message;
+  if (!message) return '';
+  return contentText(message.reasoning_content) || contentText(message.reasoning);
+}
+
+function streamingReasoning(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const choices = (data as {
+    choices?: Array<{ delta?: { reasoning_content?: unknown } }>;
+  }).choices;
+  return contentText(choices?.[0]?.delta?.reasoning_content);
+}
+
+/** Keep the public error shape the previous transport produced. */
+function llmError(error: unknown): Error {
+  if (error instanceof Error && error.name === 'AbortError') return error;
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException) return error;
+  const record = error as {
+    statusCode?: unknown;
+    responseBody?: unknown;
+    message?: unknown;
+  } | null;
+  if (record && typeof record.statusCode === 'number') {
+    const detail =
+      typeof record.responseBody === 'string'
+        ? record.responseBody
+        : error instanceof Error
+          ? error.message
+          : String(record.message ?? '');
+    return new Error(`LMStudio API error (${record.statusCode}): ${detail.slice(0, 300)}`, {
+      cause: error,
+    });
+  }
+  return new Error(
+    `LMStudio API error: ${error instanceof Error ? error.message : String(error)}`,
+    { cause: error },
+  );
 }
 
 function contentText(content: unknown): string {
