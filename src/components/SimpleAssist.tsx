@@ -1600,36 +1600,40 @@ export function SimpleAssist() {
             className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
           />
           <InputGroupAddon align="block-end">
-            <InputGroupButton
-              size="sm"
-              variant="outline"
-              onClick={() => setMode(mode === 'edit' ? 'chat' : 'edit')}
-              className="gap-1.5"
-              title={mode === 'edit' ? 'Switch to Chat mode' : 'Switch to Edit mode'}
-              aria-label={mode === 'edit' ? 'Edit mode' : 'Chat mode'}
-            >
-              {mode === 'edit' ? (
-                <SquareChartGantt className="size-3.5" />
-              ) : (
-                <ListTodo className="size-3.5" />
-              )}
-              <span className="text-[11px]">{mode === 'edit' ? 'Edit' : 'Chat'}</span>
-            </InputGroupButton>
             <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
               <DropdownMenuTrigger
-                aria-label={`Model: ${composerModelLabel}`}
+                aria-label={`Mode: ${mode === 'edit' ? 'Edit' : 'Chat'}; model: ${composerModelLabel}`}
                 render={
                   <InputGroupButton
                     size="sm"
                     variant="outline"
                     className="max-w-[230px] justify-start gap-1.5"
                   >
-                    <span className="truncate">{composerModelLabel}</span>
+                    <span className="truncate">
+                      {mode === 'edit' ? 'Edit' : 'Chat'} · {composerModelLabel}
+                    </span>
                     <ChevronDown className="size-3.5 opacity-60 shrink-0" />
                   </InputGroupButton>
                 }
               />
               <DropdownMenuContent align="start" side="top" className="w-64">
+                <DropdownMenuRadioGroup
+                  value={mode}
+                  onValueChange={(value) => setMode(value as 'chat' | 'edit')}
+                >
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Mode</DropdownMenuLabel>
+                    <DropdownMenuRadioItem value="edit">
+                      <SquareChartGantt className="size-3.5" />
+                      Edit
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="chat">
+                      <ListTodo className="size-3.5" />
+                      Chat
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup
                   value={
                     harness !== 'none'
