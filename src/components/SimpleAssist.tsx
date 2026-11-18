@@ -111,9 +111,9 @@ interface MarkdownStorage {
 
 
 const PROMPT_CHIP_CLASS =
-  'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]'
+  'mx-0.5 inline-flex max-w-[240px] items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-middle leading-none text-[10px] font-medium text-[var(--text-heading)]'
 const PROMPT_CHIP_SELECTION_CLASS =
-  'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--assist-pill-selection-border)] bg-[var(--assist-pill-selection-bg)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--assist-pill-selection-text)]'
+  'mx-0.5 inline-flex max-w-[240px] items-center gap-1 rounded-full border border-[var(--assist-pill-selection-border)] bg-[var(--assist-pill-selection-bg)] px-2 py-0.5 align-middle leading-none text-[10px] font-medium text-[var(--assist-pill-selection-text)]'
 
 const ASSIST_SUGGESTIONS = [
   'What should happen next?',

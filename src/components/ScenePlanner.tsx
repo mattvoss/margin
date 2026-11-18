@@ -249,7 +249,7 @@ function createPlannerMentionChip(file: ReferenceFile, mention: string): HTMLSpa
   chip.dataset.name = file.name
   chip.dataset.mention = mention
   chip.className =
-    'mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]'
+    'mx-0.5 inline-flex max-w-[240px] items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-middle leading-none text-[10px] font-medium text-[var(--text-heading)]'
 
   const icon = document.createElement('span')
   icon.className = 'shrink-0 text-[var(--accent-brown)]'
@@ -281,7 +281,7 @@ function renderPlannerMentions(text: string, files: ReferenceFile[]): ReactNode 
       <span
         key={`${mention.from}-${mention.target.path}-${index}`}
         title={mention.target.path}
-        className="mx-0.5 inline-flex max-w-[240px] translate-y-0.5 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-baseline text-[10px] font-medium text-[var(--text-heading)]"
+        className="mx-0.5 inline-flex max-w-[240px] items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-middle leading-none text-[10px] font-medium text-[var(--text-heading)]"
       >
         <span className="shrink-0 text-[var(--accent-brown)]">@</span>
         <span className="truncate">{label.slice(1).replace(/\.md$/i, '')}</span>
