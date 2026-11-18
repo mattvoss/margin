@@ -57,7 +57,9 @@ import {
   createAssistOrchestratorAgent,
   createAssistPlannerAgent,
   createAssistPostProcessAgent,
+  type AssistAgentTelemetry,
 } from './assist-agents.server'
+import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
 import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 
@@ -164,13 +166,19 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             ) as ModelMessage[],
             abortSignal: input.signal,
           })
+          const filtered = splitThinkingTags(
+            result.text,
+            input.client.isThinking,
+            input.client.customOpeningTags,
+            input.client.customClosingTags,
+          )
           return {
-            text: result.text,
+            text: filtered.text,
             model: result.response.modelId || input.client.model,
             finishReason: result.finishReason,
             promptTokens: result.usage.inputTokens ?? 0,
             completionTokens: result.usage.outputTokens ?? 0,
-            thinking: result.reasoningText ?? null,
+            thinking: result.reasoningText || filtered.thinking || null,
           }
         }
         const postBase = {
@@ -554,6 +562,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           completionTokens: number
           thinking: string | null
           model: string
+          promptMs: number | null
+          tokensCached: number | null
           anchor: ReturnType<typeof extractAnchorContext>
           slotId: number | null
         }
@@ -565,6 +575,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           completionTokens: number
           thinking: string | null
           model: string
+          promptMs: number | null
+          tokensCached: number | null
           anchor: ReturnType<typeof extractAnchorContext> | null
           slotId: number | null
           logs: Awaited<ReturnType<typeof getWorkspaceAiLogs>>
@@ -573,13 +585,21 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         let plannerRun: PlannerRun | null = null
         let editRun: EditRun | null = null
         let chatRun: ChatRun | null = null
-        let editStarted = false
-        let chatStarted = false
-        let postStarted = false
+        let plannerPromise: Promise<PlannerRun | null> | null = null
+        let editPromise: Promise<EditRun> | null = null
+        let chatPromise: Promise<ChatRun> | null = null
+        let postProcessPromise: Promise<void> | null = null
         let finalized = false
         const taggedContext = [...tagged]
 
-        async function runPlanner(announce: boolean): Promise<PlannerRun | null> {
+        function runPlanner(announce: boolean): Promise<PlannerRun | null> {
+          if (payload.skip_planner) return Promise.resolve(null)
+          if (plannerRun) return Promise.resolve(plannerRun)
+          if (!plannerPromise) plannerPromise = performPlanner(announce)
+          return plannerPromise
+        }
+
+        async function performPlanner(announce: boolean): Promise<PlannerRun | null> {
           if (payload.skip_planner) return null
           if (plannerRun) return plannerRun
           if (announce) send({ status: 'planning' })
@@ -630,7 +650,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             ) as ModelMessage[],
             abortSignal: signal,
           })
-          const planRaw = result.text.trim()
+          const filteredPlan = splitThinkingTags(
+            result.text,
+            client.isThinking,
+            client.customOpeningTags,
+            client.customClosingTags,
+          )
+          const planRaw = filteredPlan.text.trim()
           const run: PlannerRun = {
             system: planner.system,
             user: userPrompt,
@@ -638,7 +664,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             plan: parsePlannerOutput(planRaw, payload.message),
             promptTokens: result.usage.inputTokens ?? 0,
             completionTokens: result.usage.outputTokens ?? 0,
-            thinking: result.reasoningText ?? null,
+            thinking: result.reasoningText || filteredPlan.thinking || null,
             model: result.response.modelId || client.model,
           }
           plannerRun = run
@@ -650,9 +676,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           return run
         }
 
-        async function runEdit(): Promise<EditRun> {
+        function runEdit(): Promise<EditRun> {
+          if (editRun) return Promise.resolve(editRun)
+          if (!editPromise) editPromise = performEdit()
+          return editPromise
+        }
+
+        async function performEdit(): Promise<EditRun> {
           if (editRun) return editRun
-          if (editStarted) throw new Error('The editing agent did not complete.')
           const plan = payload.skip_planner ? null : await runPlanner(true)
           if (!plan) {
             send({ status: 'context_resolved', context_needed: taggedContext })
@@ -701,14 +732,27 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               slotId: writerCache.slotId,
             }),
           )
+          const writerTelemetry: AssistAgentTelemetry = {
+            timings: null,
+            tokensCached: null,
+            pending: null,
+          }
           const agent = createAssistEditAgent({
-            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(writerCache) },
+            endpoint: {
+              ...agentEndpoint,
+              requestBody: cacheRequestBody(writerCache),
+              telemetry: writerTelemetry,
+            },
             instructions: gen.system,
             maxOutputTokens: maxToks,
           })
-          editStarted = true
           let fullRaw = ''
           let fullThinking = ''
+          const thinkingFilter = new ThinkingTagFilter(
+            client.isThinking,
+            client.customOpeningTags,
+            client.customClosingTags,
+          )
           const result = await agent.stream({
             messages: writerMsgs.messages.filter(
               (message) => message.role !== 'system',
@@ -718,16 +762,43 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           for await (const part of result.fullStream) {
             if (signal.aborted) break
             if (part.type === 'text-delta') {
-              fullRaw += part.text
-              send({ status: 'chunk', chunk: part.text })
+              const filtered = thinkingFilter.push(part.text)
+              if (filtered.text) {
+                fullRaw += filtered.text
+                send({ status: 'chunk', chunk: filtered.text })
+              }
+              if (filtered.thinking) {
+                fullThinking += filtered.thinking
+                send({ status: 'thinking_chunk', chunk: filtered.thinking })
+              }
             } else if (part.type === 'reasoning-delta') {
-              fullThinking += part.text
-              send({ status: 'thinking_chunk', chunk: part.text })
+              if (client.isThinking) {
+                fullThinking += part.text
+                send({ status: 'thinking_chunk', chunk: part.text })
+              } else {
+                fullRaw += part.text
+                send({ status: 'chunk', chunk: part.text })
+              }
             }
           }
+          const filteredTail = thinkingFilter.flush()
+          if (filteredTail.text) {
+            fullRaw += filteredTail.text
+            send({ status: 'chunk', chunk: filteredTail.text })
+          }
+          if (filteredTail.thinking) {
+            fullThinking += filteredTail.thinking
+            send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
+          }
+          await writerTelemetry.pending
           const usage = await result.usage
           const response = await result.response
-          const raw = fullRaw || (await result.text)
+          const raw = fullRaw || splitThinkingTags(
+            await result.text,
+            client.isThinking,
+            client.customOpeningTags,
+            client.customClosingTags,
+          ).text
           const run: EditRun = {
             raw,
             clean: stripCodeFences(raw),
@@ -737,6 +808,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             completionTokens: usage.outputTokens ?? 0,
             thinking: fullThinking || (await result.reasoningText) || null,
             model: response.modelId || client.model,
+            promptMs:
+              typeof writerTelemetry.timings?.['prompt_ms'] === 'number'
+                ? writerTelemetry.timings['prompt_ms'] as number
+                : null,
+            tokensCached: writerTelemetry.tokensCached,
             anchor,
             slotId: writerCache.slotId ?? null,
           }
@@ -744,9 +820,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           return run
         }
 
-        async function runChat(): Promise<ChatRun> {
+        function runChat(): Promise<ChatRun> {
+          if (chatRun) return Promise.resolve(chatRun)
+          if (!chatPromise) chatPromise = performChat()
+          return chatPromise
+        }
+
+        async function performChat(): Promise<ChatRun> {
           if (chatRun) return chatRun
-          if (chatStarted) throw new Error('The chat agent did not complete.')
           send({ status: 'generating' })
           const chatPrompt = await loadSimplePrompt('simple-chat.md').catch(() => '')
           const chatLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
@@ -777,14 +858,27 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               slotId: chatCache.slotId,
             }),
           )
+          const chatTelemetry: AssistAgentTelemetry = {
+            timings: null,
+            tokensCached: null,
+            pending: null,
+          }
           const agent = createAssistChatAgent({
-            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(chatCache) },
+            endpoint: {
+              ...agentEndpoint,
+              requestBody: cacheRequestBody(chatCache),
+              telemetry: chatTelemetry,
+            },
             instructions: composed.system,
             maxOutputTokens: maxToks,
           })
-          chatStarted = true
           let fullChat = ''
           let fullThinking = ''
+          const thinkingFilter = new ThinkingTagFilter(
+            client.isThinking,
+            client.customOpeningTags,
+            client.customClosingTags,
+          )
           const result = await agent.stream({
             messages: chatMsgs.messages.filter(
               (message) => message.role !== 'system',
@@ -794,16 +888,43 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           for await (const part of result.fullStream) {
             if (signal.aborted) break
             if (part.type === 'text-delta') {
-              fullChat += part.text
-              send({ status: 'chunk', chunk: part.text })
+              const filtered = thinkingFilter.push(part.text)
+              if (filtered.text) {
+                fullChat += filtered.text
+                send({ status: 'chunk', chunk: filtered.text })
+              }
+              if (filtered.thinking) {
+                fullThinking += filtered.thinking
+                send({ status: 'thinking_chunk', chunk: filtered.thinking })
+              }
             } else if (part.type === 'reasoning-delta') {
-              fullThinking += part.text
-              send({ status: 'thinking_chunk', chunk: part.text })
+              if (client.isThinking) {
+                fullThinking += part.text
+                send({ status: 'thinking_chunk', chunk: part.text })
+              } else {
+                fullChat += part.text
+                send({ status: 'chunk', chunk: part.text })
+              }
             }
           }
+          const filteredTail = thinkingFilter.flush()
+          if (filteredTail.text) {
+            fullChat += filteredTail.text
+            send({ status: 'chunk', chunk: filteredTail.text })
+          }
+          if (filteredTail.thinking) {
+            fullThinking += filteredTail.thinking
+            send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
+          }
+          await chatTelemetry.pending
           const usage = await result.usage
           const response = await result.response
-          const raw = fullChat || (await result.text)
+          const raw = fullChat || splitThinkingTags(
+            await result.text,
+            client.isThinking,
+            client.customOpeningTags,
+            client.customClosingTags,
+          ).text
           const chatAnchor =
             payload.selected_text || payload.cursor_paragraph_text
               ? extractAnchorContext(
@@ -820,6 +941,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             completionTokens: usage.outputTokens ?? 0,
             thinking: fullThinking || (await result.reasoningText) || null,
             model: response.modelId || client.model,
+            promptMs:
+              typeof chatTelemetry.timings?.['prompt_ms'] === 'number'
+                ? chatTelemetry.timings['prompt_ms'] as number
+                : null,
+            tokensCached: chatTelemetry.tokensCached,
             anchor: chatAnchor,
             slotId: chatCache.slotId ?? null,
             logs: chatLogs,
@@ -828,13 +954,17 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           return run
         }
 
-        async function runPostProcess(): Promise<void> {
+        function runPostProcess(): Promise<void> {
+          if (finalized) return Promise.resolve()
+          if (!postProcessPromise) postProcessPromise = performPostProcess()
+          return postProcessPromise
+        }
+
+        async function performPostProcess(): Promise<void> {
           if (finalized) return
-          if (postStarted) throw new Error('Post-processing did not complete.')
 
           if (isEditFlow) {
             const edit = await runEdit()
-            postStarted = true
             const post = await runPostProcessPipeline({
               ...postBase,
               upstreamSystemPrompt: edit.system,
@@ -879,8 +1009,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               model_used: edit.model,
               system_hash: prefixHash(edit.system),
               user_hash: prefixHash(edit.user),
-              prompt_ms: null,
-              tokens_cached: null,
+              prompt_ms: edit.promptMs,
+              tokens_cached: edit.tokensCached,
               slot_id: edit.slotId,
             }, ws)
             finalized = true
@@ -895,7 +1025,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           }
 
           const chat = await runChat()
-          postStarted = true
           const post = await runPostProcessPipeline({
             ...postBase,
             logs: chat.logs,
@@ -934,8 +1063,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             model_used: chat.model,
             system_hash: prefixHash(chat.system),
             user_hash: prefixHash(chat.user),
-            prompt_ms: null,
-            tokens_cached: null,
+            prompt_ms: chat.promptMs,
+            tokens_cached: chat.tokensCached,
             slot_id: chat.slotId,
           }, ws)
           finalized = true

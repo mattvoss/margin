@@ -7,6 +7,7 @@ import {
   createAssistEditAgent,
   createAssistOrchestratorAgent,
   createAssistPostProcessAgent,
+  type AssistAgentTelemetry,
 } from './assist-agents.server'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -108,7 +109,7 @@ describe('SimpleAssist agents', () => {
       expect(body.cache_prompt).toBe(true)
       expect(body.n_keep).toBe(64)
       expect(body.id_slot).toBe(2)
-      expect(body.chat_template_kwargs).toEqual({ enable_thinking: false })
+      expect(body.chat_template_kwargs).toEqual({ custom_flag: 'kept', enable_thinking: false })
       return completion({ content: 'Fixed prose.' })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -116,7 +117,12 @@ describe('SimpleAssist agents', () => {
     const agent = createAssistPostProcessAgent({
       endpoint: {
         ...endpoint,
-        requestBody: { cache_prompt: true, n_keep: 64, id_slot: 2 },
+        requestBody: {
+          cache_prompt: true,
+          n_keep: 64,
+          id_slot: 2,
+          chat_template_kwargs: { custom_flag: 'kept' },
+        },
       },
       instructions: 'Fix the prose.',
       temperature: 0.2,
@@ -126,6 +132,47 @@ describe('SimpleAssist agents', () => {
 
     expect(result.text).toBe('Fixed prose.')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures llama.cpp timing metadata from streamed subagent responses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        stream([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: 'Telemetry reply.' },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+            timings: { prompt_ms: 21, prompt_n: 8, tokens_cached: 5 },
+            tokens_cached: 5,
+          },
+        ]),
+      ),
+    )
+    const telemetry: AssistAgentTelemetry = {
+      timings: null,
+      tokensCached: null,
+      pending: null,
+    }
+
+    const agent = createAssistChatAgent({
+      endpoint: { ...endpoint, telemetry },
+      instructions: 'Chat.',
+    })
+    const result = await agent.stream({ prompt: 'Hello.' })
+    await expect(result.text).resolves.toBe('Telemetry reply.')
+    await telemetry.pending
+
+    expect(telemetry.timings).toEqual({ prompt_ms: 21, prompt_n: 8, tokens_cached: 5 })
+    expect(telemetry.tokensCached).toBe(5)
   })
 
   it('dispatches the orchestrator tools in order and stops on finish', async () => {

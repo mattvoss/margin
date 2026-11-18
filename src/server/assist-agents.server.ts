@@ -27,6 +27,14 @@ export interface AssistAgentEndpoint {
    * for `chat_template_kwargs` when a pass disables thinking.
    */
   requestBody?: Record<string, unknown>
+  telemetry?: AssistAgentTelemetry
+}
+
+/** Raw llama.cpp telemetry that the OpenAI SDK does not expose in results. */
+export interface AssistAgentTelemetry {
+  timings: Record<string, unknown> | null
+  tokensCached: number | null
+  pending: Promise<void> | null
 }
 
 /**
@@ -34,19 +42,97 @@ export interface AssistAgentEndpoint {
  * the LLMClient sends. The OpenAI provider only exposes standard options, so
  * this is the smallest way to preserve prefix-cache and thinking behaviour.
  */
-function requestBodyFetch(extra: Record<string, unknown> | undefined) {
-  if (!extra || Object.keys(extra).length === 0) return undefined
+function requestBodyFetch(
+  extra: Record<string, unknown> | undefined,
+  telemetry?: AssistAgentTelemetry,
+) {
+  if ((!extra || Object.keys(extra).length === 0) && !telemetry) return undefined
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     let next = init
     if (typeof init?.body === 'string') {
       try {
         const body = JSON.parse(init.body) as Record<string, unknown>
-        next = { ...init, body: JSON.stringify({ ...body, ...extra }) }
+        const merged = { ...body, ...(extra ?? {}) }
+        const baseTemplate = body['chat_template_kwargs']
+        const extraTemplate = extra?.['chat_template_kwargs']
+        if (
+          baseTemplate &&
+          typeof baseTemplate === 'object' &&
+          extraTemplate &&
+          typeof extraTemplate === 'object'
+        ) {
+          merged['chat_template_kwargs'] = { ...baseTemplate, ...extraTemplate }
+        }
+        next = { ...init, body: JSON.stringify(merged) }
       } catch {
         // Leave non-JSON bodies untouched.
       }
     }
-    return globalThis.fetch(input, next)
+    const response = await globalThis.fetch(input, next)
+    if (telemetry) {
+      telemetry.pending = captureResponseTelemetry(response, telemetry)
+    }
+    return response
+  }
+}
+
+async function captureResponseTelemetry(
+  response: Response,
+  telemetry: AssistAgentTelemetry,
+): Promise<void> {
+  try {
+    const copy = response.clone()
+    const remember = (value: unknown) => {
+      if (!value || typeof value !== 'object') return
+      const record = value as Record<string, unknown>
+      const timings = record['timings']
+      if (timings && typeof timings === 'object') {
+        telemetry.timings = timings as Record<string, unknown>
+        const cached = (timings as Record<string, unknown>)['tokens_cached']
+        if (typeof cached === 'number' && Number.isFinite(cached)) {
+          telemetry.tokensCached = Math.trunc(cached)
+        }
+      }
+      const cached = record['tokens_cached']
+      if (typeof cached === 'number' && Number.isFinite(cached)) {
+        telemetry.tokensCached = Math.trunc(cached)
+      }
+    }
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('text/event-stream') && copy.body) {
+      const reader = copy.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const parseLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) return
+        const value = trimmed.slice(5).trim()
+        if (!value || value === '[DONE]') return
+        try {
+          remember(JSON.parse(value))
+        } catch {
+          // Ignore malformed SSE records; the model SDK handles its own errors.
+        }
+      }
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) parseLine(line)
+      }
+      buffer += decoder.decode()
+      if (buffer) parseLine(buffer)
+    } else {
+      try {
+        remember(JSON.parse(await copy.text()))
+      } catch {
+        return
+      }
+    }
+  } catch {
+    // Telemetry is best effort and must never fail a generation.
   }
 }
 
@@ -58,7 +144,9 @@ export function createAssistAgentModel(endpoint: AssistAgentEndpoint) {
     // the provider requires one to be present in its request headers.
     apiKey: endpoint.apiKey || 'lm-studio',
     name: 'margin',
-    ...(endpoint.requestBody ? { fetch: requestBodyFetch(endpoint.requestBody) } : {}),
+    ...(endpoint.requestBody || endpoint.telemetry
+      ? { fetch: requestBodyFetch(endpoint.requestBody, endpoint.telemetry) }
+      : {}),
   })
   return provider.chat(endpoint.model)
 }
@@ -118,7 +206,14 @@ export function createAssistPostProcessAgent(input: {
   const requestBody = {
     ...(input.endpoint.requestBody ?? {}),
     ...(input.disableThinking
-      ? { chat_template_kwargs: { enable_thinking: false } }
+      ? {
+          chat_template_kwargs: {
+            ...((input.endpoint.requestBody?.['chat_template_kwargs'] as
+              | Record<string, unknown>
+              | undefined) ?? {}),
+            enable_thinking: false,
+          },
+        }
       : {}),
   }
   return new ToolLoopAgent({

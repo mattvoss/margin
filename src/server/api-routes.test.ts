@@ -75,6 +75,13 @@ function sseResponse(chunks: unknown[]): Response {
   )
 }
 
+function parseSseEvents(text: string): Array<Record<string, unknown>> {
+  return text
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
+}
+
 /** Minimal non-streaming OpenAI-compatible completion. */
 function completionResponse(content: string): Response {
   return new Response(
@@ -399,7 +406,16 @@ describe('assist', () => {
             choices: [
               {
                 index: 0,
-                delta: { role: 'assistant', content: 'Hello from the chat agent.' },
+                delta: { role: 'assistant', content: 'Hello <thi' },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { content: 'nk>private reasoning</think>from the chat agent.' },
                 finish_reason: null,
               },
             ],
@@ -422,7 +438,19 @@ describe('assist', () => {
         }),
       } as never)
       const text = await res.text()
-      expect(text).toContain('"status":"chunk","chunk":"Hello from the chat agent."')
+      const events = parseSseEvents(text)
+      expect(
+        events
+          .filter((event) => event.status === 'chunk')
+          .map((event) => event.chunk)
+          .join(''),
+      ).toBe('Hello from the chat agent.')
+      expect(
+        events
+          .filter((event) => event.status === 'thinking_chunk')
+          .map((event) => event.chunk)
+          .join(''),
+      ).toBe('private reasoning')
       expect(text).toContain('"status":"chat","output":"Hello from the chat agent."')
       expect(calls).toEqual(['write_chat', 'chat', 'post_process', 'finish'])
     } finally {
@@ -444,9 +472,11 @@ describe('assist', () => {
           stream?: boolean
         }
         if (Array.isArray(body.tools) && body.tools.length > 0) {
-          const names = ['plan_edit', 'write_edit', 'post_process', 'finish']
-          const name = names[orchestrationStep++]
-          calls.push(name)
+          const names =
+            orchestrationStep++ === 0
+              ? ['plan_edit', 'write_edit', 'post_process']
+              : ['finish']
+          calls.push(...names)
           return sseResponse([
             {
               choices: [
@@ -454,14 +484,12 @@ describe('assist', () => {
                   index: 0,
                   delta: {
                     role: 'assistant',
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: `call_${orchestrationStep}`,
-                        type: 'function',
-                        function: { name, arguments: '{}' },
-                      },
-                    ],
+                    tool_calls: names.map((name, index) => ({
+                      index,
+                      id: `call_${orchestrationStep}_${index}`,
+                      type: 'function',
+                      function: { name, arguments: '{}' },
+                    })),
                   },
                   finish_reason: null,
                 },
@@ -508,19 +536,23 @@ describe('assist', () => {
         }),
       } as never)
       const text = await res.text()
+      const events = parseSseEvents(text)
       expect(text).toContain('"status":"planning"')
       expect(text).toContain('"status":"context_resolved"')
       expect(text).toContain('"status":"generating"')
-      expect(text).toContain('"status":"chunk","chunk":"A tenser line."')
+      expect(
+        events
+          .filter((event) => event.status === 'chunk')
+          .map((event) => event.chunk)
+          .join(''),
+      ).toBe('A tenser line.')
       expect(text).toContain('"status":"applied","output":"A tenser line."')
-      expect(calls).toEqual([
-        'plan_edit',
-        'planner',
-        'write_edit',
-        'writer',
-        'post_process',
-        'finish',
-      ])
+      expect(calls.filter((call) => call === 'plan_edit')).toHaveLength(1)
+      expect(calls.filter((call) => call === 'planner')).toHaveLength(1)
+      expect(calls.filter((call) => call === 'write_edit')).toHaveLength(1)
+      expect(calls.filter((call) => call === 'writer')).toHaveLength(1)
+      expect(calls.filter((call) => call === 'post_process')).toHaveLength(1)
+      expect(calls.filter((call) => call === 'finish')).toHaveLength(1)
     } finally {
       vi.unstubAllGlobals()
       vi.unstubAllEnvs()
