@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing, Wrench } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -21,17 +21,29 @@ import {
 } from '../lib/postProcessing'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { AssistMarkdown } from './AssistMarkdown'
+import { ReasoningTrace, ToolTrace } from './AssistActivity'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Chat, ChatMessages } from '@/components/ui/chat'
-import { MessageScroller } from '@/components/ui/message-scroller'
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '@/components/ui/message-scroller'
 import { Context, ContextLabel, ContextValue } from '@/components/ui/context'
 import { InputGroup, InputGroupAddon, InputGroupButton } from '@/components/ui/input-group'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Message, MessageContent } from '@/components/ui/message'
-import { Trace, TraceLine, TraceIcon, TraceTitle } from '@/components/ui/trace'
+import {
+  Trace,
+  TraceLine,
+  TraceIcon,
+  TraceTitle,
+} from '@/components/ui/trace'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { MessageFooter } from '@/components/ui/message'
@@ -337,25 +349,6 @@ function getInputData(el: HTMLElement): {
   return { text: clone.textContent?.trim() ?? '', refPaths, selection }
 }
 
-function ThinkingDetails({
-  text,
-  open = false,
-  label = 'Thought process',
-}: {
-  text: string
-  open?: boolean
-  label?: string
-}) {
-  return (
-    <details open={open || undefined} className="text-[10px] text-[var(--text-muted)]">
-      <summary className="cursor-pointer select-none py-0.5">{label}</summary>
-      <pre className="mt-1 max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed border-l border-[var(--border-subtle)] pl-3">
-        {text}
-      </pre>
-    </details>
-  )
-}
-
 export function SimpleAssist() {
   const {
     content, setContent, editor,
@@ -561,7 +554,6 @@ export function SimpleAssist() {
   const [fileQuery, setFileQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const inputRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const wasAbortedRef = useRef(false)
@@ -632,8 +624,6 @@ export function SimpleAssist() {
       }
     }
   }
-
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const fetchLogs = async () => {
     try {
@@ -833,18 +823,6 @@ export function SimpleAssist() {
   useEffect(() => {
     useCharactersStore.getState().resetForWorkspace()
   }, [linkedWorkspaceDir])
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [
-    historyLogs.length,
-    isWorking,
-    streamingChatText,
-    streamingThinkingText,
-    errorText,
-    noticeText,
-    activeToolRows.length,
-  ])
 
   // Close file-mention dropdown on click outside (harness menu is a
   // DropdownMenu and manages its own dismissal)
@@ -1830,7 +1808,7 @@ export function SimpleAssist() {
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col w-full h-full select-none animate-fade-in">
+    <div className="flex flex-col w-full h-full select-none animate-fade-in">
       {/* Header: tokens on left, actions on right */}
       <div className="flex items-center justify-between gap-1.5 pb-1.5 border-b border-[var(--border-sidebar)] select-none shrink-0 w-full animate-fade-in">
         {/* Header Title */}
@@ -2028,9 +2006,10 @@ export function SimpleAssist() {
 
       {/* History area (scrollable) */}
       {hasHistory && (
-        <Chat>
-          <MessageScroller>
-            <ChatMessages className="gap-4 pr-1 pt-2 select-text">
+        <MessageScrollerProvider autoScroll>
+        <MessageScroller>
+          <MessageScrollerViewport>
+            <MessageScrollerContent className="gap-4 pr-1 pt-2 select-text">
               {displayLogs.map((log) => {
                 const isExpanded = !!expandedIds[log.id]
 
@@ -2054,31 +2033,37 @@ export function SimpleAssist() {
                 return (
                   <React.Fragment key={log.id}>
                     {/* User prompt */}
-                    <Message align="end" className="group">
-                      <MessageContent>
-                        <Bubble align="end" variant="muted" className="text-[var(--text)]">
-                          <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
-                        </Bubble>
-                        <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                          <Tooltip>
-                            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handlePromptToInput(log)} aria-label="Restore prompt to input"><Undo2 /></Button>} />
-                            <TooltipContent>Restore prompt to input</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger render={
-                              <Button variant="ghost" size="icon-sm" onClick={() => void handleCopyPrompt(log)} aria-label="Copy prompt">
-                                {copiedId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <Copy />}
-                              </Button>
-                            } />
-                            <TooltipContent>{copiedId === log.id ? 'Copied' : 'Copy prompt'}</TooltipContent>
-                          </Tooltip>
-                        </MessageFooter>
-                      </MessageContent>
-                    </Message>
+                    <MessageScrollerItem
+                      messageId={`${log.id}:user`}
+                      scrollAnchor
+                    >
+                      <Message align="end" className="group">
+                        <MessageContent>
+                          <Bubble align="end" variant="muted" className="text-[var(--text)]">
+                            <BubbleContent>{renderUserPrompt(cleanUserPrompt(log))}</BubbleContent>
+                          </Bubble>
+                          <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                            <Tooltip>
+                              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" onClick={() => handlePromptToInput(log)} aria-label="Restore prompt to input"><Undo2 /></Button>} />
+                              <TooltipContent>Restore prompt to input</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button variant="ghost" size="icon-sm" onClick={() => void handleCopyPrompt(log)} aria-label="Copy prompt">
+                                  {copiedId === log.id ? <Check className="text-green-600 dark:text-green-400" /> : <Copy />}
+                                </Button>
+                              } />
+                              <TooltipContent>{copiedId === log.id ? 'Copied' : 'Copy prompt'}</TooltipContent>
+                            </Tooltip>
+                          </MessageFooter>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
 
                     {/* Assistant response */}
-                    <Message className="group">
-                      <MessageContent className="w-full">
+                    <MessageScrollerItem messageId={`${log.id}:assistant`}>
+                      <Message className="group">
+                        <MessageContent className="w-full">
                         <button
                           onClick={() => setExpandedIds(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
                           className="flex w-fit cursor-pointer select-none items-center gap-0.5 py-0.5 text-[10px] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
@@ -2120,14 +2105,17 @@ export function SimpleAssist() {
                                     <span>Read editor selection ({log.selected_text.length} Ch)</span>
                                   </div>
                                 )}
-                                {log.tool_calls?.map((t, i) => (
-                                  <div key={`tool-${i}`} className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-secondary)] font-sans">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                                    </svg>
-                                    <span>{t.tool}{t.detail ? ` ${t.detail}` : ''}</span>
-                                  </div>
-                                ))}
+                                {log.tool_calls && log.tool_calls.length > 0 && (
+                                  <Trace className="gap-1">
+                                    {log.tool_calls.map((tool, i) => (
+                                      <ToolTrace
+                                        key={`tool-${i}`}
+                                        tool={tool.tool}
+                                        detail={tool.detail}
+                                      />
+                                    ))}
+                                  </Trace>
+                                )}
                               </div>
                             )}
                             {log.planner_system_prompt && (
@@ -2174,7 +2162,7 @@ export function SimpleAssist() {
                         )}
 
                         {log.thinking_output && (
-                          <ThinkingDetails text={log.thinking_output} />
+                          <ReasoningTrace text={log.thinking_output} />
                         )}
 
                         {/* Always-visible context rows — ref files + planner context + selection */}
@@ -2312,24 +2300,28 @@ export function SimpleAssist() {
                             </Tooltip>
                           </MessageFooter>
                         )}
-                      </MessageContent>
-                    </Message>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
                   </React.Fragment>
                 )
               })}
 
               {isWorking && activeInstruction && (
                 <>
-                  <Message align="end">
-                    <MessageContent>
-                      <Bubble align="end" variant="muted" className="text-[var(--text)] opacity-70">
-                        <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
-                      </Bubble>
-                    </MessageContent>
-                  </Message>
+                  <MessageScrollerItem messageId={`${activeSessionId}:active-user`} scrollAnchor>
+                    <Message align="end">
+                      <MessageContent>
+                        <Bubble align="end" variant="muted" className="text-[var(--text)] opacity-70">
+                          <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
 
-                  <Message className="group">
-                    <MessageContent className="w-full">
+                  <MessageScrollerItem messageId={`${activeSessionId}:active-assistant`}>
+                    <Message className="group">
+                      <MessageContent className="w-full">
                       {(activeRefFiles.length > 0 || plannerContextFiles.length > 0) && (
                         <Trace className="gap-1 select-none">
                           {activeRefFiles.map((file) => (
@@ -2362,18 +2354,18 @@ export function SimpleAssist() {
                       {activeToolRows.length > 0 && (
                         <Trace className="gap-1">
                           {activeToolRows.map((t, i) => (
-                            <TraceLine key={`htool-${i}`} className="text-[10px]">
-                              <TraceIcon>
-                                <Wrench className="size-3.5 text-[var(--text-muted)]" />
-                              </TraceIcon>
-                              <TraceTitle>{t.tool}{t.detail ? ` ${t.detail}` : ''}</TraceTitle>
-                            </TraceLine>
+                            <ToolTrace
+                              key={`htool-${i}`}
+                              tool={t.tool}
+                              detail={t.detail}
+                              running
+                            />
                           ))}
                         </Trace>
                       )}
 
                       {streamingThinkingText && (
-                        <ThinkingDetails text={streamingThinkingText} open label="Thinking…" />
+                        <ReasoningTrace text={streamingThinkingText} running />
                       )}
 
                       {(mode === 'chat' || activeHarness !== 'none') && streamingChatText && (
@@ -2439,27 +2431,33 @@ export function SimpleAssist() {
                                     : 'Thinking…'}
                         </span>
                       </div>
-                    </MessageContent>
-                  </Message>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
                 </>
               )}
 
               {errorText && (
+                <MessageScrollerItem messageId={`${activeSessionId}:error`}>
                 <div className="self-start rounded-[8px] border border-[var(--danger-muted)] bg-[var(--danger-bg)] px-2.5 py-2 text-[11px] text-[var(--danger)] select-none">
                   {errorText}
                 </div>
+                </MessageScrollerItem>
               )}
 
               {noticeText && (
+                <MessageScrollerItem messageId={`${activeSessionId}:notice`}>
                 <div className="self-start rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[11px] text-[var(--text-secondary)] select-none">
                   {noticeText}
                 </div>
+                </MessageScrollerItem>
               )}
 
-              <div ref={bottomRef} />
-            </ChatMessages>
-          </MessageScroller>
-        </Chat>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+            <MessageScrollerButton />
+        </MessageScroller>
+        </MessageScrollerProvider>
       )}
 
       {!hasHistory && (

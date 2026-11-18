@@ -67,7 +67,7 @@ import {
   InputGroupButton,
 } from '@/components/ui/input-group'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
-import { MessageScroller } from '@/components/ui/message-scroller'
+import { MessageScroller, MessageScrollerViewport } from '@/components/ui/message-scroller'
 import { Trace, TraceIcon, TraceLine, TraceTitle } from '@/components/ui/trace'
 import { Context, ContextLabel, ContextValue } from '@/components/ui/context'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -868,6 +868,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           {hasThread ? (
             <Chat>
               <MessageScroller>
+                <MessageScrollerViewport>
                 <ChatMessages className="gap-4 px-4 py-4 select-text">
                   {isRestoring && messages.length === 0 && (
                     <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
@@ -1020,6 +1021,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
 
                   <div ref={endRef} />
                 </ChatMessages>
+                </MessageScrollerViewport>
               </MessageScroller>
             </Chat>
           ) : (

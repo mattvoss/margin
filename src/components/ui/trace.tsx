@@ -18,8 +18,24 @@ function TraceCollapsibleContent({ className, ...props }: React.ComponentProps<t
   return <CollapsibleContent data-slot="trace-content" className={cn('pl-4', className)} {...props} />
 }
 
-function TraceLine({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-slot="trace-line" className={cn('flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground', className)} {...props} />
+function TraceLine({
+  className,
+  status,
+  ...props
+}: React.ComponentProps<'div'> & { status?: 'running' | 'error' }) {
+  return (
+    <div
+      data-slot="trace-line"
+      data-status={status}
+      className={cn(
+        'flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground',
+        status === 'running' && 'text-[var(--text-secondary)]',
+        status === 'error' && 'text-[var(--danger)]',
+        className,
+      )}
+      {...props}
+    />
+  )
 }
 
 function TraceIcon({ className, ...props }: React.ComponentProps<'span'>) {
