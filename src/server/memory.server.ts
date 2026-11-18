@@ -30,6 +30,78 @@ export interface MemorySearchResult {
   accessCount: number
 }
 
+export interface MemoryConfig {
+  enabled: boolean
+  databasePath: string | undefined
+  embeddingUrl: string | undefined
+  embeddingApiKey: string | undefined
+  embeddingModel: string | undefined
+  topK: number
+  minimumScore: number
+  maxPromptChars: number
+}
+
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+function env(name: string, source: Record<string, string | undefined>): string | undefined {
+  const value = source[name]?.trim()
+  return value || undefined
+}
+
+function positiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function nonNegativeNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+export function memoryConfig(source: Record<string, string | undefined> = process.env): MemoryConfig {
+  const embeddingUrl = env('MARGIN_MEMORY_EMBEDDING_URL', source)
+  return {
+    enabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_ENABLED ?? '').toLowerCase()),
+    databasePath: env('MARGIN_MEMORY_DB_PATH', source),
+    embeddingUrl: embeddingUrl?.replace(/\/+$/, ''),
+    embeddingApiKey: env('MARGIN_MEMORY_EMBEDDING_API_KEY', source),
+    embeddingModel: env('MARGIN_MEMORY_EMBEDDING_MODEL', source),
+    topK: Math.min(Math.floor(positiveNumber(source.MARGIN_MEMORY_TOP_K, 5)), 50),
+    minimumScore: nonNegativeNumber(source.MARGIN_MEMORY_MIN_SCORE, 0.45),
+    maxPromptChars: Math.floor(positiveNumber(source.MARGIN_MEMORY_MAX_PROMPT_CHARS, 6000)),
+  }
+}
+
+export function createMemoryEmbedder(
+  config: MemoryConfig,
+  fetcher: FetchLike = fetch,
+): (text: string) => Promise<number[]> {
+  return async text => {
+    if (!config.embeddingUrl || !config.embeddingModel) {
+      throw new Error('memory embedding URL and model are required')
+    }
+    const response = await fetcher(`${config.embeddingUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        ...(config.embeddingApiKey ? { authorization: `Bearer ${config.embeddingApiKey}` } : {}),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ input: text, model: config.embeddingModel }),
+    })
+    if (!response.ok) throw new Error(`memory embedding request failed (${response.status})`)
+    const body: unknown = await response.json()
+    const embedding =
+      body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)
+        ? (body as { data: Array<{ embedding?: unknown }> }).data[0]?.embedding
+        : undefined
+    if (!Array.isArray(embedding) || embedding.some(value => typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error('memory embedding response contained an invalid vector')
+    }
+    validateEmbedding(embedding)
+    return embedding
+  }
+}
+
 export interface MemoryStore {
   all<T extends Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>
   run(sql: string, ...params: unknown[]): Promise<void>

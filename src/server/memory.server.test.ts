@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   closeMemoryStore,
+  createMemoryEmbedder,
+  memoryConfig,
   openMemoryStore,
   saveMemory,
   searchMemories,
@@ -19,6 +21,50 @@ afterEach(async () => {
 })
 
 describe('memory store', () => {
+  it('uses safe defaults and disables memory unless explicitly enabled', () => {
+    expect(memoryConfig({})).toEqual({
+      enabled: false,
+      databasePath: undefined,
+      embeddingUrl: undefined,
+      embeddingApiKey: undefined,
+      embeddingModel: undefined,
+      topK: 5,
+      minimumScore: 0.45,
+      maxPromptChars: 6000,
+    })
+  })
+
+  it('creates an embedder for an OpenAI-compatible endpoint', async () => {
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://embed.test/v1/embeddings')
+      expect(init?.headers).toEqual({
+        authorization: 'Bearer test-key',
+        'content-type': 'application/json',
+      })
+      expect(JSON.parse(String(init?.body))).toEqual({
+        input: 'remember this',
+        model: 'embedding-model',
+      })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }), { status: 200 })
+    }
+
+    const embed = createMemoryEmbedder(
+      {
+        enabled: true,
+        databasePath: undefined,
+        embeddingUrl: 'http://embed.test/v1',
+        embeddingApiKey: 'test-key',
+        embeddingModel: 'embedding-model',
+        topK: 5,
+        minimumScore: 0.45,
+        maxPromptChars: 6000,
+      },
+      fetcher,
+    )
+
+    await expect(embed('remember this')).resolves.toEqual([0.1, 0.2])
+  })
+
   it('opens a persistent database and creates the memory schema', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
     temporaryDirectories.push(directory)
