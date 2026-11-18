@@ -63,6 +63,10 @@ import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
 import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { recallMemoryContext } from './memory.server'
+import { createMemoryEmbedder, memoryConfig, openMemoryStore } from './memory.server'
+import { extractMemoryCandidates } from './memory-extraction.server'
+import { join } from 'node:path'
+import { DATA_ROOT } from './env.server'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -1077,6 +1081,46 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokens_cached: chat.tokensCached,
             slot_id: chat.slotId,
           }, ws)
+          const extractionConfig = memoryConfig()
+          if (extractionConfig.extractionEnabled && extractionConfig.embeddingUrl && extractionConfig.embeddingModel) {
+            void (async () => {
+              try {
+                const candidates = await extractMemoryCandidates({
+                  userMessage: payload.message,
+                  assistantMessage: finalChat,
+                  settings: settings as never,
+                })
+                if (candidates.length === 0) return
+                const memoryStore = await openMemoryStore(
+                  extractionConfig.databasePath ?? join(DATA_ROOT, 'memory.duckdb'),
+                )
+                try {
+                  const embed = createMemoryEmbedder(extractionConfig)
+                  for (const candidate of candidates) {
+                    const vector = await embed(candidate.content)
+                    await memoryStore.run(
+                      `
+                        INSERT INTO memories (
+                          memory_id, workspace_key, session_id, kind, content, embedding, source_message
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                      `,
+                      `memory_${crypto.randomUUID()}`,
+                      ws,
+                      payload.session_id ?? null,
+                      candidate.kind,
+                      candidate.content,
+                      JSON.stringify(vector),
+                      payload.message,
+                    )
+                  }
+                } finally {
+                  await memoryStore.close()
+                }
+              } catch (error) {
+                console.warn(`Memory extraction unavailable: ${errMsg(error)}`)
+              }
+            })()
+          }
           finalized = true
           send({ status: 'chat', output: finalChat, model_used: chat.model })
         }

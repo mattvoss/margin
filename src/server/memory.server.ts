@@ -71,6 +71,7 @@ export function formatMemoryContext(memories: MemorySearchResult[], maxChars: nu
 
 export interface MemoryConfig {
   enabled: boolean
+  extractionEnabled: boolean
   databasePath: string | undefined
   embeddingUrl: string | undefined
   embeddingApiKey: string | undefined
@@ -101,6 +102,7 @@ export function memoryConfig(source: Record<string, string | undefined> = proces
   const embeddingUrl = env('MARGIN_MEMORY_EMBEDDING_URL', source)
   return {
     enabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_ENABLED ?? '').toLowerCase()),
+    extractionEnabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_EXTRACTION_ENABLED ?? '').toLowerCase()),
     databasePath: env('MARGIN_MEMORY_DB_PATH', source),
     embeddingUrl: embeddingUrl?.replace(/\/+$/, ''),
     embeddingApiKey: env('MARGIN_MEMORY_EMBEDDING_API_KEY', source),

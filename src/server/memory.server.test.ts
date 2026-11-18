@@ -49,6 +49,7 @@ describe('memory store', () => {
   it('uses safe defaults and disables memory unless explicitly enabled', () => {
     expect(memoryConfig({})).toEqual({
       enabled: false,
+      extractionEnabled: false,
       databasePath: undefined,
       embeddingUrl: undefined,
       embeddingApiKey: undefined,
@@ -76,6 +77,7 @@ describe('memory store', () => {
     const embed = createMemoryEmbedder(
       {
         enabled: true,
+        extractionEnabled: false,
         databasePath: undefined,
         embeddingUrl: 'http://embed.test/v1',
         embeddingApiKey: 'test-key',
