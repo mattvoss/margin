@@ -1,4 +1,34 @@
 import duckdb from 'duckdb'
+import { randomUUID } from 'node:crypto'
+
+export type MemoryKind = 'fact' | 'preference' | 'skill' | 'project_context' | 'instruction'
+
+export interface SaveMemoryInput {
+  workspaceKey: string
+  sessionId?: string | null
+  kind: MemoryKind
+  content: string
+  embedding: number[]
+  sourceMessage?: string | null
+  sourceLogId?: string | null
+}
+
+export interface MemorySearchInput {
+  workspaceKey: string
+  embedding: number[]
+  limit?: number
+  minimumScore?: number
+  kinds?: MemoryKind[]
+}
+
+export interface MemorySearchResult {
+  memoryId: string
+  kind: MemoryKind
+  content: string
+  score: number
+  strength: number
+  accessCount: number
+}
 
 export interface MemoryStore {
   all<T extends Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>
@@ -67,6 +97,99 @@ function close(database: duckdb.Database): Promise<void> {
       resolve()
     })
   })
+}
+
+function validateEmbedding(embedding: number[]): void {
+  if (embedding.length === 0 || embedding.some(value => !Number.isFinite(value))) {
+    throw new Error('embedding must contain at least one finite number')
+  }
+}
+
+function validateText(value: string, field: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error(`${field} must not be empty`)
+  return trimmed
+}
+
+function memoryId(): string {
+  return `memory_${randomUUID()}`
+}
+
+export async function saveMemory(store: MemoryStore, input: SaveMemoryInput): Promise<string> {
+  const workspaceKey = validateText(input.workspaceKey, 'workspaceKey')
+  const content = validateText(input.content, 'content')
+  validateEmbedding(input.embedding)
+
+  const id = memoryId()
+  await store.run(
+    `
+      INSERT INTO memories (
+        memory_id, workspace_key, session_id, kind, content, embedding,
+        source_message, source_log_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    id,
+    workspaceKey,
+    input.sessionId ?? null,
+    input.kind,
+    content,
+    JSON.stringify(input.embedding),
+    input.sourceMessage ?? null,
+    input.sourceLogId ?? null,
+  )
+  return id
+}
+
+export async function searchMemories(
+  store: MemoryStore,
+  input: MemorySearchInput,
+): Promise<MemorySearchResult[]> {
+  const workspaceKey = validateText(input.workspaceKey, 'workspaceKey')
+  validateEmbedding(input.embedding)
+  const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 5), 50))
+  const minimumScore = input.minimumScore ?? 0
+  const kinds = input.kinds ?? []
+  const kindFilter = kinds.length > 0 ? `AND kind IN (${kinds.map(() => '?').join(', ')})` : ''
+  const rows = await store.all<{
+    memory_id: string
+    kind: MemoryKind
+    content: string
+    score: number
+    strength: number
+    access_count: number
+  }>(
+    `
+      SELECT
+        memory_id,
+        kind,
+        content,
+        strength * list_cosine_similarity(embedding, ?::JSON::DOUBLE[]) AS score,
+        strength,
+        access_count
+      FROM memories
+      WHERE workspace_key = ?
+        AND archived = false
+        ${kindFilter}
+        AND strength * list_cosine_similarity(embedding, ?::JSON::DOUBLE[]) >= ?
+      ORDER BY score DESC, updated_at DESC, memory_id ASC
+      LIMIT ?
+    `,
+    JSON.stringify(input.embedding),
+    workspaceKey,
+    ...kinds,
+    JSON.stringify(input.embedding),
+    minimumScore,
+    limit,
+  )
+
+  return rows.map(row => ({
+    memoryId: row.memory_id,
+    kind: row.kind,
+    content: row.content,
+    score: Number(row.score),
+    strength: Number(row.strength),
+    accessCount: Number(row.access_count),
+  }))
 }
 
 export async function openMemoryStore(databasePath: string): Promise<MemoryStore> {
