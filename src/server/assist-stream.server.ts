@@ -62,6 +62,7 @@ import {
 import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
 import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
+import { recallMemoryContext } from './memory.server'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -831,17 +832,26 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           send({ status: 'generating' })
           const chatPrompt = await loadSimplePrompt('simple-chat.md').catch(() => '')
           const chatLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
-          const composed = await composeChatMessages(payload as never, {
-            settings: settings as never,
+           const composed = await composeChatMessages(payload as never, {
+             settings: settings as never,
             chatPrompt,
             readFile,
             message: payload.message,
             logs: chatLogs as never,
-            expandedTagged: tagged,
-          })
-          systemPrompt = composed.system
-          const chatMsgs = assembleAssistMessages(
-            systemPrompt,
+             expandedTagged: tagged,
+           })
+           let memoryContext = ''
+           try {
+             memoryContext = await recallMemoryContext(ws, payload.message)
+           } catch (error) {
+             console.warn(`Memory recall unavailable: ${errMsg(error)}`)
+           }
+           const chatSystemPrompt = memoryContext
+             ? `${composed.system}\n\n${memoryContext}`
+             : composed.system
+           systemPrompt = chatSystemPrompt
+           const chatMsgs = assembleAssistMessages(
+             chatSystemPrompt,
             composed.history,
             composed.files,
             composed.user,
