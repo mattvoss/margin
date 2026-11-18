@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 process.env.MARGIN_TEST_DIR = mkdtempSync(join(tmpdir(), 'margin-api-test-'))
 
@@ -57,6 +57,43 @@ function req(path: string, method = 'GET', body?: unknown): Request {
     init.body = JSON.stringify(body)
   }
   return new Request(`http://localhost/api/${path}`, init)
+}
+
+/** Minimal OpenAI-compatible SSE response for agent orchestration tests. */
+function sseResponse(chunks: unknown[]): Response {
+  const body =
+    chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') +
+    'data: [DONE]\n\n'
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(body))
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+  )
+}
+
+/** Minimal non-streaming OpenAI-compatible completion. */
+function completionResponse(content: string): Response {
+  return new Response(
+    JSON.stringify({
+      id: 'chatcmpl-test',
+      object: 'chat.completion',
+      created: 0,
+      model: 'assist-mock',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
 }
 
 async function invoke(
@@ -318,6 +355,176 @@ describe('assist', () => {
     const text = await res.text()
     expect(text).toContain('"status":"generating"')
     expect(text).toContain('"status":"error"')
+  })
+
+  it('orchestrates chat through the dispatcher and chat subagent', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    const calls: string[] = []
+    let orchestrationStep = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[] }
+        if (Array.isArray(body.tools) && body.tools.length > 0) {
+          const names = ['write_chat', 'post_process', 'finish']
+          const name = names[orchestrationStep++]
+          calls.push(name)
+          return sseResponse([
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: `call_${orchestrationStep}`,
+                        type: 'function',
+                        function: { name, arguments: '{}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+          ])
+        }
+        calls.push('chat')
+        return sseResponse([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: 'Hello from the chat agent.' },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          },
+        ])
+      }),
+    )
+
+    try {
+      const res = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'chat',
+          message: 'hi',
+          session_id: 'agent-test',
+          harness: 'none',
+        }),
+      } as never)
+      const text = await res.text()
+      expect(text).toContain('"status":"chunk","chunk":"Hello from the chat agent."')
+      expect(text).toContain('"status":"chat","output":"Hello from the chat agent."')
+      expect(calls).toEqual(['write_chat', 'chat', 'post_process', 'finish'])
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('orchestrates edit through planning, editing, and post-processing', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    const calls: string[] = []
+    let orchestrationStep = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          tools?: unknown[]
+          stream?: boolean
+        }
+        if (Array.isArray(body.tools) && body.tools.length > 0) {
+          const names = ['plan_edit', 'write_edit', 'post_process', 'finish']
+          const name = names[orchestrationStep++]
+          calls.push(name)
+          return sseResponse([
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: `call_${orchestrationStep}`,
+                        type: 'function',
+                        function: { name, arguments: '{}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+          ])
+        }
+        if (body.stream !== true) {
+          calls.push('planner')
+          return completionResponse(
+            JSON.stringify({ context_needed: [], refined_query: 'Make it tense.' }),
+          )
+        }
+        calls.push('writer')
+        return sseResponse([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: 'A tenser line.' },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 14, completion_tokens: 4, total_tokens: 18 },
+          },
+        ])
+      }),
+    )
+
+    try {
+      const res = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'edit',
+          message: 'Make it tense.',
+          content: 'Line one.\n\nLine two.',
+          cursor_paragraph_text: 'Line two.',
+          session_id: 'agent-edit-test',
+          harness: 'none',
+          available_files: [],
+        }),
+      } as never)
+      const text = await res.text()
+      expect(text).toContain('"status":"planning"')
+      expect(text).toContain('"status":"context_resolved"')
+      expect(text).toContain('"status":"generating"')
+      expect(text).toContain('"status":"chunk","chunk":"A tenser line."')
+      expect(text).toContain('"status":"applied","output":"A tenser line."')
+      expect(calls).toEqual([
+        'plan_edit',
+        'planner',
+        'write_edit',
+        'writer',
+        'post_process',
+        'finish',
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
   })
 
   it('stop and session delete are idempotent', async () => {

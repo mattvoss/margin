@@ -18,7 +18,7 @@ import {
   workspaceIndexLine,
   type SimpleAssistRequest,
 } from './assist.server'
-import { LLMClient, loadLlmConfig } from './llm.server'
+import { loadLlmConfig } from './llm.server'
 import { readCharacterState } from './characters.server'
 import { formatCharacterPrompt } from '../lib/characters'
 import {
@@ -46,11 +46,20 @@ import {
   stripCodeFences,
   type HarnessPostProcessResult,
   type PostProcessEvent,
+  type PostProcessGenerator,
 } from './post-process.server'
-import { normalizePostProcessing } from '../lib/postProcessing'
+import { enabledPostProcessPasses, normalizePostProcessing } from '../lib/postProcessing'
 import { expandMentionedFiles } from './mentions.server'
 import { createSceneDraftingAgent, createScenePlannerAgent } from './scene-agents.server'
-import type { ModelMessage } from 'ai'
+import {
+  createAssistChatAgent,
+  createAssistEditAgent,
+  createAssistOrchestratorAgent,
+  createAssistPlannerAgent,
+  createAssistPostProcessAgent,
+} from './assist-agents.server'
+import { tool, type ModelMessage, type ToolSet } from 'ai'
+import { z } from 'zod'
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -137,6 +146,33 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             send({ status: 'post_processing_skipped', source: event.source, reason: event.reason })
           }
         }
+        const generatePass: PostProcessGenerator = async (input) => {
+          const agent = createAssistPostProcessAgent({
+            endpoint: {
+              model: input.client.model,
+              baseUrl: input.client.baseUrl,
+              apiKey: input.client.apiKey,
+            },
+            instructions: input.system,
+            temperature: input.temperature,
+            maxOutputTokens: input.maxTokens,
+            disableThinking: input.disableThinking,
+          })
+          const result = await agent.generate({
+            messages: input.messages.filter(
+              (message) => message.role !== 'system',
+            ) as ModelMessage[],
+            abortSignal: input.signal,
+          })
+          return {
+            text: result.text,
+            model: result.response.modelId || input.client.model,
+            finishReason: result.finishReason,
+            promptTokens: result.usage.inputTokens ?? 0,
+            completionTokens: result.usage.outputTokens ?? 0,
+            thinking: result.reasoningText ?? null,
+          }
+        }
         const postBase = {
           settings: settings as never,
           workspaceDir: ws,
@@ -147,6 +183,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           defaultMaxTokens: maxToks,
           signal,
           onEvent: sendPostEvent,
+          generatePass,
         }
 
         if (harness && harness !== 'none') {
@@ -482,244 +519,234 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           return
         }
 
-        if (mode === 'edit') {
-          if (!payload.skip_planner) {
-            send({ status: 'planning' })
-            const plannerPrompt = await loadSimplePrompt('simple-planner.md').catch(() => '')
-            const historyLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
-            const manifests = await collectManifestSections(
-              ws,
-              (settings as { ignored_ref_files?: string[] }).ignored_ref_files ?? [],
-            ).catch(() => [])
-            const planner = runPlannerPrompt({
-              content: payload.content,
-              message: payload.message,
-              selectedText: payload.selected_text,
-              cursorParagraphText: payload.cursor_paragraph_text,
-              sessionId: payload.session_id,
-              taggedFiles: tagged,
-              settings: settings as never,
-              logs: historyLogs as never,
-              manifests,
-              plannerPrompt,
-            })
-            systemPrompt = planner.system
-            const plannerMsgs = assembleAssistMessages(
-              systemPrompt,
-              [],
-              null,
-              planner.user,
-              characterMessage,
-            )
-            userPrompt = plannerMsgs.fullUser
-            const plannerUserPrompt = userPrompt
-            const plannerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
-            console.log(formatCacheInfo('planner', systemPrompt, userPrompt, { slotId: plannerCache.slotId }))
-            const planRaw = await client.generateBlockingWithMessages(plannerMsgs.messages, {
-              temperature: 0.3,
-              maxTokens: 800,
-              signal,
-              cachePrompt: plannerCache.cachePrompt,
-              nKeep: plannerCache.nKeep,
+        const isEditFlow = mode === 'edit'
+        const agentEndpoint = {
+          model: client.model,
+          baseUrl: client.baseUrl,
+          apiKey: client.apiKey,
+        }
+        const cacheRequestBody = (cache: {
+          cachePrompt: boolean
+          nKeep: number
+          slotId?: number
+        }) => ({
+          cache_prompt: cache.cachePrompt,
+          n_keep: cache.nKeep,
+          ...(cache.slotId != null ? { id_slot: cache.slotId } : {}),
+        })
+
+        type PlannerRun = {
+          system: string
+          user: string
+          raw: string
+          plan: ReturnType<typeof parsePlannerOutput>
+          promptTokens: number
+          completionTokens: number
+          thinking: string | null
+          model: string
+        }
+        type EditRun = {
+          raw: string
+          clean: string
+          system: string
+          user: string
+          promptTokens: number
+          completionTokens: number
+          thinking: string | null
+          model: string
+          anchor: ReturnType<typeof extractAnchorContext>
+          slotId: number | null
+        }
+        type ChatRun = {
+          raw: string
+          system: string
+          user: string
+          promptTokens: number
+          completionTokens: number
+          thinking: string | null
+          model: string
+          anchor: ReturnType<typeof extractAnchorContext> | null
+          slotId: number | null
+          logs: Awaited<ReturnType<typeof getWorkspaceAiLogs>>
+        }
+
+        let plannerRun: PlannerRun | null = null
+        let editRun: EditRun | null = null
+        let chatRun: ChatRun | null = null
+        let editStarted = false
+        let chatStarted = false
+        let postStarted = false
+        let finalized = false
+        const taggedContext = [...tagged]
+
+        async function runPlanner(announce: boolean): Promise<PlannerRun | null> {
+          if (payload.skip_planner) return null
+          if (plannerRun) return plannerRun
+          if (announce) send({ status: 'planning' })
+          const plannerPrompt = await loadSimplePrompt('simple-planner.md').catch(() => '')
+          const historyLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
+          const manifests = await collectManifestSections(
+            ws,
+            (settings as { ignored_ref_files?: string[] }).ignored_ref_files ?? [],
+          ).catch(() => [])
+          const planner = runPlannerPrompt({
+            content: payload.content,
+            message: payload.message,
+            selectedText: payload.selected_text,
+            cursorParagraphText: payload.cursor_paragraph_text,
+            sessionId: payload.session_id,
+            taggedFiles: tagged,
+            settings: settings as never,
+            logs: historyLogs as never,
+            manifests,
+            plannerPrompt,
+          })
+          systemPrompt = planner.system
+          const plannerMsgs = assembleAssistMessages(
+            systemPrompt,
+            [],
+            null,
+            planner.user,
+            characterMessage,
+          )
+          userPrompt = plannerMsgs.fullUser
+          const plannerCache = cacheOptsForSession(
+            settings as never,
+            payload.session_id,
+            systemPrompt,
+          )
+          console.log(
+            formatCacheInfo('planner', systemPrompt, userPrompt, {
               slotId: plannerCache.slotId,
-            })
-            console.log(
-              formatCacheInfo('planner', systemPrompt, userPrompt, {
-                slotId: plannerCache.slotId,
-                promptMs: client.lastTimings?.prompt_ms as number | undefined,
-                promptN: client.lastTimings?.prompt_n as number | undefined,
-                tokensCached: client.lastTokensCached,
-              }),
-            )
-            const plannerPromptMs = (client.lastTimings?.prompt_ms as number | undefined) ?? null
-            void plannerPromptMs
-            const plannerTokensCached = client.lastTokensCached
-            void plannerTokensCached
-            const plan = parsePlannerOutput(planRaw, payload.message)
-            const contextNeeded: string[] = [...(plan.context_needed ?? [])]
-            const query: string = plan.refined_query || payload.message
-            for (const p of tagged) if (!contextNeeded.includes(p)) contextNeeded.push(p)
-            send({ status: 'context_resolved', context_needed: contextNeeded })
-            send({ status: 'generating' })
-            const anchor = extractAnchorContext(payload.content, payload.selected_text, payload.cursor_paragraph_text)
-            const writerPrompt = await loadSimplePrompt('simple-writer.md').catch(() => '')
-            const gen = await buildGeneratorPrompts({
-              paragraphBefore: anchor.paragraphBefore,
-              targetParagraph: anchor.targetParagraph,
-              paragraphAfter: anchor.paragraphAfter,
-              query,
-              contextNeeded,
-              availableFiles: payload.available_files,
-              settings: settings as never,
-              writerPrompt,
-              readFile,
-            })
-            systemPrompt = gen.system
-            const writerMsgs = assembleAssistMessages(
-              systemPrompt,
-              [],
-              gen.files,
-              gen.user,
-              characterMessage,
-            )
-            userPrompt = writerMsgs.fullUser
-            const writerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
-            console.log(formatCacheInfo('writer', systemPrompt, userPrompt, { slotId: writerCache.slotId }))
-            let fullRaw = ''
-            for await (const chunk of client.streamWithMessages(writerMsgs.messages, { temperature: 0.7, maxTokens: maxToks ?? undefined, signal, cachePrompt: writerCache.cachePrompt, nKeep: writerCache.nKeep, slotId: writerCache.slotId })) {
-              if (signal.aborted) break
-              fullRaw += chunk
-              send({ status: 'chunk', chunk })
-            }
-            console.log(
-              formatCacheInfo('writer', systemPrompt, userPrompt, {
-                slotId: writerCache.slotId,
-                promptMs: client.lastTimings?.prompt_ms,
-                promptN: client.lastTimings?.prompt_n,
-                tokensCached: client.lastTokensCached,
-              }),
-            )
-            const clean = stripCodeFences(fullRaw)
-            const post = await runPostProcessPipeline({
-              ...postBase,
-              upstreamSystemPrompt: systemPrompt,
-              upstreamInstruction: payload.message,
-              upstreamRefinedInstruction: query,
-              text: clean,
-              mode: 'edit',
-              anchor,
-            })
-            const finalOutput = post.text
-            const review = post.skipped ? true : postConfig.review
-            const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-            await saveSimpleAiLog({
-              mode: 'edit_write',
-              session_id: payload.session_id,
-              system_prompt: systemPrompt,
-              user_prompt: userPrompt,
-              output: finalOutput,
-              raw_output: fullRaw,
-              post_processing:
-                post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
-                  ? null
-                  : {
-                      source: 'edit',
-                      skipped: post.skipped,
-                      reason: post.reason ?? null,
-                      passes: post.passes,
-                      snapshots: post.snapshots,
-                    },
-              instruction: payload.message,
-              selected_text: payload.selected_text,
-              ref_files: null,
-              success: true,
-              prompt_tokens: usage.prompt_tokens ?? 0,
-              completion_tokens: usage.completion_tokens ?? 0,
-              total_tokens: usage.total_tokens ?? 0,
-              thinking_output: client.lastThinking,
-              edit_mode: editMode,
-              planner_system_prompt: planner.system,
-              planner_user_prompt: plannerUserPrompt,
-              planner_output: planRaw,
-              cursor_paragraph_index: anchor.targetIdx ?? null,
-              model_used: client.lastModelUsed,
-              system_hash: prefixHash(systemPrompt),
-              user_hash: prefixHash(userPrompt),
-              prompt_ms: (client.lastTimings?.prompt_ms as number | undefined) ?? null,
-              tokens_cached: client.lastTokensCached,
-              slot_id: writerCache.slotId ?? null,
-            }, ws)
-            send({ status: 'applied', output: finalOutput, review, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
-          } else {
-            send({ status: 'context_resolved', context_needed: tagged })
-            send({ status: 'generating' })
-            const anchor = extractAnchorContext(payload.content, payload.selected_text, payload.cursor_paragraph_text)
-            const writerPrompt = await loadSimplePrompt('simple-writer.md').catch(() => '')
-            const gen = await buildGeneratorPrompts({
-              paragraphBefore: anchor.paragraphBefore,
-              targetParagraph: anchor.targetParagraph,
-              paragraphAfter: anchor.paragraphAfter,
-              query: payload.message,
-              contextNeeded: tagged,
-              availableFiles: payload.available_files,
-              settings: settings as never,
-              writerPrompt,
-              readFile,
-            })
-            systemPrompt = gen.system
-            const writerMsgs = assembleAssistMessages(
-              systemPrompt,
-              [],
-              gen.files,
-              gen.user,
-              characterMessage,
-            )
-            userPrompt = writerMsgs.fullUser
-            const writerCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
-            console.log(formatCacheInfo('writer', systemPrompt, userPrompt, { slotId: writerCache.slotId }))
-            let fullRaw = ''
-            for await (const chunk of client.streamWithMessages(writerMsgs.messages, { temperature: 0.7, maxTokens: maxToks ?? undefined, signal, cachePrompt: writerCache.cachePrompt, nKeep: writerCache.nKeep, slotId: writerCache.slotId })) {
-              if (signal.aborted) break
-              fullRaw += chunk
-              send({ status: 'chunk', chunk })
-            }
-            console.log(
-              formatCacheInfo('writer', systemPrompt, userPrompt, {
-                slotId: writerCache.slotId,
-                promptMs: client.lastTimings?.prompt_ms,
-                promptN: client.lastTimings?.prompt_n,
-                tokensCached: client.lastTokensCached,
-              }),
-            )
-            const clean = stripCodeFences(fullRaw)
-            const post = await runPostProcessPipeline({
-              ...postBase,
-              upstreamSystemPrompt: systemPrompt,
-              upstreamInstruction: payload.message,
-              text: clean,
-              mode: 'edit',
-              anchor,
-            })
-            const finalOutput = post.text
-            const review = post.skipped ? true : postConfig.review
-            const usage = client.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-            await saveSimpleAiLog({
-              mode: 'edit_write',
-              session_id: payload.session_id,
-              system_prompt: systemPrompt,
-              user_prompt: userPrompt,
-              output: finalOutput,
-              raw_output: fullRaw,
-              post_processing:
-                post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
-                  ? null
-                  : {
-                      source: 'edit',
-                      skipped: post.skipped,
-                      reason: post.reason ?? null,
-                      passes: post.passes,
-                      snapshots: post.snapshots,
-                    },
-              instruction: payload.message,
-              selected_text: payload.selected_text,
-              ref_files: null,
-              success: true,
-              prompt_tokens: usage.prompt_tokens ?? 0,
-              completion_tokens: usage.completion_tokens ?? 0,
-              total_tokens: usage.total_tokens ?? 0,
-              thinking_output: client.lastThinking,
-              edit_mode: editMode,
-              cursor_paragraph_index: anchor.targetIdx ?? null,
-              model_used: client.lastModelUsed,
-              system_hash: prefixHash(systemPrompt),
-              user_hash: prefixHash(userPrompt),
-              prompt_ms: (client.lastTimings?.prompt_ms as number | undefined) ?? null,
-              tokens_cached: client.lastTokensCached,
-              slot_id: writerCache.slotId ?? null,
-            }, ws)
-            send({ status: 'applied', output: finalOutput, review, cursor_paragraph_index: anchor.targetIdx ?? null, model_used: client.lastModelUsed })
+            }),
+          )
+          const agent = createAssistPlannerAgent({
+            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(plannerCache) },
+            instructions: planner.system,
+          })
+          const result = await agent.generate({
+            messages: plannerMsgs.messages.filter(
+              (message) => message.role !== 'system',
+            ) as ModelMessage[],
+            abortSignal: signal,
+          })
+          const planRaw = result.text.trim()
+          const run: PlannerRun = {
+            system: planner.system,
+            user: userPrompt,
+            raw: planRaw,
+            plan: parsePlannerOutput(planRaw, payload.message),
+            promptTokens: result.usage.inputTokens ?? 0,
+            completionTokens: result.usage.outputTokens ?? 0,
+            thinking: result.reasoningText ?? null,
+            model: result.response.modelId || client.model,
           }
-        } else {
+          plannerRun = run
+          const contextNeeded: string[] = [...(run.plan.context_needed ?? [])]
+          for (const p of taggedContext) {
+            if (!contextNeeded.includes(p)) contextNeeded.push(p)
+          }
+          send({ status: 'context_resolved', context_needed: contextNeeded })
+          return run
+        }
+
+        async function runEdit(): Promise<EditRun> {
+          if (editRun) return editRun
+          if (editStarted) throw new Error('The editing agent did not complete.')
+          const plan = payload.skip_planner ? null : await runPlanner(true)
+          if (!plan) {
+            send({ status: 'context_resolved', context_needed: taggedContext })
+          }
+          send({ status: 'generating' })
+          const query = plan?.plan.refined_query || payload.message
+          const contextNeeded: string[] = plan
+            ? [...(plan.plan.context_needed ?? [])]
+            : [...taggedContext]
+          for (const p of taggedContext) {
+            if (!contextNeeded.includes(p)) contextNeeded.push(p)
+          }
+          const anchor = extractAnchorContext(
+            payload.content,
+            payload.selected_text,
+            payload.cursor_paragraph_text,
+          )
+          const writerPrompt = await loadSimplePrompt('simple-writer.md').catch(() => '')
+          const gen = await buildGeneratorPrompts({
+            paragraphBefore: anchor.paragraphBefore,
+            targetParagraph: anchor.targetParagraph,
+            paragraphAfter: anchor.paragraphAfter,
+            query,
+            contextNeeded,
+            availableFiles: payload.available_files,
+            settings: settings as never,
+            writerPrompt,
+            readFile,
+          })
+          systemPrompt = gen.system
+          const writerMsgs = assembleAssistMessages(
+            systemPrompt,
+            [],
+            gen.files,
+            gen.user,
+            characterMessage,
+          )
+          userPrompt = writerMsgs.fullUser
+          const writerCache = cacheOptsForSession(
+            settings as never,
+            payload.session_id,
+            systemPrompt,
+          )
+          console.log(
+            formatCacheInfo('writer', systemPrompt, userPrompt, {
+              slotId: writerCache.slotId,
+            }),
+          )
+          const agent = createAssistEditAgent({
+            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(writerCache) },
+            instructions: gen.system,
+            maxOutputTokens: maxToks,
+          })
+          editStarted = true
+          let fullRaw = ''
+          let fullThinking = ''
+          const result = await agent.stream({
+            messages: writerMsgs.messages.filter(
+              (message) => message.role !== 'system',
+            ) as ModelMessage[],
+            abortSignal: signal,
+          })
+          for await (const part of result.fullStream) {
+            if (signal.aborted) break
+            if (part.type === 'text-delta') {
+              fullRaw += part.text
+              send({ status: 'chunk', chunk: part.text })
+            } else if (part.type === 'reasoning-delta') {
+              fullThinking += part.text
+              send({ status: 'thinking_chunk', chunk: part.text })
+            }
+          }
+          const usage = await result.usage
+          const response = await result.response
+          const raw = fullRaw || (await result.text)
+          const run: EditRun = {
+            raw,
+            clean: stripCodeFences(raw),
+            system: gen.system,
+            user: writerMsgs.fullUser,
+            promptTokens: usage.inputTokens ?? 0,
+            completionTokens: usage.outputTokens ?? 0,
+            thinking: fullThinking || (await result.reasoningText) || null,
+            model: response.modelId || client.model,
+            anchor,
+            slotId: writerCache.slotId ?? null,
+          }
+          editRun = run
+          return run
+        }
+
+        async function runChat(): Promise<ChatRun> {
+          if (chatRun) return chatRun
+          if (chatStarted) throw new Error('The chat agent did not complete.')
           send({ status: 'generating' })
           const chatPrompt = await loadSimplePrompt('simple-chat.md').catch(() => '')
           const chatLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
@@ -740,27 +767,43 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             characterMessage,
           )
           userPrompt = chatMsgs.fullUser
-          const chatCache = cacheOptsForSession(settings as never, payload.session_id, systemPrompt)
-          console.log(formatCacheInfo('chat', systemPrompt, userPrompt, { slotId: chatCache.slotId }))
-          const llm = client as LLMClient
-          let fullChat = ''
-          for await (const chunk of llm.streamWithMessages(
-            chatMsgs.messages,
-            { temperature: 0.7, maxTokens: maxToks ?? undefined, signal, cachePrompt: chatCache.cachePrompt, nKeep: chatCache.nKeep, slotId: chatCache.slotId },
-          )) {
-            if (signal.aborted) break
-            fullChat += chunk
-            send({ status: 'chunk', chunk })
-          }
+          const chatCache = cacheOptsForSession(
+            settings as never,
+            payload.session_id,
+            systemPrompt,
+          )
           console.log(
             formatCacheInfo('chat', systemPrompt, userPrompt, {
               slotId: chatCache.slotId,
-              promptMs: llm.lastTimings?.prompt_ms,
-              promptN: llm.lastTimings?.prompt_n,
-              tokensCached: llm.lastTokensCached,
             }),
           )
-          const usage = llm.lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          const agent = createAssistChatAgent({
+            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(chatCache) },
+            instructions: composed.system,
+            maxOutputTokens: maxToks,
+          })
+          chatStarted = true
+          let fullChat = ''
+          let fullThinking = ''
+          const result = await agent.stream({
+            messages: chatMsgs.messages.filter(
+              (message) => message.role !== 'system',
+            ) as ModelMessage[],
+            abortSignal: signal,
+          })
+          for await (const part of result.fullStream) {
+            if (signal.aborted) break
+            if (part.type === 'text-delta') {
+              fullChat += part.text
+              send({ status: 'chunk', chunk: part.text })
+            } else if (part.type === 'reasoning-delta') {
+              fullThinking += part.text
+              send({ status: 'thinking_chunk', chunk: part.text })
+            }
+          }
+          const usage = await result.usage
+          const response = await result.response
+          const raw = fullChat || (await result.text)
           const chatAnchor =
             payload.selected_text || payload.cursor_paragraph_text
               ? extractAnchorContext(
@@ -769,23 +812,107 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   payload.cursor_paragraph_text,
                 )
               : null
+          const run: ChatRun = {
+            raw,
+            system: composed.system,
+            user: chatMsgs.fullUser,
+            promptTokens: usage.inputTokens ?? 0,
+            completionTokens: usage.outputTokens ?? 0,
+            thinking: fullThinking || (await result.reasoningText) || null,
+            model: response.modelId || client.model,
+            anchor: chatAnchor,
+            slotId: chatCache.slotId ?? null,
+            logs: chatLogs,
+          }
+          chatRun = run
+          return run
+        }
+
+        async function runPostProcess(): Promise<void> {
+          if (finalized) return
+          if (postStarted) throw new Error('Post-processing did not complete.')
+
+          if (isEditFlow) {
+            const edit = await runEdit()
+            postStarted = true
+            const post = await runPostProcessPipeline({
+              ...postBase,
+              upstreamSystemPrompt: edit.system,
+              upstreamInstruction: payload.message,
+              upstreamRefinedInstruction: plannerRun?.plan.refined_query || undefined,
+              text: edit.clean,
+              mode: 'edit',
+              anchor: edit.anchor,
+            })
+            const finalOutput = post.text
+            const review = post.skipped ? true : postConfig.review
+            await saveSimpleAiLog({
+              mode: 'edit_write',
+              session_id: payload.session_id,
+              system_prompt: edit.system,
+              user_prompt: edit.user,
+              output: finalOutput,
+              raw_output: edit.raw,
+              post_processing:
+                post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
+                  ? null
+                  : {
+                      source: 'edit',
+                      skipped: post.skipped,
+                      reason: post.reason ?? null,
+                      passes: post.passes,
+                      snapshots: post.snapshots,
+                    },
+              instruction: payload.message,
+              selected_text: payload.selected_text,
+              ref_files: null,
+              success: true,
+              prompt_tokens: edit.promptTokens,
+              completion_tokens: edit.completionTokens,
+              total_tokens: edit.promptTokens + edit.completionTokens,
+              thinking_output: edit.thinking,
+              edit_mode: editMode,
+              planner_system_prompt: plannerRun?.system ?? null,
+              planner_user_prompt: plannerRun?.user ?? null,
+              planner_output: plannerRun?.raw ?? null,
+              cursor_paragraph_index: edit.anchor.targetIdx ?? null,
+              model_used: edit.model,
+              system_hash: prefixHash(edit.system),
+              user_hash: prefixHash(edit.user),
+              prompt_ms: null,
+              tokens_cached: null,
+              slot_id: edit.slotId,
+            }, ws)
+            finalized = true
+            send({
+              status: 'applied',
+              output: finalOutput,
+              review,
+              cursor_paragraph_index: edit.anchor.targetIdx ?? null,
+              model_used: edit.model,
+            })
+            return
+          }
+
+          const chat = await runChat()
+          postStarted = true
           const post = await runPostProcessPipeline({
             ...postBase,
-            logs: chatLogs,
-            upstreamSystemPrompt: systemPrompt,
+            logs: chat.logs,
+            upstreamSystemPrompt: chat.system,
             upstreamInstruction: payload.message,
-            text: fullChat,
+            text: chat.raw,
             mode: 'chat',
-            anchor: chatAnchor,
+            anchor: chat.anchor,
           })
           const finalChat = post.text
           await saveSimpleAiLog({
             mode: 'chat',
             session_id: payload.session_id,
-            system_prompt: systemPrompt,
-            user_prompt: userPrompt,
+            system_prompt: chat.system,
+            user_prompt: chat.user,
             output: finalChat,
-            raw_output: fullChat,
+            raw_output: chat.raw,
             post_processing:
               post.skipped && ['disabled', 'no_passes'].includes(post.reason ?? '')
                 ? null
@@ -800,19 +927,142 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             selected_text: payload.selected_text,
             ref_files: null,
             success: true,
-            prompt_tokens: usage.prompt_tokens ?? 0,
-            completion_tokens: usage.completion_tokens ?? 0,
-            total_tokens: usage.total_tokens ?? 0,
-            thinking_output: llm.lastThinking,
-            model_used: llm.lastModelUsed,
-            system_hash: prefixHash(systemPrompt),
-            user_hash: prefixHash(userPrompt),
-            prompt_ms: (llm.lastTimings?.prompt_ms as number | undefined) ?? null,
-            tokens_cached: llm.lastTokensCached,
-            slot_id: chatCache.slotId ?? null,
+            prompt_tokens: chat.promptTokens,
+            completion_tokens: chat.completionTokens,
+            total_tokens: chat.promptTokens + chat.completionTokens,
+            thinking_output: chat.thinking,
+            model_used: chat.model,
+            system_hash: prefixHash(chat.system),
+            user_hash: prefixHash(chat.user),
+            prompt_ms: null,
+            tokens_cached: null,
+            slot_id: chat.slotId,
           }, ws)
-          send({ status: 'chat', output: finalChat, model_used: llm.lastModelUsed })
+          finalized = true
+          send({ status: 'chat', output: finalChat, model_used: chat.model })
         }
+
+        // The orchestrator only dispatches. Every tool is idempotent so a
+        // retry or an out-of-order call cannot duplicate streamed output.
+        const orchestratorTools: ToolSet = {
+          ...(isEditFlow && !payload.skip_planner
+            ? {
+                plan_edit: tool({
+                  description:
+                    'Build the edit plan: choose context files and refine the user instruction before writing.',
+                  inputSchema: z.object({}),
+                  execute: async () => {
+                    const run = await runPlanner(false)
+                    return {
+                      ok: true,
+                      refined_query: run?.plan.refined_query ?? payload.message,
+                      context_needed: run?.plan.context_needed ?? [],
+                    }
+                  },
+                }),
+              }
+            : {}),
+          ...(isEditFlow
+            ? {
+                write_edit: tool({
+                  description:
+                    'Write the edit with the editing subagent and stream it to the editor.',
+                  inputSchema: z.object({}),
+                  execute: async () => {
+                    const run = await runEdit()
+                    return { ok: true, characters: run.raw.length }
+                  },
+                }),
+              }
+            : {
+                write_chat: tool({
+                  description:
+                    'Write the chat reply with the chat subagent and stream it to the toolbar.',
+                  inputSchema: z.object({}),
+                  execute: async () => {
+                    const run = await runChat()
+                    return { ok: true, characters: run.raw.length }
+                  },
+                }),
+              }),
+          post_process: tool({
+            description:
+              'Run the configured post-processing passes for the current mode. Spawns one subagent per enabled pass.',
+            inputSchema: z.object({}),
+            execute: async () => {
+              await runPostProcess()
+              return { ok: true }
+            },
+          }),
+          finish: tool({
+            description:
+              'Finish the task once drafting and post-processing are complete.',
+            inputSchema: z.object({}),
+            execute: async () => ({ done: true }),
+          }),
+        }
+
+        const orchestratorPrompt = await loadSimplePrompt(
+          'simple-orchestrator.md',
+        ).catch(() => '')
+        send({
+          status: isEditFlow && !payload.skip_planner ? 'planning' : 'generating',
+        })
+        const orchestrator = createAssistOrchestratorAgent({
+          endpoint: agentEndpoint,
+          instructions: [
+            orchestratorPrompt ||
+              'You are the SimpleAssist dispatcher. Call the available tools in order and never write the answer yourself.',
+            `Current mode: ${isEditFlow ? 'edit' : 'chat'}.`,
+            isEditFlow && !payload.skip_planner
+              ? 'Call plan_edit before write_edit.'
+              : 'Planning is disabled; go straight to drafting.',
+            'Call post_process after drafting, then finish.',
+          ].join('\n\n'),
+          tools: orchestratorTools,
+        })
+
+        try {
+          const orchestration = await orchestrator.stream({
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  `Mode: ${isEditFlow ? 'edit' : 'chat'}`,
+                  `Instruction: ${payload.message}`,
+                  payload.selected_text
+                    ? 'A text selection is active.'
+                    : 'No text selection is active.',
+                  `Planner: ${payload.skip_planner ? 'disabled' : 'enabled'}`,
+                  `Post-processing passes: ${enabledPostProcessPasses(postConfig).length}`,
+                ].join('\n'),
+              },
+            ],
+            abortSignal: signal,
+          })
+          for await (const part of orchestration.fullStream) {
+            if (signal.aborted) break
+            if (part.type === 'reasoning-delta') {
+              send({ status: 'thinking_chunk', chunk: part.text })
+            }
+          }
+        } catch (error) {
+          if (signal.aborted) throw error
+          console.warn(
+            `Assist orchestrator failed; using the deterministic sequence: ${errMsg(error)}`,
+          )
+        }
+
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+
+        // Guarantee the user-visible outcome even if the orchestrator model
+        // skipped a step (small local models often do).
+        if (isEditFlow) {
+          if (!editRun) await runEdit()
+        } else if (!chatRun) {
+          await runChat()
+        }
+        if (!finalized) await runPostProcess()
         c.close()
       } catch (e) {
         if (signal.aborted) {

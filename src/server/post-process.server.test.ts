@@ -114,6 +114,39 @@ describe('runPostProcessPipeline', () => {
     expect(loadLlmConfig).toHaveBeenCalledTimes(2)
   })
 
+  it('uses an injected agent generator for every pass', async () => {
+    const config = configFor(['starter_grounding', 'starter_prose'])
+    const client = fakeClient([])
+    vi.mocked(loadLlmConfig).mockReturnValue(client as never)
+    const generatePass = vi.fn(async ({ pass }: { pass: { id: string } }) => ({
+      text: pass.id === 'starter_grounding' ? 'agent first pass' : 'agent second pass',
+      model: 'agent-model',
+      finishReason: 'stop' as const,
+      promptTokens: 7,
+      completionTokens: 3,
+      thinking: null,
+    }))
+
+    const result = await runPostProcessPipeline({
+      ...baseContext,
+      settings: settingsFor(config),
+      text: 'original text that is long enough',
+      mode: 'edit',
+      generatePass,
+    })
+
+    expect(generatePass).toHaveBeenCalledTimes(2)
+    expect(result.text).toBe('agent second pass')
+    expect(result.snapshots).toEqual([
+      'original text that is long enough',
+      'agent first pass',
+      'agent second pass',
+    ])
+    expect(result.passes.map((pass) => pass.model)).toEqual(['agent-model', 'agent-model'])
+    expect(result.passes.map((pass) => pass.prompt_tokens)).toEqual([7, 7])
+    expect(client.generateBlockingWithMessages).not.toHaveBeenCalled()
+  })
+
   it('leaves thinking enabled when a pass opts back in', async () => {
     const config = configFor(['starter_grounding'])
     config.presets[0].passes[0].disable_thinking = false

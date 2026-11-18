@@ -73,6 +73,35 @@ export type PostProcessEvent =
     }
   | { type: 'skipped'; source: PostProcessMode; reason: string }
 
+/**
+ * One pass generation, decoupled from the transport so the Assist
+ * orchestrator can run every pass as its own subagent while harness/single
+ * pass callers keep using the LLMClient path.
+ */
+export interface PostProcessGenerationRequest {
+  pass: PostProcessPass
+  client: ReturnType<typeof loadLlmConfig>
+  system: string
+  messages: ChatMessage[]
+  signal?: AbortSignal
+  temperature: number
+  maxTokens: number | null
+  disableThinking: boolean
+}
+
+export interface PostProcessGeneration {
+  text: string
+  model: string | null
+  finishReason: string | null
+  promptTokens: number
+  completionTokens: number
+  thinking: string | null
+}
+
+export type PostProcessGenerator = (
+  input: PostProcessGenerationRequest,
+) => Promise<PostProcessGeneration>
+
 export interface PostProcessContext {
   settings: AssistSettings
   workspaceDir: string
@@ -95,6 +124,12 @@ export interface PostProcessContext {
   passTimeoutMs?: number
   signal?: AbortSignal
   onEvent?: (event: PostProcessEvent) => void
+  /**
+   * Optional agent-backed pass runner. The SimpleAssist orchestrator supplies
+   * one so each enabled pass is executed by its own subagent; when omitted
+   * (manual pass runs, tests) the pipeline keeps using LLMClient directly.
+   */
+  generatePass?: PostProcessGenerator
 }
 
 export interface PostProcessResult {
@@ -380,34 +415,63 @@ export async function runPostProcessPipeline(
     try {
       const built = await buildPassMessages(pass, text, passContext)
       client = loadLlmConfig(input.settings as never, pass.endpoint_id)
-      const raw = await client.generateBlockingWithMessages(built.messages, {
-        temperature: pass.temperature,
-        maxTokens: pass.max_tokens ?? input.defaultMaxTokens ?? undefined,
-        enableThinking: pass.disable_thinking ? false : undefined,
-        signal: passSignal,
-      })
+      let raw: string
+      let passModel: string | null
+      let passFinishReason: string | null
+      let promptTokens: number
+      let completionTokens: number
+      let passThinking: string | null
+      if (input.generatePass) {
+        const generated = await input.generatePass({
+          pass,
+          client,
+          system: built.system,
+          messages: built.messages,
+          signal: passSignal,
+          temperature: pass.temperature,
+          maxTokens: pass.max_tokens ?? input.defaultMaxTokens ?? null,
+          disableThinking: pass.disable_thinking === true,
+        })
+        raw = generated.text
+        passModel = generated.model
+        passFinishReason = generated.finishReason
+        promptTokens = generated.promptTokens
+        completionTokens = generated.completionTokens
+        passThinking = generated.thinking
+      } else {
+        raw = await client.generateBlockingWithMessages(built.messages, {
+          temperature: pass.temperature,
+          maxTokens: pass.max_tokens ?? input.defaultMaxTokens ?? undefined,
+          enableThinking: pass.disable_thinking ? false : undefined,
+          signal: passSignal,
+        })
+        passModel = client.lastModelUsed || null
+        passFinishReason = client.lastFinishReason
+        promptTokens = client.lastUsage?.prompt_tokens ?? 0
+        completionTokens = client.lastUsage?.completion_tokens ?? 0
+        passThinking = client.lastThinking
+      }
       const output = stripCodeFences(raw)
-      const truncated = client.lastFinishReason === 'length'
+      const truncated = passFinishReason === 'length'
       const status: PostProcessPassStatus = truncated
         ? 'failed'
         : output
           ? 'ok'
           : 'empty'
-      const usage = client.lastUsage
       results.push({
         id: pass.id,
         name: pass.name,
         endpoint_id: pass.endpoint_id,
-        model: client.lastModelUsed || null,
+        model: passModel,
         status,
         ...(truncated
           ? { error: 'Output hit the endpoint token limit; kept the previous text.' }
           : {}),
         input_chars: text.length,
         output_chars: output.length,
-        prompt_tokens: usage?.prompt_tokens ?? 0,
-        completion_tokens: usage?.completion_tokens ?? 0,
-        thinking: client.lastThinking,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        thinking: passThinking,
       })
       if (output && !truncated) {
         text = output
