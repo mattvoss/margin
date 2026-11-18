@@ -11,6 +11,7 @@ import {
   archiveMemory,
   listMemories,
   saveMemory,
+  saveMemoryText,
   searchMemories,
 } from './memory.server'
 
@@ -174,6 +175,50 @@ describe('memory store', () => {
     await expect(
       archiveMemory(store, { workspaceKey: 'workspace-b', memoryId: id }),
     ).resolves.toBe(false)
+
+    await closeMemoryStore(store)
+  })
+
+  it('embeds and saves validated memory text', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+
+    const id = await saveMemoryText(store, async text => {
+      expect(text).toBe('The user likes tables.')
+      return [1, 0]
+    }, {
+      workspaceKey: 'workspace-a',
+      kind: 'preference',
+      content: 'The user likes tables.',
+    })
+
+    expect(id).toMatch(/^memory_/)
+    expect((await listMemories(store, { workspaceKey: 'workspace-a' }))[0]?.content)
+      .toBe('The user likes tables.')
+    await closeMemoryStore(store)
+  })
+
+  it('reinforces memories returned by search', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    await saveMemory(store, {
+      workspaceKey: 'workspace-a',
+      kind: 'fact',
+      content: 'The user writes fiction.',
+      embedding: [1, 0],
+    })
+
+    const before = await listMemories(store, { workspaceKey: 'workspace-a' })
+    expect(before[0]?.accessCount).toBe(0)
+    const results = await searchMemories(store, {
+      workspaceKey: 'workspace-a',
+      embedding: [1, 0],
+    })
+    expect(results).toHaveLength(1)
+    const after = await listMemories(store, { workspaceKey: 'workspace-a' })
+    expect(after[0]?.accessCount).toBe(1)
 
     await closeMemoryStore(store)
   })

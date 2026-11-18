@@ -15,6 +15,8 @@ export interface SaveMemoryInput {
   sourceLogId?: string | null
 }
 
+export type MemoryEmbedder = (text: string) => Promise<number[]>
+
 export interface MemorySearchInput {
   workspaceKey: string
   embedding: number[]
@@ -271,6 +273,19 @@ export async function saveMemory(store: MemoryStore, input: SaveMemoryInput): Pr
   return id
 }
 
+export async function saveMemoryText(
+  store: MemoryStore,
+  embed: MemoryEmbedder,
+  input: Omit<SaveMemoryInput, 'embedding'>,
+): Promise<string> {
+  const content = validateText(input.content, 'content')
+  return saveMemory(store, {
+    ...input,
+    content,
+    embedding: await embed(content),
+  })
+}
+
 export async function searchMemories(
   store: MemoryStore,
   input: MemorySearchInput,
@@ -312,6 +327,22 @@ export async function searchMemories(
     minimumScore,
     limit,
   )
+
+  if (rows.length > 0) {
+    await store.run(
+      `
+        UPDATE memories
+        SET access_count = access_count + 1,
+            last_accessed = now(),
+            strength = LEAST(1.0, strength * 0.95 + 0.05),
+            updated_at = now()
+        WHERE workspace_key = ?
+          AND memory_id IN (${rows.map(() => '?').join(', ')})
+      `,
+      input.workspaceKey,
+      ...rows.map(row => row.memory_id),
+    )
+  }
 
   return rows.map(row => ({
     memoryId: row.memory_id,
