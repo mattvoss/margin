@@ -841,6 +841,8 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    dispatchAssistRun({ type: 'run_started', mode, runId: activeSessionId, model: settings?.active_endpoint ? settings.endpoints[settings.active_endpoint]?.model : undefined })
+    dispatchAssistRun({ type: 'stage_started', stage: mode === 'write' ? 'plan' : 'response', label: mode === 'write' ? 'Plan' : 'Response' })
     setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveHarness('none')
@@ -1098,21 +1100,25 @@ export function SimpleAssist() {
           } else if (status === 'write_started') {
             const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
             setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
+            ids.forEach((id) => dispatchAssistRun({ type: 'stage_started', stage: id, label: id }))
           } else if (status === 'write_questionnaire') {
             setWriteQuestions(Array.isArray(data.questions) ? data.questions as Array<{ id: string; question: string; options: string[] }> : [])
             setIsPlanning(false)
             setIsGenerating(false)
           } else if (status === 'write_stage_started') {
+            dispatchAssistRun({ type: 'stage_started', stage: String(data.stage || 'write') })
             setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'running' } : stage))
             setIsPlanning(true)
             setNoticeText(`Writing: ${String(data.stage || '')}`)
           } else if (status === 'write_stage_completed') {
+            dispatchAssistRun({ type: 'stage_completed', stage: String(data.stage || 'write'), output: typeof data.output === 'string' ? data.output : undefined })
             setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'done' } : stage))
           } else if (status === 'write_prose') {
             setIsPlanning(false)
             setIsGenerating(true)
             setStreamingChatText(prev => prev + String(data.chunk || ''))
           } else if (status === 'write_completed') {
+            dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
             setIsPlanning(false)
             setIsGenerating(false)
@@ -1182,6 +1188,7 @@ export function SimpleAssist() {
               })
               .catch((e) => setErrorText('Error: ' + (e as Error).message))
           } else if (status === 'applied') {
+            dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (data.model_used) {
               useEditorStore.getState().setActiveModel(data.model_used as string)
             }
@@ -1443,6 +1450,8 @@ export function SimpleAssist() {
           }
         },
         abortRef.current.signal
+        ,
+        (event) => dispatchAssistRun(event)
       )
       await fetchLogs()
     } catch (err) {
