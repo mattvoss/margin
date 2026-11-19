@@ -5,7 +5,7 @@ import { archiveMemory, memoryConfig, openMemoryStore } from '../server/memory.s
 import { DATA_ROOT } from '../server/env.server'
 import { requestSettings, requestWorkspaceDir } from '../server/storage.server'
 
-export const Route = createFileRoute('/api/memory/$')({
+export const Route = createFileRoute('/api/memory/$id')({
   server: {
     handlers: {
       DELETE: async ({ request, params }) => {
@@ -15,7 +15,7 @@ export const Route = createFileRoute('/api/memory/$')({
         try {
           const archived = await archiveMemory(store, {
             workspaceKey: workspace,
-            memoryId: dec(params._splat ?? ''),
+            memoryId: dec(params.id ?? ''),
           })
           return archived ? json({ status: 'ok' }) : err(404, 'Memory not found')
         } finally {

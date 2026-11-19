@@ -21,7 +21,7 @@ import { Route as ApiImagesGenerateRouteImport } from './routes/api.images.gener
 import { Route as ApiImagesLogsRouteImport } from './routes/api.images.logs'
 import { Route as ApiImagesRevealRouteImport } from './routes/api.images.reveal'
 import { Route as ApiImagesStylesRouteImport } from './routes/api.images.styles'
-import { Route as ApiMemorySplatRouteImport } from './routes/api.memory.$'
+import { Route as ApiMemoryIdRouteImport } from './routes/api.memory.$id'
 import { Route as ApiMemoryStatusRouteImport } from './routes/api.memory.status'
 import { Route as ApiMemoryTestRouteImport } from './routes/api.memory.test'
 import { Route as ApiSettingsEnvDefaultRouteImport } from './routes/api.settings.env-default'
@@ -112,9 +112,9 @@ const ApiImagesStylesRoute = ApiImagesStylesRouteImport.update({
   path: '/api/images/styles',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMemorySplatRoute = ApiMemorySplatRouteImport.update({
-  id: '/$',
-  path: '/$',
+const ApiMemoryIdRoute = ApiMemoryIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
   getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiMemoryStatusRoute = ApiMemoryStatusRouteImport.update({
@@ -281,7 +281,7 @@ export interface FileRoutesByFullPath {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
-  '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/$id': typeof ApiMemoryIdRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -325,7 +325,7 @@ export interface FileRoutesByTo {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
-  '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/$id': typeof ApiMemoryIdRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -370,7 +370,7 @@ export interface FileRoutesById {
   '/api/images/logs': typeof ApiImagesLogsRouteWithChildren
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
-  '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/$id': typeof ApiMemoryIdRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -416,7 +416,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
-    | '/api/memory/$'
+    | '/api/memory/$id'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -460,7 +460,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
-    | '/api/memory/$'
+    | '/api/memory/$id'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -504,7 +504,7 @@ export interface FileRouteTypes {
     | '/api/images/logs'
     | '/api/images/reveal'
     | '/api/images/styles'
-    | '/api/memory/$'
+    | '/api/memory/$id'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -651,11 +651,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiImagesStylesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/memory/$': {
-      id: '/api/memory/$'
-      path: '/$'
-      fullPath: '/api/memory/$'
-      preLoaderRoute: typeof ApiMemorySplatRouteImport
+    '/api/memory/$id': {
+      id: '/api/memory/$id'
+      path: '/$id'
+      fullPath: '/api/memory/$id'
+      preLoaderRoute: typeof ApiMemoryIdRouteImport
       parentRoute: typeof ApiMemoryRoute
     }
     '/api/memory/status': {
@@ -877,13 +877,13 @@ const ApiHarnessesRouteWithChildren = ApiHarnessesRoute._addFileChildren(
 )
 
 interface ApiMemoryRouteChildren {
-  ApiMemorySplatRoute: typeof ApiMemorySplatRoute
+  ApiMemoryIdRoute: typeof ApiMemoryIdRoute
   ApiMemoryStatusRoute: typeof ApiMemoryStatusRoute
   ApiMemoryTestRoute: typeof ApiMemoryTestRoute
 }
 
 const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
-  ApiMemorySplatRoute: ApiMemorySplatRoute,
+  ApiMemoryIdRoute: ApiMemoryIdRoute,
   ApiMemoryStatusRoute: ApiMemoryStatusRoute,
   ApiMemoryTestRoute: ApiMemoryTestRoute,
 }
