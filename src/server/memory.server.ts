@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { DATA_ROOT } from './env.server'
 
-export type MemoryKind = 'fact' | 'preference' | 'skill' | 'project_context' | 'instruction'
+export type MemoryKind = 'fact' | 'preference' | 'skill' | 'project_context' | 'instruction' | 'chapter' | 'character' | 'location' | 'style'
 
 export interface SaveMemoryInput {
   workspaceKey: string
@@ -495,6 +495,18 @@ export async function archiveMemory(
     workspaceKey,
   )
   return rows.length > 0
+}
+
+export async function archiveMemoriesBySource(
+  store: MemoryStore,
+  input: { workspaceKey: string; sourceMessage: string },
+): Promise<void> {
+  await store.run(
+    `UPDATE memories SET archived = true, updated_at = now()
+     WHERE workspace_key = ? AND source_message = ? AND archived = false`,
+    validateText(input.workspaceKey, 'workspaceKey'),
+    validateText(input.sourceMessage, 'sourceMessage'),
+  )
 }
 
 export async function consolidateMemories(store: MemoryStore, workspaceKey?: string): Promise<void> {

@@ -22,6 +22,7 @@ import { Route as ApiImagesLogsRouteImport } from './routes/api.images.logs'
 import { Route as ApiImagesRevealRouteImport } from './routes/api.images.reveal'
 import { Route as ApiImagesStylesRouteImport } from './routes/api.images.styles'
 import { Route as ApiMemoryIdRouteImport } from './routes/api.memory.$id'
+import { Route as ApiMemoryFileRouteImport } from './routes/api.memory.file'
 import { Route as ApiMemoryStatusRouteImport } from './routes/api.memory.status'
 import { Route as ApiMemoryTestRouteImport } from './routes/api.memory.test'
 import { Route as ApiSettingsEnvDefaultRouteImport } from './routes/api.settings.env-default'
@@ -115,6 +116,11 @@ const ApiImagesStylesRoute = ApiImagesStylesRouteImport.update({
 const ApiMemoryIdRoute = ApiMemoryIdRouteImport.update({
   id: '/$id',
   path: '/$id',
+  getParentRoute: () => ApiMemoryRoute,
+} as any)
+const ApiMemoryFileRoute = ApiMemoryFileRouteImport.update({
+  id: '/file',
+  path: '/file',
   getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiMemoryStatusRoute = ApiMemoryStatusRouteImport.update({
@@ -282,6 +288,7 @@ export interface FileRoutesByFullPath {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$id': typeof ApiMemoryIdRoute
+  '/api/memory/file': typeof ApiMemoryFileRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -326,6 +333,7 @@ export interface FileRoutesByTo {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$id': typeof ApiMemoryIdRoute
+  '/api/memory/file': typeof ApiMemoryFileRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -371,6 +379,7 @@ export interface FileRoutesById {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$id': typeof ApiMemoryIdRoute
+  '/api/memory/file': typeof ApiMemoryFileRoute
   '/api/memory/status': typeof ApiMemoryStatusRoute
   '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
@@ -417,6 +426,7 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$id'
+    | '/api/memory/file'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -461,6 +471,7 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$id'
+    | '/api/memory/file'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -505,6 +516,7 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$id'
+    | '/api/memory/file'
     | '/api/memory/status'
     | '/api/memory/test'
     | '/api/settings/env-default'
@@ -656,6 +668,13 @@ declare module '@tanstack/react-router' {
       path: '/$id'
       fullPath: '/api/memory/$id'
       preLoaderRoute: typeof ApiMemoryIdRouteImport
+      parentRoute: typeof ApiMemoryRoute
+    }
+    '/api/memory/file': {
+      id: '/api/memory/file'
+      path: '/file'
+      fullPath: '/api/memory/file'
+      preLoaderRoute: typeof ApiMemoryFileRouteImport
       parentRoute: typeof ApiMemoryRoute
     }
     '/api/memory/status': {
@@ -878,12 +897,14 @@ const ApiHarnessesRouteWithChildren = ApiHarnessesRoute._addFileChildren(
 
 interface ApiMemoryRouteChildren {
   ApiMemoryIdRoute: typeof ApiMemoryIdRoute
+  ApiMemoryFileRoute: typeof ApiMemoryFileRoute
   ApiMemoryStatusRoute: typeof ApiMemoryStatusRoute
   ApiMemoryTestRoute: typeof ApiMemoryTestRoute
 }
 
 const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
   ApiMemoryIdRoute: ApiMemoryIdRoute,
+  ApiMemoryFileRoute: ApiMemoryFileRoute,
   ApiMemoryStatusRoute: ApiMemoryStatusRoute,
   ApiMemoryTestRoute: ApiMemoryTestRoute,
 }

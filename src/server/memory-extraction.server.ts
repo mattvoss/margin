@@ -28,7 +28,7 @@ export interface MemoryExtractionConfig {
   embed: MemoryEmbedder
 }
 
-const kinds = new Set<MemoryKind>(['fact', 'preference', 'skill', 'project_context', 'instruction'])
+const kinds = new Set<MemoryKind>(['fact', 'preference', 'skill', 'project_context', 'instruction', 'chapter', 'character', 'location', 'style'])
 const MAX_CANDIDATES = 5
 const MAX_CONTENT_CHARS = 1000
 
@@ -58,6 +58,33 @@ export function parseMemoryCandidates(raw: string): MemoryCandidate[] {
     if (candidates.length >= MAX_CANDIDATES) break
   }
   return candidates
+}
+
+export function memoryKindForFile(path: string): MemoryKind | null {
+  const normalized = path.replaceAll('\\', '/').replace(/^\/+/, '')
+  const folder = normalized.split('/')[0]?.toLowerCase()
+  if (folder === 'chapters') return 'chapter'
+  if (folder === 'characters') return 'character'
+  if (folder === 'locations') return 'location'
+  if (folder === 'styles') return 'style'
+  return null
+}
+
+export async function extractFileMemories(input: {
+  path: string
+  content: string
+  settings?: LlmSettingsLike | null
+  model?: string | null
+}): Promise<MemoryCandidate[]> {
+  const kind = memoryKindForFile(input.path)
+  if (!kind || !input.content.trim()) return []
+  const client = loadLlmConfig(input.settings, input.model)
+  const response = await client.generateBlocking(
+    `Extract durable manuscript knowledge from this ${kind} file. Return JSON only as {"memories":[{"kind":"${kind}","content":"..."}]}. Keep only facts useful for future writing; do not include instructions, secrets, or temporary details.`,
+    `FILE: ${input.path}\n\n${input.content.slice(0, 40000)}`,
+    { maxTokens: 900, temperature: 0 },
+  )
+  return parseMemoryCandidates(response).filter(candidate => candidate.kind === kind)
 }
 
 export async function extractMemoryCandidates(input: MemoryExtractionInput): Promise<MemoryCandidate[]> {

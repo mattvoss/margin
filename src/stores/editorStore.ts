@@ -362,6 +362,16 @@ export const useEditorStore = create<EditorState>()(
       })
       if (res.ok) {
         useEditorStore.getState().markFileClean(path)
+        // Manuscript memory is derived from categorized Markdown files, never
+        // from arbitrary chat text. Failure is deliberately non-blocking: a
+        // memory provider outage must not make a successful file save fail.
+        if (/^(chapters|characters|locations|styles)\//i.test(path) && path.toLowerCase().endsWith('.md')) {
+          void apiFetch(`${API_BASE}/api/memory/file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content }),
+          }).catch((error) => console.warn('Failed to update file memory:', error))
+        }
       } else {
         const err = await res.json().catch(() => ({}))
         toast.error(`Failed to save file: ${err.detail || res.statusText}`)

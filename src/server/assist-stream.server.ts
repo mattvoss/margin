@@ -64,8 +64,7 @@ import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
 import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { recallMemoryContext } from './memory.server'
-import { createMemoryEmbedder, memoryConfig, openMemoryStore, saveMemoryText } from './memory.server'
-import { extractMemoryCandidates } from './memory-extraction.server'
+import { memoryConfig } from './memory.server'
 import { join } from 'node:path'
 import { DATA_ROOT } from './env.server'
 
@@ -1174,38 +1173,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokens_cached: chat.tokensCached,
             slot_id: chat.slotId,
           }, ws)
-          const extractionConfig = memoryConfig(process.env, settings)
-          if (extractionConfig.extractionEnabled && extractionConfig.embeddingUrl && extractionConfig.embeddingModel) {
-            void (async () => {
-              try {
-                const candidates = await extractMemoryCandidates({
-                  userMessage: payload.message,
-                  assistantMessage: finalChat,
-                  settings: settings as never,
-                })
-                if (candidates.length === 0) return
-                const memoryStore = await openMemoryStore(
-                  extractionConfig.databasePath ?? join(DATA_ROOT, 'memory.duckdb'),
-                )
-                try {
-                  for (const candidate of candidates) {
-                    await saveMemoryText(memoryStore, createMemoryEmbedder(extractionConfig), {
-                      workspaceKey: ws,
-                      sessionId: payload.session_id ?? null,
-                      kind: candidate.kind,
-                      content: candidate.content,
-                      sourceMessage: payload.message,
-                    })
-                  }
-                  send({ status: 'memory_saved', count: candidates.length })
-                } finally {
-                  await memoryStore.close()
-                }
-              } catch (error) {
-                console.warn(`Memory extraction unavailable: ${errMsg(error)}`)
-              }
-            })()
-          }
+          // Manuscript memory is updated from categorized file saves. Chat
+          // responses are intentionally not treated as durable story canon.
           finalized = true
           send({ status: 'chat', output: finalChat, model_used: chat.model })
         }

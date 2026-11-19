@@ -33,7 +33,7 @@ export const Route = createFileRoute('/api/memory')({
         const body = await readJson(request)
         const kind = body.kind
         const content = body.content
-        const validKinds = new Set<MemoryKind>(['fact', 'preference', 'skill', 'project_context', 'instruction'])
+         const validKinds = new Set<MemoryKind>(['fact', 'preference', 'skill', 'project_context', 'instruction', 'chapter', 'character', 'location', 'style'])
         if (typeof content !== 'string' || !content.trim()) return err(400, 'Memory content is required')
         if (typeof kind !== 'string' || !validKinds.has(kind as MemoryKind)) return err(400, 'Invalid memory kind')
 
