@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useReducer,
 } from 'react'
 import {
   ArrowUp,
@@ -31,6 +32,7 @@ import { useSettingsStore, type AppSettings } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { streamSSE } from '../lib/stream-sse'
+import { initialAssistRunState, reduceAssistStream } from '../lib/assist-stream'
 import {
   buildMentionAliases,
   findMentionRanges,
@@ -330,6 +332,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [lastPromptTokens, setLastPromptTokens] = useState(0)
   const [lastCompletionTokens, setLastCompletionTokens] = useState(0)
+  const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
 
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -587,6 +590,8 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     const fallbackModel = isDrafting
       ? settings.endpoints?.[draftEndpointId!]?.model || draftEndpointId!
       : modelLabel
+    dispatchAssistRun({ type: 'run_started', mode: isDrafting ? 'planner_draft' : 'planner', runId, model: fallbackModel, endpointId: isDrafting ? draftEndpointId : resolvedChoice?.kind === 'endpoint' ? resolvedChoice.id : undefined })
+    dispatchAssistRun({ type: 'stage_started', stage: isDrafting ? 'drafter' : 'planner', label: isDrafting ? 'Draft' : 'Plan' })
     const commit = (content: string, thought: string, usedModel: string | null) => {
       const trimmedContent = content.trim()
       const trimmedThinking = thought.trim()
@@ -652,11 +657,13 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               setStreamingThinking(thinking)
             }
           } else if (status === 'tool') {
+            dispatchAssistRun({ type: 'tool', stage: isDrafting ? 'drafter' : 'planner', name: String(data.tool || 'tool'), detail: typeof data.detail === 'string' ? data.detail : undefined })
             setToolRows((prev) => [
               ...prev,
               { tool: String(data.tool || 'tool'), detail: String(data.detail || '') },
             ])
           } else if (status === 'planner') {
+            dispatchAssistRun({ type: 'stage_completed', stage: isDrafting ? 'drafter' : 'planner', output: typeof data.output === 'string' ? data.output : undefined, reasoning: typeof data.thinking_output === 'string' ? data.thinking_output : undefined })
             if (typeof data.output === 'string' && data.output.trim()) {
               full = data.output
               setStreamingText(full)
@@ -676,10 +683,12 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
               setLastCompletionTokens(data.completion_tokens)
             }
           } else if (status === 'error') {
+            dispatchAssistRun({ type: 'failed', stage: isDrafting ? 'drafter' : 'planner', message: String(data.detail || 'The planner could not finish.') })
             setError(String(data.detail || 'The planner could not finish.'))
           }
         },
         abort.signal,
+        (event) => dispatchAssistRun(event),
       )
 
       if (runIdRef.current === runId) {
