@@ -22,6 +22,8 @@ import { Route as ApiImagesLogsRouteImport } from './routes/api.images.logs'
 import { Route as ApiImagesRevealRouteImport } from './routes/api.images.reveal'
 import { Route as ApiImagesStylesRouteImport } from './routes/api.images.styles'
 import { Route as ApiMemorySplatRouteImport } from './routes/api.memory.$'
+import { Route as ApiMemoryStatusRouteImport } from './routes/api.memory.status'
+import { Route as ApiMemoryTestRouteImport } from './routes/api.memory.test'
 import { Route as ApiSettingsEnvDefaultRouteImport } from './routes/api.settings.env-default'
 import { Route as ApiSettingsTestEndpointRouteImport } from './routes/api.settings.test-endpoint'
 import { Route as ApiSettingsTestImageProviderRouteImport } from './routes/api.settings.test-image-provider'
@@ -113,6 +115,16 @@ const ApiImagesStylesRoute = ApiImagesStylesRouteImport.update({
 const ApiMemorySplatRoute = ApiMemorySplatRouteImport.update({
   id: '/$',
   path: '/$',
+  getParentRoute: () => ApiMemoryRoute,
+} as any)
+const ApiMemoryStatusRoute = ApiMemoryStatusRouteImport.update({
+  id: '/status',
+  path: '/status',
+  getParentRoute: () => ApiMemoryRoute,
+} as any)
+const ApiMemoryTestRoute = ApiMemoryTestRouteImport.update({
+  id: '/test',
+  path: '/test',
   getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiSettingsEnvDefaultRoute = ApiSettingsEnvDefaultRouteImport.update({
@@ -270,6 +282,8 @@ export interface FileRoutesByFullPath {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/status': typeof ApiMemoryStatusRoute
+  '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -312,6 +326,8 @@ export interface FileRoutesByTo {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/status': typeof ApiMemoryStatusRoute
+  '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -355,6 +371,8 @@ export interface FileRoutesById {
   '/api/images/reveal': typeof ApiImagesRevealRoute
   '/api/images/styles': typeof ApiImagesStylesRoute
   '/api/memory/$': typeof ApiMemorySplatRoute
+  '/api/memory/status': typeof ApiMemoryStatusRoute
+  '/api/memory/test': typeof ApiMemoryTestRoute
   '/api/settings/env-default': typeof ApiSettingsEnvDefaultRoute
   '/api/settings/test-endpoint': typeof ApiSettingsTestEndpointRoute
   '/api/settings/test-image-provider': typeof ApiSettingsTestImageProviderRoute
@@ -399,6 +417,8 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$'
+    | '/api/memory/status'
+    | '/api/memory/test'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -441,6 +461,8 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$'
+    | '/api/memory/status'
+    | '/api/memory/test'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -483,6 +505,8 @@ export interface FileRouteTypes {
     | '/api/images/reveal'
     | '/api/images/styles'
     | '/api/memory/$'
+    | '/api/memory/status'
+    | '/api/memory/test'
     | '/api/settings/env-default'
     | '/api/settings/test-endpoint'
     | '/api/settings/test-image-provider'
@@ -632,6 +656,20 @@ declare module '@tanstack/react-router' {
       path: '/$'
       fullPath: '/api/memory/$'
       preLoaderRoute: typeof ApiMemorySplatRouteImport
+      parentRoute: typeof ApiMemoryRoute
+    }
+    '/api/memory/status': {
+      id: '/api/memory/status'
+      path: '/status'
+      fullPath: '/api/memory/status'
+      preLoaderRoute: typeof ApiMemoryStatusRouteImport
+      parentRoute: typeof ApiMemoryRoute
+    }
+    '/api/memory/test': {
+      id: '/api/memory/test'
+      path: '/test'
+      fullPath: '/api/memory/test'
+      preLoaderRoute: typeof ApiMemoryTestRouteImport
       parentRoute: typeof ApiMemoryRoute
     }
     '/api/settings/env-default': {
@@ -840,10 +878,14 @@ const ApiHarnessesRouteWithChildren = ApiHarnessesRoute._addFileChildren(
 
 interface ApiMemoryRouteChildren {
   ApiMemorySplatRoute: typeof ApiMemorySplatRoute
+  ApiMemoryStatusRoute: typeof ApiMemoryStatusRoute
+  ApiMemoryTestRoute: typeof ApiMemoryTestRoute
 }
 
 const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
   ApiMemorySplatRoute: ApiMemorySplatRoute,
+  ApiMemoryStatusRoute: ApiMemoryStatusRoute,
+  ApiMemoryTestRoute: ApiMemoryTestRoute,
 }
 
 const ApiMemoryRouteWithChildren = ApiMemoryRoute._addFileChildren(

@@ -1049,6 +1049,12 @@ export function SimpleAssist() {
           } else if (status === 'generating') {
             setIsPlanning(false)
             setIsGenerating(true)
+          } else if (status === 'memory_recall') {
+            const state = String(data.state || '')
+            setNoticeText(state === 'used' ? 'Memory recalled relevant workspace context.' : state === 'none' ? 'Memory checked: no relevant workspace memories.' : 'Memory unavailable for this chat.')
+          } else if (status === 'memory_saved') {
+            const count = Number(data.count) || 0
+            if (count > 0) setNoticeText(`Memory saved ${count} new ${count === 1 ? 'item' : 'items'}.`)
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
           } else if (status === 'post_processing_start') {

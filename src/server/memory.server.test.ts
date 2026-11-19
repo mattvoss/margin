@@ -13,6 +13,7 @@ import {
   saveMemory,
   saveMemoryText,
   consolidateMemories,
+  getMemoryStatus,
   searchMemories,
 } from './memory.server'
 
@@ -82,6 +83,27 @@ describe('memory store', () => {
       ...settings,
       endpoints: { local: { ...settings.endpoints.local, embedding_model: '' } },
     }).enabled).toBe(false)
+  })
+
+  it('reports readiness and workspace memory counts without exposing embeddings', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    await saveMemory(store, {
+      workspaceKey: 'workspace-a', kind: 'fact', content: 'A remembered fact', embedding: [1, 0],
+    })
+    const status = await getMemoryStatus(store, {
+      enabled: true, extractionEnabled: true, databasePath: undefined,
+      embeddingUrl: 'http://embed.test/v1', embeddingApiKey: 'secret', embeddingModel: 'embed-model',
+      topK: 5, minimumScore: 0.45, maxPromptChars: 6000,
+    }, 'workspace-a')
+    expect(status).toMatchObject({
+      state: 'ready', enabled: true, recallEnabled: true, extractionEnabled: true,
+      embeddingConfigured: true, embeddingModel: 'embed-model', activeCount: 1,
+      archivedCount: 0, workspaceScoped: true,
+    })
+    expect(JSON.stringify(status)).not.toContain('secret')
+    await closeMemoryStore(store)
   })
 
   it('creates an embedder for an OpenAI-compatible endpoint', async () => {

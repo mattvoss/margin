@@ -81,6 +81,22 @@ export interface MemoryConfig {
   maxPromptChars: number
 }
 
+export type MemoryStatusState = 'off' | 'needs_embedding_model' | 'ready' | 'unavailable'
+
+export interface MemoryStatus {
+  state: MemoryStatusState
+  enabled: boolean
+  recallEnabled: boolean
+  extractionEnabled: boolean
+  embeddingConfigured: boolean
+  embeddingModel?: string
+  activeCount: number
+  archivedCount: number
+  lastSavedAt: string | null
+  lastRecalledAt: string | null
+  workspaceScoped: true
+}
+
 export interface MemorySettings {
   active_endpoint?: string | null
   endpoints?: Record<string, {
@@ -128,6 +144,48 @@ export function memoryConfig(
     topK: Math.min(Math.floor(positiveNumber(source.MARGIN_MEMORY_TOP_K, 5)), 50),
     minimumScore: nonNegativeNumber(source.MARGIN_MEMORY_MIN_SCORE, 0.45),
     maxPromptChars: Math.floor(positiveNumber(source.MARGIN_MEMORY_MAX_PROMPT_CHARS, 6000)),
+  }
+}
+
+export function unavailableMemoryStatus(config: MemoryConfig, requestedEnabled = config.enabled): MemoryStatus {
+  const configured = Boolean(config.embeddingUrl && config.embeddingModel)
+  return {
+    state: !requestedEnabled ? 'off' : !configured ? 'needs_embedding_model' : 'unavailable',
+    enabled: config.enabled,
+    recallEnabled: config.enabled,
+    extractionEnabled: config.enabled && config.extractionEnabled,
+    embeddingConfigured: configured,
+    ...(config.embeddingModel ? { embeddingModel: config.embeddingModel } : {}),
+    activeCount: 0,
+    archivedCount: 0,
+    lastSavedAt: null,
+    lastRecalledAt: null,
+    workspaceScoped: true,
+  }
+}
+
+export async function getMemoryStatus(store: MemoryStore, config: MemoryConfig, workspaceKey: string): Promise<MemoryStatus> {
+  const counts = await store.all<{
+    archived: boolean
+    count: number
+    last_updated: string | null
+  }>(
+    `
+      SELECT archived, count(*) AS count, max(updated_at) AS last_updated
+      FROM memories
+      WHERE workspace_key = ?
+      GROUP BY archived
+    `,
+    validateText(workspaceKey, 'workspaceKey'),
+  )
+  const active = counts.find(row => !row.archived)
+  const archived = counts.find(row => row.archived)
+  return {
+    ...unavailableMemoryStatus(config),
+    state: config.enabled && config.embeddingUrl && config.embeddingModel ? 'ready' : unavailableMemoryStatus(config).state,
+    activeCount: Number(active?.count ?? 0),
+    archivedCount: Number(archived?.count ?? 0),
+    lastSavedAt: active?.last_updated ? String(active.last_updated) : null,
   }
 }
 

@@ -845,10 +845,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
              expandedTagged: tagged,
            })
            let memoryContext = ''
-           try {
-             memoryContext = await recallMemoryContext(ws, payload.message, memoryConfig(process.env, settings))
-           } catch (error) {
-             console.warn(`Memory recall unavailable: ${errMsg(error)}`)
+            try {
+              memoryContext = await recallMemoryContext(ws, payload.message, memoryConfig(process.env, settings))
+              send({ status: 'memory_recall', state: memoryContext ? 'used' : 'none' })
+            } catch (error) {
+              console.warn(`Memory recall unavailable: ${errMsg(error)}`)
+              send({ status: 'memory_recall', state: 'unavailable' })
            }
            const chatSystemPrompt = memoryContext
              ? `${composed.system}\n\n${memoryContext}`
@@ -1104,6 +1106,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                       sourceMessage: payload.message,
                     })
                   }
+                  send({ status: 'memory_saved', count: candidates.length })
                 } finally {
                   await memoryStore.close()
                 }

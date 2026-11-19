@@ -90,7 +90,7 @@ interface SettingsState {
   selectedWorkspaceDir: () => string | null
 }
 
-export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'post-processing' | 'endpoints' | 'harnesses' | 'images'
+export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'memory' | 'post-processing' | 'endpoints' | 'harnesses' | 'images'
 
 /** First paint before localStorage is consulted: legacy builds cached only the
     workspace dir, so migrate that and otherwise start from defaults (a fresh
