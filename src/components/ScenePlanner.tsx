@@ -33,12 +33,15 @@ import { API_BASE, apiFetch } from '../lib/api'
 import { streamSSE } from '../lib/stream-sse'
 import {
   buildMentionAliases,
-  filterMentionFiles,
   findMentionRanges,
   mentionTextFor,
   type ReferenceFile,
 } from '../lib/fileMentions'
 import { parseMentionQuery } from '../lib/mentionQuery'
+import {
+  plannerMentionOptions,
+  type PlannerMentionOption,
+} from '../lib/scenePlannerMentions'
 import { AssistMarkdown } from './AssistMarkdown'
 import { Button } from '@/components/ui/button'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
@@ -346,9 +349,9 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     }
     return [...files.values()]
   }, [availableFiles, openedFiles])
-  const filteredMentionFiles = useMemo(
-    () => filterMentionFiles(mentionFiles, mentionQuery, currentFilePath),
-    [mentionFiles, mentionQuery, currentFilePath],
+  const mentionOptions = useMemo(
+    () => plannerMentionOptions(mentionFiles, mentionQuery, null),
+    [mentionFiles, mentionQuery],
   )
 
   const resolvedChoice = useMemo(
@@ -722,7 +725,17 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
     editor.chain().focus().insertContent(message.content).run()
   }
 
-  const handleMentionSelect = (file: ReferenceFile) => {
+  const handleMentionSelect = (option: PlannerMentionOption) => {
+    if (option.kind === 'action') {
+      setMentionOpen(false)
+      if (option.id === 'characters') {
+        setCharactersDialogOpen(true)
+        return
+      }
+      if (option.id === 'draft-scene') setReplyAgent('drafter')
+      if (option.prompt) setComposerText(option.prompt)
+      return
+    }
     const editor = inputRef.current
     const selection = window.getSelection()
     if (!editor || !selection?.rangeCount) return
@@ -801,10 +814,10 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (mentionOpen && filteredMentionFiles.length > 0) {
+    if (mentionOpen && mentionOptions.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        setHighlightedMention((index) => Math.min(index + 1, filteredMentionFiles.length - 1))
+        setHighlightedMention((index) => Math.min(index + 1, mentionOptions.length - 1))
         return
       }
       if (event.key === 'ArrowUp') {
@@ -814,7 +827,7 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
       }
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
-        handleMentionSelect(filteredMentionFiles[highlightedMention])
+        handleMentionSelect(mentionOptions[highlightedMention])
         return
       }
     }
@@ -1059,27 +1072,32 @@ export function ScenePlanner({ open, onOpenChange, harnessList }: ScenePlannerPr
           <InputGroup>
             {mentionOpen && (
               <div className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-50 max-h-[220px] overflow-y-auto rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-1 shadow-lg">
-                {filteredMentionFiles.length > 0 ? (
-                  filteredMentionFiles.map((file, index) => (
+                {mentionOptions.length > 0 ? (
+                  mentionOptions.map((option, index) => (
                     <button
-                      key={file.path}
+                      key={option.kind === 'file' ? option.path : option.id}
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleMentionSelect(file)}
+                      onClick={() => handleMentionSelect(option)}
                       onMouseEnter={() => setHighlightedMention(index)}
                       className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left ${index === highlightedMention ? 'bg-[var(--bg-hover)]' : ''}`}
                     >
-                      <span className="truncate text-[11px] font-medium text-[var(--text)]">
-                        {file.name}
-                      </span>
-                      <span className="truncate text-[10px] text-[var(--text-muted)]">
-                        {file.path}
-                      </span>
+                      {option.kind === 'file' ? (
+                        <>
+                          <span className="truncate text-[11px] font-medium text-[var(--text)]">{option.name}</span>
+                          <span className="truncate text-[10px] text-[var(--text-muted)]">{option.path}</span>
+                        </>
+                      ) : (
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate text-[11px] font-medium text-[var(--text)]">{option.label}</span>
+                          <span className="truncate text-[10px] text-[var(--text-muted)]">{option.description}</span>
+                        </span>
+                      )}
                     </button>
                   ))
                 ) : (
                   <div className="px-2 py-2 text-[11px] text-[var(--text-muted)]">
-                    No matching workspace files
+                     No matching files or actions
                   </div>
                 )}
               </div>
