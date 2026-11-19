@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo, useReducer } from 'react'
 import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Circle, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -9,6 +9,7 @@ import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
 import { toDisplaySrc } from '../lib/media'
 import { streamSSE } from '../lib/stream-sse'
+import { initialAssistRunState, reduceAssistStream } from '../lib/assist-stream'
 import { applyHarnessResult } from '../lib/applyHarnessResult'
 import { scheduleFileRefresh } from '../lib/refreshFiles'
 import { restorePromptMentions, type MentionTarget } from '../lib/promptMentions'
@@ -378,6 +379,7 @@ export function SimpleAssist() {
   const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
   const [writeQuestions, setWriteQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([])
   const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
+  const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
   const [postProcessStatus, setPostProcessStatus] = useState<{
     index: number
     total: number
@@ -1264,6 +1266,8 @@ export function SimpleAssist() {
           }
         },
         abortRef.current.signal
+        ,
+        (event) => dispatchAssistRun(event)
       )
       await fetchLogs()
     } catch (err) {
@@ -1308,6 +1312,8 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    dispatchAssistRun({ type: 'run_started', mode: 'chat', runId: activeSessionId, model: settings?.active_endpoint ? settings.endpoints[settings.active_endpoint]?.model : undefined })
+    dispatchAssistRun({ type: 'stage_started', stage: 'response', label: 'Response' })
     setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
@@ -2482,6 +2488,9 @@ export function SimpleAssist() {
                       {streamingThinkingText && (
                         <ReasoningTrace text={streamingThinkingText} running />
                       )}
+                      {mode === 'chat' && assistRun.stages.response?.reasoning && assistRun.stages.response.reasoning !== streamingThinkingText && (
+                        <ReasoningTrace text={assistRun.stages.response.reasoning} running={!assistRun.complete} />
+                      )}
 
                       {mode === 'write' && writeStages.length > 0 && (
                         <Trace className="gap-1 border-t border-[var(--border-subtle)] pt-1">
@@ -2497,9 +2506,9 @@ export function SimpleAssist() {
                         </Trace>
                       )}
 
-                      {(mode === 'chat' || mode === 'write' || activeHarness !== 'none') && streamingChatText && (
+                      {(mode === 'chat' || mode === 'write' || activeHarness !== 'none') && (streamingChatText || assistRun.finalOutput) && (
                         <>
-                          <AssistMarkdown streaming className="assist-markdown">{streamingChatText}</AssistMarkdown>
+                          <AssistMarkdown streaming={!assistRun.complete} className="assist-markdown">{streamingChatText || assistRun.finalOutput}</AssistMarkdown>
                           <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                             {mode !== 'write' && <Tooltip>
                               <TooltipTrigger render={
