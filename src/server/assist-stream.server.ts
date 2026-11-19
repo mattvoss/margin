@@ -57,6 +57,7 @@ import {
   createAssistOrchestratorAgent,
   createAssistPlannerAgent,
   createAssistPostProcessAgent,
+  createWriteStageAgent,
   type AssistAgentTelemetry,
 } from './assist-agents.server'
 import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
@@ -528,6 +529,77 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             completion_tokens: completionTokens,
             model_used: client.lastModelUsed,
           })
+          c.close()
+          return
+        }
+
+        if (mode === 'write') {
+          if (!payload.write_answers && payload.message.trim().split(/\s+/).length < 8) {
+            send({
+              status: 'write_questionnaire',
+              questions: [
+                { id: 'goal', question: 'What should this writing accomplish?', options: ['Continue the scene', 'Rewrite the selected passage', 'Start a new scene'] },
+                { id: 'tone', question: 'What tone should the prose use?', options: ['Quiet and intimate', 'Tense and suspenseful', 'Fast and action-driven'] },
+              ],
+            })
+            c.close()
+            return
+          }
+          const stages = [
+            ['plan', 'Plan the scene: establish purpose, beats, point of view, tense, and constraints.'],
+            ['characters', 'Analyze character goals, emotions, behavior, consistency, and arcs for this scene.'],
+            ['clothing', 'Determine only relevant clothing, appearance, physical detail, and continuity.'],
+            ['speech', 'Plan dialogue, voice, subtext, and conversational movement where appropriate.'],
+            ['plot', 'Check causality, continuity, stakes, and escalation. Identify and repair weak links.'],
+            ['prose', 'Write the finished story scene. Return only the prose of the story: no headings, analysis, notes, or commentary.'],
+          ] as const
+          const context = [
+            `User request:\n${payload.message}`,
+            payload.selected_text ? `Selected passage:\n${payload.selected_text}` : '',
+            payload.content ? `Current document:\n${payload.content.slice(-30000)}` : '',
+            payload.write_answers ? `Clarification answers:\n${JSON.stringify(payload.write_answers)}` : '',
+            tagged.length ? `Referenced files:\n${tagged.join('\n')}` : '',
+          ].filter(Boolean).join('\n\n')
+          let prior = ''
+          let finalOutput = ''
+          send({ status: 'write_started', stages: stages.map(([id]) => id) })
+          for (const [id, role] of stages) {
+            if (signal.aborted) break
+            send({ status: 'write_stage_started', stage: id })
+            const prompt = `${role}\n\n${context}\n\n${prior ? `Prior stage notes:\n${prior}` : ''}`
+            const agent = createWriteStageAgent({
+              endpoint: {
+                model: client.model,
+                baseUrl: client.baseUrl,
+                apiKey: client.apiKey,
+              },
+              instructions: id === 'prose'
+                ? 'You are the final prose writer. Follow the request and notes, but output only finished story prose.'
+                : `You are the ${id} subagent in a writing pipeline. Return concise useful notes for the next stage.`,
+              maxOutputTokens: id === 'prose' ? maxToks : 1800,
+            })
+            const result = await agent.stream({
+              messages: [{ role: 'user', content: prompt }],
+              abortSignal: signal,
+            })
+            let output = ''
+            for await (const part of result.fullStream) {
+              if (signal.aborted) break
+              if (part.type === 'reasoning-delta') {
+                send({ status: 'write_reasoning', stage: id, chunk: part.text })
+              } else if (part.type === 'text-delta') {
+                output += part.text
+                if (id === 'prose') send({ status: 'write_prose', chunk: part.text })
+              }
+            }
+            output = output.trim() || (await result.text).trim()
+            prior += `\n\n${id.toUpperCase()}:\n${output}`
+            if (id === 'prose') finalOutput = output
+            send({ status: 'write_stage_completed', stage: id, output: id === 'prose' ? undefined : output })
+          }
+          if (!signal.aborted) {
+            send({ status: 'write_completed', output: finalOutput })
+          }
           c.close()
           return
         }

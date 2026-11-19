@@ -180,6 +180,20 @@ export function createAssistEditAgent(input: {
   })
 }
 
+export function createWriteStageAgent(input: {
+  endpoint: AssistAgentEndpoint
+  instructions: string
+  maxOutputTokens?: number
+}) {
+  return new ToolLoopAgent({
+    model: createAssistAgentModel(input.endpoint),
+    instructions: input.instructions,
+    stopWhen: isStepCount(1),
+    temperature: input.instructions.includes('finished story prose') ? 0.8 : 0.35,
+    maxOutputTokens: input.maxOutputTokens ?? 1800,
+  })
+}
+
 /** Chat subagent: streams a chat reply for the current conversation. */
 export function createAssistChatAgent(input: {
   endpoint: AssistAgentEndpoint

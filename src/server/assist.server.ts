@@ -100,6 +100,7 @@ export interface SimpleAssistRequest {
   harness: string | null
   /** Override the active endpoint for this request (planner model picker). */
   endpoint_id: string | null
+  write_answers?: Record<string, string | string[]> | null
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -124,6 +125,9 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     skip_planner: input.skip_planner === true,
     harness: typeof input.harness === 'string' ? input.harness : 'api',
     endpoint_id: str(input.endpoint_id) ?? null,
+    write_answers: input.write_answers && typeof input.write_answers === 'object'
+      ? input.write_answers as Record<string, string | string[]>
+      : null,
   }
 }
 

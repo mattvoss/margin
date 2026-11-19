@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
-import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Circle, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -374,6 +374,9 @@ export function SimpleAssist() {
   const [plannerContextFiles, setPlannerContextFiles] = useState<string[]>([])
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
+  const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' }>>([])
+  const [writeQuestions, setWriteQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([])
+  const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
   const [postProcessStatus, setPostProcessStatus] = useState<{
     index: number
     total: number
@@ -427,7 +430,7 @@ export function SimpleAssist() {
   const [imageLogs, setImageLogs] = useState<ImageLogEntry[] | null>(null)
   const [imageLoadCount, setImageLoadCount] = useState(10)
   const [selectedImage, setSelectedImage] = useState<ImageLogEntry | null>(null)
-  const [mode, setMode] = useState<'chat' | 'edit'>('edit')
+  const [mode, setMode] = useState<'chat' | 'edit' | 'write'>('edit')
   const [activeHarness, setActiveHarness] = useState('none')
   const [harnessList, setHarnessList] = useState<Array<{ id: string; name: string; installed: boolean; version: string | null }>>([])
   const [noticeText, setNoticeText] = useState('')
@@ -441,7 +444,7 @@ export function SimpleAssist() {
   if (previousDefaultMode !== settings?.default_mode) {
     setPreviousDefaultMode(settings?.default_mode)
     if (settings?.default_mode) {
-      setMode(settings.default_mode as 'chat' | 'edit')
+      setMode(settings.default_mode as 'chat' | 'edit' | 'write')
     }
   }
   // Active endpoint display name (same `id.replace('_', ' ')` convention as
@@ -977,7 +980,7 @@ export function SimpleAssist() {
     harnessBaseRef.current = useEditorStore.getState().content
     setActiveHarness(harness)
 
-    if (inputRef.current) {
+    if (inputRef.current && mode !== 'write') {
       inputRef.current.textContent = ''
       setInstructionText('')
     }
@@ -1000,13 +1003,14 @@ export function SimpleAssist() {
       const body: Record<string, unknown> = {
         content: content,
         message: cleanMessage,
-        mode: 'edit',
+        mode: mode === 'write' ? 'write' : 'edit',
         harness: harness,
         endpoint_id: settings?.active_endpoint ?? null,
         session_id: activeSessionId,
         ref_files: currentRefFiles.map(f => ({ name: f.name, path: f.path })),
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
-        active_filename: activeFilename,
+         active_filename: activeFilename,
+         ...(mode === 'write' ? { write_answers: Object.keys(writeAnswers).length ? writeAnswers : null } : {}),
       }
 
       if (localHasSelection) {
@@ -1085,10 +1089,35 @@ export function SimpleAssist() {
             if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
             }
+          } else if (status === 'write_reasoning') {
+            setStreamingThinkingText(prev => prev + String(data.chunk || ''))
+          } else if (status === 'write_started') {
+            const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
+            setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
+          } else if (status === 'write_questionnaire') {
+            setWriteQuestions(Array.isArray(data.questions) ? data.questions as Array<{ id: string; question: string; options: string[] }> : [])
+            setIsPlanning(false)
+            setIsGenerating(false)
+          } else if (status === 'write_stage_started') {
+            setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'running' } : stage))
+            setIsPlanning(true)
+            setNoticeText(`Writing: ${String(data.stage || '')}`)
+          } else if (status === 'write_stage_completed') {
+            setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'done' } : stage))
+          } else if (status === 'write_prose') {
+            setIsPlanning(false)
+            setIsGenerating(true)
+            setStreamingChatText(prev => prev + String(data.chunk || ''))
+          } else if (status === 'write_completed') {
+            if (typeof data.output === 'string') setStreamingChatText(data.output)
+            setIsPlanning(false)
+            setIsGenerating(false)
           } else if (status === 'chunk') {
             setIsPlanning(false)
             setIsGenerating(true)
-            if (harness !== 'none') {
+            if (mode === 'write') {
+              setStreamingChatText(prev => prev + (data.chunk as string))
+            } else if (harness !== 'none') {
               // Harness stdout is progress output — display only, never insert
               setStreamingChatText(prev => prev + (data.chunk as string))
             } else {
@@ -1251,7 +1280,7 @@ export function SimpleAssist() {
       setPlannerContextFiles([])
       setActiveHarness('none')
       setPostProcessStatus(null)
-      if (!wasAbortedRef.current) {
+      if (!wasAbortedRef.current && mode !== 'write') {
         setStreamingThinkingText('')
         setStreamingChatText('')
         setActiveInstruction('')
@@ -1612,6 +1641,33 @@ export function SimpleAssist() {
               )}
             </div>
           )}
+          {mode === 'write' && writeQuestions.length > 0 && (
+            <div className="mx-3 mb-2 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2">
+              <div className="mb-2 text-[11px] font-medium text-[var(--text)]">A few details will help shape the prose</div>
+              {writeQuestions.map((question) => (
+                <label key={question.id} className="mb-2 block text-[10px] text-[var(--text-muted)]">
+                  <span className="mb-1 block">{question.question}</span>
+                  <select
+                    className="w-full rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)]"
+                    value={writeAnswers[question.id] ?? ''}
+                    onChange={(event) => setWriteAnswers(prev => ({ ...prev, [question.id]: event.target.value }))}
+                  >
+                    <option value="">Choose an answer…</option>
+                    {question.options.map(option => <option key={option} value={option}>{option}</option>)}
+                    <option value="other">Other</option>
+                  </select>
+                  {(writeAnswers[question.id] === 'other' || writeAnswers[question.id]?.startsWith('other:')) && (
+                    <input
+                      className="mt-1 w-full rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)]"
+                      placeholder="Tell us more…"
+                      value={writeAnswers[question.id] === 'other' ? '' : writeAnswers[question.id]?.slice(6) ?? ''}
+                      onChange={(event) => setWriteAnswers(prev => ({ ...prev, [question.id]: `other:${event.target.value}` }))}
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
           <div
             ref={inputRef}
             contentEditable
@@ -1622,14 +1678,14 @@ export function SimpleAssist() {
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onMouseDown={handleContentMouseDown}
-            data-placeholder={mode === 'chat' ? 'Ask a question…' : 'Describe changes…'}
-            aria-label={mode === 'chat' ? 'AI assistant message' : 'Edit instruction'}
+             data-placeholder={mode === 'chat' ? 'Ask a question…' : mode === 'write' ? 'Describe what to write…' : 'Describe changes…'}
+             aria-label={mode === 'chat' ? 'AI assistant message' : mode === 'write' ? 'Writing instruction' : 'Edit instruction'}
             className="min-h-[52px] max-h-[180px] w-full flex-1 self-stretch overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-left text-[12px] leading-relaxed text-[var(--text)] outline-none empty:before:pointer-events-none empty:before:text-[var(--text-muted)] empty:before:content-[attr(data-placeholder)]"
           />
           <InputGroupAddon align="block-end">
             <DropdownMenu open={showHarnessDropdown} onOpenChange={setShowHarnessDropdown}>
               <DropdownMenuTrigger
-                aria-label={`Mode: ${mode === 'edit' ? 'Edit' : 'Chat'}; model: ${composerModelLabel}`}
+                 aria-label={`Mode: ${mode === 'edit' ? 'Edit' : mode === 'write' ? 'Write' : 'Chat'}; model: ${composerModelLabel}`}
                 render={
                   <InputGroupButton
                     size="sm"
@@ -1637,7 +1693,7 @@ export function SimpleAssist() {
                     className="max-w-[230px] justify-start gap-1.5"
                   >
                     <span className="truncate">
-                      {mode === 'edit' ? 'Edit' : 'Chat'} · {composerModelLabel}
+                      {mode === 'edit' ? 'Edit' : mode === 'write' ? 'Write' : 'Chat'} · {composerModelLabel}
                     </span>
                     <ChevronDown className="size-3.5 opacity-60 shrink-0" />
                   </InputGroupButton>
@@ -1646,7 +1702,7 @@ export function SimpleAssist() {
               <DropdownMenuContent align="start" side="top" className="w-64">
                 <DropdownMenuRadioGroup
                   value={mode}
-                  onValueChange={(value) => setMode(value as 'chat' | 'edit')}
+                   onValueChange={(value) => setMode(value as 'chat' | 'edit' | 'write')}
                 >
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Mode</DropdownMenuLabel>
@@ -1657,6 +1713,10 @@ export function SimpleAssist() {
                     <DropdownMenuRadioItem value="chat">
                       <ListTodo className="size-3.5" />
                       Chat
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="write">
+                      <Brain className="size-3.5" />
+                      Write
                     </DropdownMenuRadioItem>
                   </DropdownMenuGroup>
                 </DropdownMenuRadioGroup>
@@ -1822,10 +1882,10 @@ export function SimpleAssist() {
                 className="rounded-full"
                 disabled={!instructionText}
                 onClick={() => {
-                  if (mode === 'chat') {
-                    void handleChat()
-                  } else {
-                    void handleEdit()
+                   if (mode === 'chat') {
+                     void handleChat()
+                   } else {
+                     void handleEdit()
                   }
                 }}
                 aria-label={mode === 'chat' ? 'Send message' : 'Apply edit'}
@@ -2420,11 +2480,22 @@ export function SimpleAssist() {
                         <ReasoningTrace text={streamingThinkingText} running />
                       )}
 
-                      {(mode === 'chat' || activeHarness !== 'none') && streamingChatText && (
+                      {mode === 'write' && writeStages.length > 0 && (
+                        <Trace className="gap-1 border-t border-[var(--border-subtle)] pt-1">
+                          {writeStages.map((stage) => (
+                            <TraceLine key={stage.id} status={stage.status === 'running' ? 'running' : undefined} className="text-[10px]">
+                              <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : <Circle className="size-3" />}</TraceIcon>
+                              <TraceTitle className="capitalize">{stage.id}</TraceTitle>
+                            </TraceLine>
+                          ))}
+                        </Trace>
+                      )}
+
+                      {(mode === 'chat' || mode === 'write' || activeHarness !== 'none') && streamingChatText && (
                         <>
                           <AssistMarkdown streaming className="assist-markdown">{streamingChatText}</AssistMarkdown>
                           <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                            <Tooltip>
+                            {mode !== 'write' && <Tooltip>
                               <TooltipTrigger render={
                                 <Button
                                   variant="ghost"
@@ -2441,7 +2512,7 @@ export function SimpleAssist() {
                                 </Button>
                               } />
                               <TooltipContent>Insert at cursor</TooltipContent>
-                            </Tooltip>
+                            </Tooltip>}
                             <Tooltip>
                               <TooltipTrigger render={
                                 <Button
