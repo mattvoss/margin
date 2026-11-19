@@ -1600,7 +1600,7 @@ export function SimpleAssist() {
     }
   }, [pendingEditSelection, handleInput, setPendingEditSelection])
 
-  const hasHistory = filteredLogs.length > 0 || isWorking || !!errorText || !!noticeText
+  const hasHistory = filteredLogs.length > 0 || isWorking || (mode === 'write' && (!!streamingChatText || writeStages.length > 0)) || !!errorText || !!noticeText
 
   const renderInputCard = () => {
     const activeEndpoint = settings?.active_endpoint
@@ -2417,7 +2417,7 @@ export function SimpleAssist() {
                 )
               })}
 
-              {isWorking && activeInstruction && (
+              {((isWorking && activeInstruction) || (mode === 'write' && (streamingChatText || writeStages.length > 0 || Object.keys(writeReasoning).length > 0))) && (
                 <>
                   <MessageScrollerItem messageId={`${activeSessionId}:active-user`} scrollAnchor>
                     <Message align="end">
