@@ -77,7 +77,7 @@ import type { FileEntry } from '../stores/editorStore'
 interface SimpleLogEntry {
   id: string
   timestamp: string
-  mode: 'chat' | 'edit_plan' | 'edit_write' | 'planner' | 'planner_draft'
+  mode: 'chat' | 'edit' | 'write' | 'edit_plan' | 'edit_write' | 'planner' | 'planner_draft'
   session_id?: string
   system_prompt: string
   user_prompt: string
@@ -375,6 +375,7 @@ export function SimpleAssist() {
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
   const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' }>>([])
+  const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
   const [writeQuestions, setWriteQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([])
   const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
   const [postProcessStatus, setPostProcessStatus] = useState<{
@@ -1090,7 +1091,8 @@ export function SimpleAssist() {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
             }
           } else if (status === 'write_reasoning') {
-            setStreamingThinkingText(prev => prev + String(data.chunk || ''))
+            const stage = String(data.stage || 'write')
+            setWriteReasoning(prev => ({ ...prev, [stage]: `${prev[stage] || ''}${String(data.chunk || '')}` }))
           } else if (status === 'write_started') {
             const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
             setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
@@ -1281,8 +1283,9 @@ export function SimpleAssist() {
       setActiveHarness('none')
       setPostProcessStatus(null)
       if (!wasAbortedRef.current && mode !== 'write') {
-        setStreamingThinkingText('')
-        setStreamingChatText('')
+      setStreamingThinkingText('')
+      setStreamingChatText('')
+      setWriteReasoning({})
         setActiveInstruction('')
         setActiveRefFiles([])
       }
@@ -2483,10 +2486,13 @@ export function SimpleAssist() {
                       {mode === 'write' && writeStages.length > 0 && (
                         <Trace className="gap-1 border-t border-[var(--border-subtle)] pt-1">
                           {writeStages.map((stage) => (
-                            <TraceLine key={stage.id} status={stage.status === 'running' ? 'running' : undefined} className="text-[10px]">
-                              <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : <Circle className="size-3" />}</TraceIcon>
-                              <TraceTitle className="capitalize">{stage.id}</TraceTitle>
-                            </TraceLine>
+                            <React.Fragment key={stage.id}>
+                              <TraceLine status={stage.status === 'running' ? 'running' : undefined} className="text-[10px]">
+                                <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : <Circle className="size-3" />}</TraceIcon>
+                                <TraceTitle className="capitalize">{stage.id}</TraceTitle>
+                              </TraceLine>
+                              {writeReasoning[stage.id] && <ReasoningTrace text={writeReasoning[stage.id]} running={stage.status === 'running'} />}
+                            </React.Fragment>
                           ))}
                         </Trace>
                       )}

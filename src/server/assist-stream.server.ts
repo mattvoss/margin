@@ -562,6 +562,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           ].filter(Boolean).join('\n\n')
           let prior = ''
           let finalOutput = ''
+          let allThinking = ''
           send({ status: 'write_started', stages: stages.map(([id]) => id) })
           for (const [id, role] of stages) {
             if (signal.aborted) break
@@ -586,6 +587,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             for await (const part of result.fullStream) {
               if (signal.aborted) break
               if (part.type === 'reasoning-delta') {
+                allThinking += part.text
                 send({ status: 'write_reasoning', stage: id, chunk: part.text })
               } else if (part.type === 'text-delta') {
                 output += part.text
@@ -598,6 +600,23 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             send({ status: 'write_stage_completed', stage: id, output: id === 'prose' ? undefined : output })
           }
           if (!signal.aborted) {
+            await saveSimpleAiLog({
+              mode: 'write',
+              session_id: payload.session_id,
+              system_prompt: 'Write pipeline: plan, characters, clothing, speech, plot, prose.',
+              user_prompt: context,
+              output: finalOutput,
+              raw_output: finalOutput,
+              instruction: payload.message,
+              selected_text: payload.selected_text,
+              ref_files: tagged.map(path => ({
+                path,
+                name: payload.available_files.find(file => file.path === path)?.name ?? path.split('/').pop() ?? path,
+              })),
+              success: Boolean(finalOutput),
+              thinking_output: allThinking || null,
+              model_used: client.lastModelUsed,
+            }, ws)
             send({ status: 'write_completed', output: finalOutput })
           }
           c.close()
