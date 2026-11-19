@@ -671,6 +671,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         }) => ({
           cache_prompt: cache.cachePrompt,
           n_keep: cache.nKeep,
+          chat_template_kwargs: {
+            enable_thinking: client.isThinking,
+          },
           ...(cache.slotId != null ? { id_slot: cache.slotId } : {}),
         })
 
@@ -921,6 +924,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             fullThinking += filteredTail.thinking
             send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
           }
+          const editReasoning = await result.reasoningText
+          if (editReasoning && !fullThinking) {
+            fullThinking = editReasoning
+            send({ status: 'thinking_chunk', chunk: editReasoning })
+          }
           await writerTelemetry.pending
           const usage = await result.usage
           const response = await result.response
@@ -1057,6 +1065,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (filteredTail.thinking) {
             fullThinking += filteredTail.thinking
             send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
+          }
+          const chatReasoning = await result.reasoningText
+          if (chatReasoning && !fullThinking) {
+            fullThinking = chatReasoning
+            send({ status: 'thinking_chunk', chunk: chatReasoning })
           }
           await chatTelemetry.pending
           const usage = await result.usage
