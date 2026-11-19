@@ -58,7 +58,7 @@ function EndpointDialogForSave({
   prefilledFromEnv: boolean
   editingId: string | null
   settings: AppSettings
-  onSave: (data: { id: string; url: string; api_key: string; model: string; context_window?: number; is_thinking: boolean; supports_vision: boolean; custom_thinking_tags: Array<{ open: string; close: string }> }) => void
+  onSave: (data: { id: string; url: string; api_key: string; model: string; embedding_model: string; context_window?: number; is_thinking: boolean; supports_vision: boolean; custom_thinking_tags: Array<{ open: string; close: string }> }) => void
   onCancel: () => void
   onTest: (url: string, key: string, model?: string, opts?: { silent?: boolean }) => Promise<boolean>
   testResult: { status: 'idle' | 'testing' | 'success' | 'error', msg?: string }
@@ -67,6 +67,7 @@ function EndpointDialogForSave({
   const [url, setUrl] = useState('http://localhost:1234')
   const [key, setKey] = useState('')
   const [model, setModel] = useState('')
+  const [embeddingModel, setEmbeddingModel] = useState('')
   const [context, setContext] = useState('')
   const [isThinking, setIsThinking] = useState(true)
   const [supportsVision, setSupportsVision] = useState(false)
@@ -80,6 +81,7 @@ function EndpointDialogForSave({
       setUrl(ep.url)
       setKey(ep.api_key || '')
       setModel(ep.model || '')
+      setEmbeddingModel(ep.embedding_model || '')
       setContext(ep.context_window ? String(ep.context_window) : '')
       setIsThinking(ep.is_thinking !== false)
       setSupportsVision(ep.supports_vision === true)
@@ -104,6 +106,7 @@ function EndpointDialogForSave({
       url,
       api_key: key,
       model,
+      embedding_model: embeddingModel.trim(),
       context_window: parseInt(context) || undefined,
       is_thinking: isThinking,
       supports_vision: supportsVision,
@@ -118,7 +121,7 @@ function EndpointDialogForSave({
   const [saveError, setSaveError] = useState<string | null>(null)
   // A failed pre-save test goes stale the moment the user edits the fields.
   /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => { setSaveError(null) }, [id, url, key, model])
+  useEffect(() => { setSaveError(null) }, [id, url, key, model, embeddingModel])
 
   const handleSaveClick = async () => {
     setSaveError(null)
@@ -169,6 +172,12 @@ function EndpointDialogForSave({
               placeholder="Model"
               value={model}
               onChange={e => setModel(e.target.value)}
+              className="flex-1 min-w-0 border border-[var(--border-subtle)] rounded-[4px] px-3 py-2 text-[12px] bg-[var(--bg-input)] text-[var(--text)] outline-none focus:border-[var(--text-secondary)]"
+            />
+            <input
+              placeholder="Embedding model (optional)"
+              value={embeddingModel}
+              onChange={e => setEmbeddingModel(e.target.value)}
               className="flex-1 min-w-0 border border-[var(--border-subtle)] rounded-[4px] px-3 py-2 text-[12px] bg-[var(--bg-input)] text-[var(--text)] outline-none focus:border-[var(--text-secondary)]"
             />
             <input
@@ -310,7 +319,7 @@ export function EndpointsSettings({ settings, updateSettings, query }: { setting
     setPrefilledFromEnv(false)
   }
 
-  const handleSave = (data: { id: string; url: string; api_key: string; model: string; context_window?: number; is_thinking: boolean; supports_vision: boolean; custom_thinking_tags: Array<{ open: string; close: string }> }) => {
+  const handleSave = (data: { id: string; url: string; api_key: string; model: string; embedding_model: string; context_window?: number; is_thinking: boolean; supports_vision: boolean; custom_thinking_tags: Array<{ open: string; close: string }> }) => {
     const epId = data.id.trim().toLowerCase().replace(/\s+/g, '_')
     if (prefilledFromEnv && !editingId && settings.endpoints?.[epId]) {
       toast.error(`“${epId}” already exists — pick a different name for the .env copy.`)
@@ -322,6 +331,7 @@ export function EndpointsSettings({ settings, updateSettings, query }: { setting
         url: data.url,
         api_key: data.api_key,
         model: data.model,
+        embedding_model: data.embedding_model,
         context_window: data.context_window,
         is_thinking: data.is_thinking,
         supports_vision: data.supports_vision,

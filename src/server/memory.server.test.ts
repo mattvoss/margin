@@ -60,6 +60,30 @@ describe('memory store', () => {
     })
   })
 
+  it('enables embeddings only when the active Settings endpoint has an embedding model', () => {
+    const settings = {
+      active_endpoint: 'local',
+      endpoints: {
+        local: {
+          url: 'http://embed.test/v1',
+          api_key: 'settings-key',
+          model: 'chat-model',
+          embedding_model: 'embedding-model',
+        },
+      },
+    }
+    expect(memoryConfig({ MARGIN_MEMORY_ENABLED: 'true' }, settings)).toMatchObject({
+      enabled: true,
+      embeddingUrl: 'http://embed.test/v1',
+      embeddingApiKey: 'settings-key',
+      embeddingModel: 'embedding-model',
+    })
+    expect(memoryConfig({ MARGIN_MEMORY_ENABLED: 'true' }, {
+      ...settings,
+      endpoints: { local: { ...settings.endpoints.local, embedding_model: '' } },
+    }).enabled).toBe(false)
+  })
+
   it('creates an embedder for an OpenAI-compatible endpoint', async () => {
     const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('http://embed.test/v1/embeddings')

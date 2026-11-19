@@ -846,7 +846,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
            })
            let memoryContext = ''
            try {
-             memoryContext = await recallMemoryContext(ws, payload.message)
+             memoryContext = await recallMemoryContext(ws, payload.message, memoryConfig(process.env, settings))
            } catch (error) {
              console.warn(`Memory recall unavailable: ${errMsg(error)}`)
            }
@@ -1081,7 +1081,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokens_cached: chat.tokensCached,
             slot_id: chat.slotId,
           }, ws)
-          const extractionConfig = memoryConfig()
+          const extractionConfig = memoryConfig(process.env, settings)
           if (extractionConfig.extractionEnabled && extractionConfig.embeddingUrl && extractionConfig.embeddingModel) {
             void (async () => {
               try {

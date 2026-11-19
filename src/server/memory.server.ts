@@ -81,6 +81,15 @@ export interface MemoryConfig {
   maxPromptChars: number
 }
 
+export interface MemorySettings {
+  active_endpoint?: string | null
+  endpoints?: Record<string, {
+    url?: string
+    api_key?: string
+    embedding_model?: string
+  }>
+}
+
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 function env(name: string, source: Record<string, string | undefined>): string | undefined {
@@ -98,15 +107,24 @@ function nonNegativeNumber(value: string | undefined, fallback: number): number 
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
-export function memoryConfig(source: Record<string, string | undefined> = process.env): MemoryConfig {
-  const embeddingUrl = env('MARGIN_MEMORY_EMBEDDING_URL', source)
+export function memoryConfig(
+  source: Record<string, string | undefined> = process.env,
+  settings?: MemorySettings | null,
+): MemoryConfig {
+  const activeEndpoint = settings?.active_endpoint
+    ? settings.endpoints?.[settings.active_endpoint]
+    : undefined
+  const embeddingModel = activeEndpoint?.embedding_model?.trim() || undefined
+  const embeddingUrl = activeEndpoint?.url?.trim().replace(/\/+$/, '')
+  const embeddingApiKey = activeEndpoint?.api_key?.trim() || undefined
   return {
-    enabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_ENABLED ?? '').toLowerCase()),
+    enabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_ENABLED ?? '').toLowerCase())
+      && Boolean(embeddingUrl && embeddingModel),
     extractionEnabled: ['true', '1', 'yes'].includes((source.MARGIN_MEMORY_EXTRACTION_ENABLED ?? '').toLowerCase()),
     databasePath: env('MARGIN_MEMORY_DB_PATH', source),
-    embeddingUrl: embeddingUrl?.replace(/\/+$/, ''),
-    embeddingApiKey: env('MARGIN_MEMORY_EMBEDDING_API_KEY', source),
-    embeddingModel: env('MARGIN_MEMORY_EMBEDDING_MODEL', source),
+    embeddingUrl,
+    embeddingApiKey,
+    embeddingModel,
     topK: Math.min(Math.floor(positiveNumber(source.MARGIN_MEMORY_TOP_K, 5)), 50),
     minimumScore: nonNegativeNumber(source.MARGIN_MEMORY_MIN_SCORE, 0.45),
     maxPromptChars: Math.floor(positiveNumber(source.MARGIN_MEMORY_MAX_PROMPT_CHARS, 6000)),

@@ -22,6 +22,7 @@ export interface AppSettings {
     url: string
     api_key: string
     model: string
+    embedding_model?: string
     context_window?: number
     is_thinking?: boolean
     supports_vision?: boolean

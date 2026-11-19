@@ -10,7 +10,7 @@ import {
   type MemoryKind,
 } from '../server/memory.server'
 import { DATA_ROOT } from '../server/env.server'
-import { requestWorkspaceDir } from '../server/storage.server'
+import { requestSettings, requestWorkspaceDir } from '../server/storage.server'
 
 export const Route = createFileRoute('/api/memory')({
   server: {
@@ -18,7 +18,7 @@ export const Route = createFileRoute('/api/memory')({
       GET: async ({ request }) => {
         const workspace = await requestWorkspaceDir(request)
         const params = new URL(request.url).searchParams
-        const config = memoryConfig()
+        const config = memoryConfig(process.env, await requestSettings(request))
         const store = await openMemoryStore(config.databasePath ?? join(DATA_ROOT, 'memory.duckdb'))
         try {
           return json(await listMemories(store, { workspaceKey: workspace,
@@ -37,7 +37,7 @@ export const Route = createFileRoute('/api/memory')({
         if (typeof content !== 'string' || !content.trim()) return err(400, 'Memory content is required')
         if (typeof kind !== 'string' || !validKinds.has(kind as MemoryKind)) return err(400, 'Invalid memory kind')
 
-        const config = memoryConfig()
+        const config = memoryConfig(process.env, await requestSettings(request, body))
         if (!config.enabled || !config.embeddingUrl || !config.embeddingModel) {
           return err(503, 'Memory embeddings are not configured')
         }
