@@ -572,6 +572,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 model: client.model,
                 baseUrl: client.baseUrl,
                 apiKey: client.apiKey,
+                requestBody: {
+                  chat_template_kwargs: {
+                    enable_thinking: client.isThinking,
+                  },
+                },
               },
               instructions: id === 'prose'
                 ? 'You are the final prose writer. Follow the request and notes, but output only finished story prose.'
@@ -583,15 +588,46 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               abortSignal: signal,
             })
             let output = ''
+            let stageThinking = ''
+            const thinkingFilter = new ThinkingTagFilter(
+              client.isThinking,
+              client.customOpeningTags,
+              client.customClosingTags,
+            )
             for await (const part of result.fullStream) {
               if (signal.aborted) break
               if (part.type === 'reasoning-delta') {
+                stageThinking += part.text
                 allThinking += part.text
                 send({ status: 'write_reasoning', stage: id, chunk: part.text })
               } else if (part.type === 'text-delta') {
-                output += part.text
-                if (id === 'prose') send({ status: 'write_prose', chunk: part.text })
+                const filtered = thinkingFilter.push(part.text)
+                if (filtered.thinking) {
+                  stageThinking += filtered.thinking
+                  allThinking += filtered.thinking
+                  send({ status: 'write_reasoning', stage: id, chunk: filtered.thinking })
+                }
+                if (filtered.text) {
+                  output += filtered.text
+                  if (id === 'prose') send({ status: 'write_prose', chunk: filtered.text })
+                }
               }
+            }
+            const filteredTail = thinkingFilter.flush()
+            if (filteredTail.thinking) {
+              stageThinking += filteredTail.thinking
+              allThinking += filteredTail.thinking
+              send({ status: 'write_reasoning', stage: id, chunk: filteredTail.thinking })
+            }
+            if (filteredTail.text) {
+              output += filteredTail.text
+              if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
+            }
+            const resultReasoning = await result.reasoningText
+            if (resultReasoning && !stageThinking) {
+              stageThinking = resultReasoning
+              allThinking += resultReasoning
+              send({ status: 'write_reasoning', stage: id, chunk: resultReasoning })
             }
             output = output.trim() || (await result.text).trim()
             prior += `\n\n${id.toUpperCase()}:\n${output}`
