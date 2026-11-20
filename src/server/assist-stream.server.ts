@@ -31,12 +31,17 @@ import {
 } from './harness.server'
 import {
   clearHarnessSession,
+  getPendingWriteClarification,
   getHarnessSession,
   getWorkspaceAiLogs,
   registerController,
+  restorePendingWriteClarification,
   releaseController,
+  savePendingWriteClarification,
   saveSimpleAiLog,
   setHarnessSession,
+  takePendingWriteClarification,
+  type PendingWriteClarification,
 } from './sessions.server'
 import { readWorkspaceFile, requestSettings, requestWorkspaceDir, writeWorkspaceFile } from './storage.server'
 import { errMsg, sse } from './http.server'
@@ -57,6 +62,7 @@ import {
   createAssistOrchestratorAgent,
   createAssistPlannerAgent,
   createAssistPostProcessAgent,
+  createWriteClarificationAgent,
   createWriteStageAgent,
   type AssistAgentTelemetry,
 } from './assist-agents.server'
@@ -67,6 +73,73 @@ import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
 import { join } from 'node:path'
 import { DATA_ROOT } from './env.server'
+
+interface WriteClarificationQuestion {
+  id: string
+  question: string
+  context?: string
+  options: string[]
+}
+
+const MAX_WRITE_CLARIFICATION_ROUNDS = 4
+
+function normalizeWriteClarificationQuestions(input: unknown): WriteClarificationQuestion[] {
+  if (!input || typeof input !== 'object') return []
+  const questions = (input as { questions?: unknown }).questions
+  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 4) return []
+  const normalized = questions.flatMap((item): WriteClarificationQuestion[] => {
+    if (!item || typeof item !== 'object') return []
+    const raw = item as Record<string, unknown>
+    if (
+      typeof raw.id !== 'string' || !/^[A-Za-z0-9_-]{1,48}$/.test(raw.id) ||
+      typeof raw.question !== 'string' || !raw.question.trim() || raw.question.length > 400 ||
+      !Array.isArray(raw.options)
+    ) return []
+    const options = [...new Set(
+      raw.options
+        .filter((option): option is string => typeof option === 'string')
+        .map((option) => option.trim())
+        .filter((option) => option && option.length <= 200 && option.toLowerCase() !== 'other'),
+    )]
+    if (options.length < 2 || options.length > 4) return []
+    const context = typeof raw.context === 'string' ? raw.context.trim().slice(0, 400) : ''
+    return [{
+      id: raw.id,
+      question: raw.question.trim(),
+      ...(context ? { context } : {}),
+      options,
+    }]
+  })
+  if (
+    normalized.length !== questions.length ||
+    new Set(normalized.map((question) => question.id)).size !== normalized.length
+  ) return []
+  return normalized
+}
+
+function validateWriteClarificationAnswers(
+  questions: WriteClarificationQuestion[],
+  rawAnswers: unknown,
+): { byId: Record<string, string>; byQuestion: Record<string, string> } {
+  if (!rawAnswers || typeof rawAnswers !== 'object' || Array.isArray(rawAnswers)) {
+    throw new Error('Clarification answers are required.')
+  }
+  const input = rawAnswers as Record<string, unknown>
+  if (Object.keys(input).length !== questions.length) {
+    throw new Error('The clarification answers do not match the pending questions.')
+  }
+  const byId = Object.create(null) as Record<string, string>
+  const byQuestion = Object.create(null) as Record<string, string>
+  for (const question of questions) {
+    const answer = input[question.id]
+    if (typeof answer !== 'string' || !answer.trim() || answer.length > 2000) {
+      throw new Error('Each clarification question needs an answer under 2,000 characters.')
+    }
+    byId[question.id] = answer.trim()
+    byQuestion[question.question] = answer.trim()
+  }
+  return { byId, byQuestion }
+}
 
 export function runSimpleAssist(payload: SimpleAssistRequest, request: Request): Response {
   const ctrl = payload.session_id ? registerController(payload.session_id) : new AbortController()
@@ -81,6 +154,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
       const send = (obj: unknown) => c.enqueue(new TextEncoder().encode(sse(obj)))
       let systemPrompt = ''
       let userPrompt = ''
+      let claimedWriteClarification: PendingWriteClarification | null = null
       const editMode = payload.selected_text ? 'replace' : 'insert'
       try {
         const settings = await requestSettings(request)
@@ -135,7 +209,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           readFile,
           ignoredRefFiles: (settings as { ignored_ref_files?: string[] }).ignored_ref_files,
         })
-        const maxToks = pickWriterMaxTokens(settings as never)
+        const maxToks = pickWriterMaxTokens(settings as never) ?? 1800
         const postConfig = normalizePostProcessing(settings.post_processing)
         const sendPostEvent = (event: PostProcessEvent) => {
           if (event.type === 'start') {
@@ -544,17 +618,145 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         }
 
         if (mode === 'write') {
-          if (!answerLines.length && payload.message.trim().split(/\s+/).length < 8) {
-            send({
-              status: 'write_questionnaire',
-              questions: [
-                { id: 'goal', question: 'What should this writing accomplish?', options: ['Continue the scene', 'Rewrite the selected passage', 'Start a new scene'] },
-                { id: 'tone', question: 'What tone should the prose use?', options: ['Quiet and intimate', 'Tense and suspenseful', 'Fast and action-driven'] },
-              ],
-            })
-            c.close()
-            return
+          const pending = payload.clarification_id
+            ? getPendingWriteClarification(payload.clarification_id, payload.session_id)
+            : null
+          if (payload.clarification_id && !pending) {
+            throw new Error('That clarification request expired or is no longer available. Please retry the write request.')
           }
+          if (pending && pending.originalMessage !== payload.message) {
+            throw new Error('The clarification request does not match this writing prompt.')
+          }
+
+          let context = pending?.context ?? ''
+          let clarificationMessages: ModelMessage[] = []
+          let clarificationAnswers: Record<string, string> = pending?.answers ?? {}
+          let clarificationRound = pending?.rounds ?? 0
+
+          if (pending) {
+            const questions = normalizeWriteClarificationQuestions(pending.toolInput)
+            if (!questions.length) throw new Error('The pending clarification request is invalid.')
+            const submitted = validateWriteClarificationAnswers(
+              questions,
+              payload.clarification_answers ?? payload.write_answers,
+            )
+            if (!takePendingWriteClarification(pending.id, payload.session_id)) {
+              throw new Error('That clarification request has already been submitted.')
+            }
+            claimedWriteClarification = pending
+            clarificationAnswers = { ...clarificationAnswers, ...submitted.byQuestion }
+            clarificationMessages = [
+              ...(pending.messages as ModelMessage[]),
+              {
+                role: 'tool',
+                content: [{
+                  type: 'tool-result',
+                  toolCallId: pending.toolCallId,
+                  toolName: 'ask_user',
+                  input: pending.toolInput,
+                  output: { type: 'json', value: { answers: submitted.byId } },
+                }],
+              } as ModelMessage,
+            ]
+          } else {
+            const referenceContext: string[] = []
+            let referenceChars = 0
+            for (const path of tagged.slice(0, 8)) {
+              if (referenceChars >= 24000) break
+              const fileContent = await readFile(path)
+              if (!fileContent) continue
+              const excerpt = fileContent.slice(0, Math.min(8000, 24000 - referenceChars))
+              referenceContext.push(`Referenced file: ${path}\n${excerpt}`)
+              referenceChars += excerpt.length
+            }
+            context = [
+              `User request:\n${payload.message}`,
+              characterMessage ? `Character context:\n${characterMessage}` : '',
+              payload.selected_text ? `Selected passage:\n${payload.selected_text}` : '',
+              payload.content ? `Current document:\n${payload.content.slice(-30000)}` : '',
+              referenceContext.length ? `Referenced context:\n${referenceContext.join('\n\n')}` : '',
+            ].filter(Boolean).join('\n\n')
+            clarificationMessages = [{
+              role: 'user',
+              content: `Decide whether to ask any clarifying questions before starting the writing plan.\n\n${context}`,
+            }]
+            // Compatibility for clients that already send answers without a
+            // pending tool call: carry those answers into the write context.
+            if (questionnaireAnswers && answerLines.length) {
+              clarificationAnswers = Object.fromEntries(
+                Object.entries(questionnaireAnswers).map(([key, value]) => [
+                  key,
+                  Array.isArray(value) ? value.join(', ') : value,
+                ]),
+              )
+            }
+          }
+
+          if (!pending && Object.keys(clarificationAnswers).length === 0) {
+            send({ status: 'write_clarifying' })
+          } else if (pending) {
+            send({ status: 'write_clarifying', continuation: true })
+          }
+          if (pending || Object.keys(clarificationAnswers).length === 0) {
+            const clarificationAgent = createWriteClarificationAgent({
+              endpoint: {
+                model: client.model,
+                baseUrl: client.baseUrl,
+                apiKey: client.apiKey,
+                requestBody: {
+                  chat_template_kwargs: { enable_thinking: client.isThinking },
+                },
+              },
+              instructions: [
+                'You are the clarification gate before a multi-stage writing pipeline.',
+                'Assess the request using the full supplied scene, passage, and referenced-file context.',
+                'If a missing decision would materially change the result, call ask_user with one questionnaire of up to four concise, specific questions. Supply two to four distinct radio options for each; the interface provides a freeform Other option.',
+                'Do not ask about details already stated or safely inferable. Do not ask merely to optimize minor preferences.',
+                'After answers resolve the important ambiguity, call proceed_to_plan. If the request is already actionable, call proceed_to_plan immediately.',
+                'Call exactly one tool per turn. Do not write the scene or start planning yourself.',
+              ].join(' '),
+            })
+            const clarification = await clarificationAgent.generate({
+              messages: clarificationMessages,
+              abortSignal: signal,
+            })
+            const askCalls = clarification.toolCalls.filter((call) => call.toolName === 'ask_user')
+            const askCall = askCalls[0]
+            if (askCall) {
+              if (askCalls.length !== 1 || clarification.toolCalls.some((call) => call.toolName === 'proceed_to_plan')) {
+                throw new Error('The clarifying agent returned conflicting tool calls.')
+              }
+              const questions = normalizeWriteClarificationQuestions(askCall.input)
+              if (!questions.length) throw new Error('The clarifying agent returned an invalid questionnaire.')
+              if (clarificationRound >= MAX_WRITE_CLARIFICATION_ROUNDS) {
+                throw new Error('The clarifying agent reached its question limit. Please refine the writing prompt and try again.')
+              }
+              const saved = savePendingWriteClarification({
+                sessionId: payload.session_id,
+                originalMessage: payload.message,
+                context,
+                messages: [...clarificationMessages, ...clarification.responseMessages],
+                answers: clarificationAnswers,
+                rounds: clarificationRound + 1,
+                toolCallId: askCall.toolCallId,
+                toolInput: askCall.input,
+              })
+              claimedWriteClarification = null
+              send({
+                status: 'write_questionnaire',
+                clarification_id: saved.id,
+                questions,
+              })
+              c.close()
+              return
+            }
+          }
+
+          claimedWriteClarification = null
+          if (Object.keys(clarificationAnswers).length) {
+            context += `\n\nClarification answers:\n${JSON.stringify(clarificationAnswers)}`
+          }
+
           const stages = [
             ['plan', 'Plan the scene: establish purpose, beats, point of view, tense, and constraints.'],
             ['characters', 'Analyze character goals, emotions, behavior, consistency, and arcs for this scene.'],
@@ -563,13 +765,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             ['plot', 'Check causality, continuity, stakes, and escalation. Identify and repair weak links.'],
             ['prose', 'Write the finished story scene. Return only the prose of the story: no headings, analysis, notes, or commentary.'],
           ] as const
-          const context = [
-            `User request:\n${payload.message}`,
-            payload.selected_text ? `Selected passage:\n${payload.selected_text}` : '',
-            payload.content ? `Current document:\n${payload.content.slice(-30000)}` : '',
-            answerLines.length ? `Clarification answers:\n${JSON.stringify(questionnaireAnswers)}` : '',
-            tagged.length ? `Referenced files:\n${tagged.join('\n')}` : '',
-          ].filter(Boolean).join('\n\n')
           let prior = ''
           let finalOutput = ''
           let allThinking = ''
@@ -578,11 +773,24 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             if (signal.aborted) break
             send({ status: 'write_stage_started', stage: id })
             const prompt = `${role}\n\n${context}\n\n${prior ? `Prior stage notes:\n${prior}` : ''}`
+            let output = ''
+            let stageThinking = ''
+            const stageTelemetry: AssistAgentTelemetry = {
+              timings: null,
+              tokensCached: null,
+              pending: null,
+              onReasoningDelta: (delta) => {
+                stageThinking += delta
+                allThinking += delta
+                send({ status: 'write_reasoning', stage: id, chunk: delta })
+              },
+            }
             const agent = createWriteStageAgent({
               endpoint: {
                 model: client.model,
                 baseUrl: client.baseUrl,
                 apiKey: client.apiKey,
+                telemetry: stageTelemetry,
                 requestBody: {
                   chat_template_kwargs: {
                     enable_thinking: client.isThinking,
@@ -598,8 +806,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               messages: [{ role: 'user', content: prompt }],
               abortSignal: signal,
             })
-            let output = ''
-            let stageThinking = ''
             const thinkingFilter = new ThinkingTagFilter(
               client.isThinking,
               client.customOpeningTags,
@@ -607,11 +813,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             )
             for await (const part of result.fullStream) {
               if (signal.aborted) break
-              if (part.type === 'reasoning-delta') {
-                stageThinking += part.text
-                allThinking += part.text
-                send({ status: 'write_reasoning', stage: id, chunk: part.text })
-              } else if (part.type === 'text-delta') {
+              if (part.type === 'text-delta') {
                 const filtered = thinkingFilter.push(part.text)
                 if (filtered.thinking) {
                   stageThinking += filtered.thinking
@@ -634,6 +836,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               output += filteredTail.text
               if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
             }
+            await stageTelemetry.pending
             const resultReasoning = await result.reasoningText
             if (resultReasoning && !stageThinking) {
               stageThinking = resultReasoning
@@ -662,6 +865,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               success: Boolean(finalOutput),
               thinking_output: allThinking || null,
               model_used: client.lastModelUsed,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0
             }, ws)
             send({ status: 'write_completed', output: finalOutput })
           }
@@ -1362,6 +1568,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         if (!finalized) await runPostProcess()
         c.close()
       } catch (e) {
+        if (!signal.aborted && claimedWriteClarification) {
+          restorePendingWriteClarification(claimedWriteClarification)
+        }
         if (signal.aborted) {
           try {
             send({ status: 'error', detail: 'Stopped' })

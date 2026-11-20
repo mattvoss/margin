@@ -126,6 +126,7 @@ interface MarkdownStorage {
 interface AssistQuestion {
   id: string
   question: string
+  context?: string
   options: string[]
 }
 
@@ -133,6 +134,7 @@ interface AssistQuestionnaireRequest {
   message: string
   refPaths: string[]
   selection: { text: string; from: number; to: number } | null
+  clarificationId?: string | null
 }
 
 
@@ -387,7 +389,7 @@ export function SimpleAssist() {
   const [plannerContextFiles, setPlannerContextFiles] = useState<string[]>([])
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
-  const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' }>>([])
+  const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' | 'cancelled' }>>([])
   const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
   const [writeQuestions, setWriteQuestions] = useState<AssistQuestion[]>([])
   const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
@@ -395,6 +397,7 @@ export function SimpleAssist() {
   const [questionnaireOpen, setQuestionnaireOpen] = useState(false)
   const [questionnaireMode, setQuestionnaireMode] = useState<'chat' | 'edit' | 'write'>('write')
   const [questionnaireRequest, setQuestionnaireRequest] = useState<AssistQuestionnaireRequest | null>(null)
+  const questionnaireSubmittingRef = useRef(false)
   const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
   const [postProcessStatus, setPostProcessStatus] = useState<{
     index: number
@@ -573,7 +576,14 @@ export function SimpleAssist() {
             !Array.isArray(question.options)
           ) return []
           const options = question.options.filter((option): option is string => typeof option === 'string')
-          return options.length ? [{ id: question.id, question: question.question, options }] : []
+          return options.length
+            ? [{
+                id: question.id,
+                question: question.question,
+                ...(typeof question.context === 'string' ? { context: question.context } : {}),
+                options,
+              }]
+            : []
         })
       : []
     if (!questions.length) return
@@ -581,8 +591,16 @@ export function SimpleAssist() {
     setWriteAnswers({})
     setWriteQuestionIndex(0)
     setQuestionnaireMode(forMode)
-    setQuestionnaireRequest(request)
+    setQuestionnaireRequest({
+      ...request,
+      clarificationId:
+        typeof data.clarification_id === 'string'
+          ? data.clarification_id
+          : request.clarificationId ?? null,
+    })
+    questionnaireSubmittingRef.current = false
     setQuestionnaireOpen(true)
+    setNoticeText('')
     setIsPlanning(false)
     setIsGenerating(false)
   }
@@ -687,6 +705,22 @@ export function SimpleAssist() {
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
+    }
+    if (mode === 'write') {
+      setWriteStages((stages) => stages.map((stage) =>
+        stage.status === 'pending' || stage.status === 'running'
+          ? { ...stage, status: 'cancelled' as const }
+          : stage,
+      ))
+      setIsWorking(false)
+      setIsPlanning(false)
+      setIsGenerating(false)
+      setQuestionnaireOpen(false)
+      setWriteQuestions([])
+      setWriteAnswers({})
+      setQuestionnaireRequest(null)
+      questionnaireSubmittingRef.current = false
+      setNoticeText('Writing aborted.')
     }
     if (activeSessionId) {
       try {
@@ -1023,6 +1057,10 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
+    if (mode === 'write') {
+      setWriteStages([])
+      setWriteReasoning({})
+    }
     setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
@@ -1066,8 +1104,9 @@ export function SimpleAssist() {
         ref_files: currentRefFiles.map(f => ({ name: f.name, path: f.path })),
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
         active_filename: activeFilename,
-         ...(mode === 'write' ? { write_answers: Object.keys(clarificationAnswers).length ? clarificationAnswers : null } : {}),
+        ...(mode === 'write' ? { write_answers: Object.keys(clarificationAnswers).length ? clarificationAnswers : null } : {}),
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
+        ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
       }
 
       if (localHasSelection) {
@@ -1150,10 +1189,25 @@ export function SimpleAssist() {
             const stage = String(data.stage || 'write')
             setWriteReasoning(prev => ({ ...prev, [stage]: `${prev[stage] || ''}${String(data.chunk || '')}` }))
           } else if (status === 'write_started') {
+            setNoticeText('')
+            setIsPlanning(false)
+            setIsGenerating(false)
+            setQuestionnaireOpen(false)
+            setWriteQuestions([])
+            setWriteAnswers({})
+            setWriteQuestionIndex(0)
+            setQuestionnaireRequest(null)
+            questionnaireSubmittingRef.current = false
             const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
             setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
             ids.forEach((id) => dispatchAssistRun({ type: 'stage_started', stage: id, label: id }))
-           } else if (status === 'write_questionnaire' || status === 'questionnaire') {
+          } else if (status === 'write_clarifying') {
+            setIsPlanning(true)
+            setIsGenerating(false)
+            setNoticeText(data.continuation
+              ? 'Checking your answers…'
+              : 'Checking whether any details need clarification…')
+          } else if (status === 'write_questionnaire' || status === 'questionnaire') {
             receiveQuestionnaire(data, mode === 'write' ? 'write' : 'edit', {
               message: currentInstruction,
               refPaths,
@@ -1324,6 +1378,9 @@ export function SimpleAssist() {
                 workspaceDir: workspaceAtStart,
               })
             }
+          } else if (status === 'error') {
+            questionnaireSubmittingRef.current = false
+            setErrorText(`Error: ${String(data.detail || 'Assist request failed')}`)
           }
         },
         abortRef.current.signal
@@ -1332,6 +1389,7 @@ export function SimpleAssist() {
       )
       await fetchLogs()
     } catch (err) {
+      questionnaireSubmittingRef.current = false
       if ((err as Error).name === 'AbortError') {
         wasAbortedRef.current = true
         // User cancelled — keep partial output visible, don't show error
@@ -1421,6 +1479,7 @@ export function SimpleAssist() {
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
         active_filename: activeFilename,
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
+        ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
       }
 
       if (localHasSelection) {
@@ -1546,19 +1605,44 @@ export function SimpleAssist() {
   }
 
   const submitQuestionnaire = () => {
-    if (writeQuestions.some((question) => !writeAnswers[question.id])) return
-    const answers = Object.fromEntries(
-      writeQuestions.map((question) => [question.question, writeAnswers[question.id]!]),
-    )
+    if (questionnaireSubmittingRef.current) return
+    const isComplete = (answer: string | undefined) => {
+      if (!answer || answer === 'other') return false
+      return answer.startsWith('other:') ? Boolean(answer.slice(6).trim()) : true
+    }
+    if (writeQuestions.some((question) => !isComplete(writeAnswers[question.id]))) return
     const targetMode = questionnaireMode
+    const answers = Object.fromEntries(
+      writeQuestions.map((question) => {
+        const answer = writeAnswers[question.id]!
+        return [
+          targetMode === 'write' ? question.id : question.question,
+          answer.startsWith('other:') ? answer.slice(6).trim() : answer,
+        ]
+      }),
+    )
     const request = questionnaireRequest ?? undefined
+    questionnaireSubmittingRef.current = true
+    setQuestionnaireOpen(false)
+    if (targetMode === 'chat') void handleChat(answers, request)
+    else void handleEdit(answers, request)
+  }
+
+  const cancelQuestionnaire = () => {
+    questionnaireSubmittingRef.current = false
     setQuestionnaireOpen(false)
     setWriteQuestions([])
     setWriteAnswers({})
     setWriteQuestionIndex(0)
     setQuestionnaireRequest(null)
-    if (targetMode === 'chat') void handleChat(answers, request)
-    else void handleEdit(answers, request)
+    setActiveInstruction('')
+    setActiveRefFiles([])
+    setNoticeText('Clarification cancelled.')
+    if (activeSessionId) {
+      void apiFetch(`${API_BASE}/api/assist/simple/stop/${activeSessionId}`, { method: 'POST' }).catch(
+        (error) => console.warn('Failed to clear pending clarification:', error),
+      )
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1706,7 +1790,16 @@ export function SimpleAssist() {
       : undefined
     const activeQuestion = writeQuestions[writeQuestionIndex]
     const activeQuestionAnswer = activeQuestion ? writeAnswers[activeQuestion.id] ?? '' : ''
-    const questionnaireComplete = writeQuestions.every((question) => Boolean(writeAnswers[question.id]))
+    const activeQuestionIsOther = activeQuestionAnswer === 'other' || activeQuestionAnswer.startsWith('other:')
+    const activeQuestionOtherValue = activeQuestionAnswer.startsWith('other:')
+      ? activeQuestionAnswer.slice(6)
+      : ''
+    const isQuestionComplete = (question: AssistQuestion) => {
+      const answer = writeAnswers[question.id] ?? ''
+      if (!answer || answer === 'other') return false
+      return answer.startsWith('other:') ? Boolean(answer.slice(6).trim()) : true
+    }
+    const questionnaireComplete = writeQuestions.every(isQuestionComplete)
     const composerModelLabel =
       harness !== 'none'
         ? harnessLabel(harness)
@@ -1939,7 +2032,7 @@ export function SimpleAssist() {
               </TooltipContent>
             </Tooltip>
 
-            {writeQuestions.length > 0 ? (
+            {writeQuestions.length > 0 && !isWorking ? (
               <Popover open={questionnaireOpen} onOpenChange={setQuestionnaireOpen}>
                 <PopoverTrigger
                   render={
@@ -1966,9 +2059,18 @@ export function SimpleAssist() {
                       <legend className="mb-2 text-[11px] font-medium leading-relaxed">
                         {activeQuestion.question}
                       </legend>
+                      {activeQuestion.context && (
+                        <p className="mb-2 text-left text-[10px] leading-relaxed text-[var(--text-muted)]">
+                          {activeQuestion.context}
+                        </p>
+                      )}
                       <div className="space-y-1.5">
-                        {activeQuestion.options.map((option, index) => {
+                        {[
+                          ...activeQuestion.options.filter((option) => option.toLowerCase() !== 'other'),
+                          'Other',
+                        ].map((option, index) => {
                           const optionId = `assist-question-${activeQuestion.id}-${index}`
+                          const isOtherOption = option === 'Other'
                           return (
                             <label
                               key={optionId}
@@ -1980,10 +2082,10 @@ export function SimpleAssist() {
                                 type="radio"
                                 name={`assist-question-${activeQuestion.id}`}
                                 value={option}
-                                checked={activeQuestionAnswer === option}
+                                checked={isOtherOption ? activeQuestionIsOther : activeQuestionAnswer === option}
                                 onChange={() => setWriteAnswers((previous) => ({
                                   ...previous,
-                                  [activeQuestion.id]: option,
+                                  [activeQuestion.id]: isOtherOption ? 'other' : option,
                                 }))}
                                 className="mt-0.5 size-3.5 shrink-0"
                                 style={{ accentColor: 'var(--accent-brown)' }}
@@ -1993,23 +2095,42 @@ export function SimpleAssist() {
                           )
                         })}
                       </div>
+                      {activeQuestionIsOther && (
+                        <input
+                          type="text"
+                          value={activeQuestionOtherValue}
+                          maxLength={2000}
+                          onChange={(event) => setWriteAnswers((previous) => ({
+                            ...previous,
+                            [activeQuestion.id]: `other:${event.target.value}`,
+                          }))}
+                          placeholder="Type your answer…"
+                          aria-label={`Other answer for ${activeQuestion.question}`}
+                          className="mt-2 w-full rounded-md border border-[var(--border-subtle)] bg-transparent px-2.5 py-2 text-left text-[11px] outline-none focus:border-[var(--accent-brown)]"
+                        />
+                      )}
                     </fieldset>
                   )}
                   <div className="flex items-center justify-between gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={writeQuestionIndex === 0}
-                      onClick={() => setWriteQuestionIndex((index) => Math.max(0, index - 1))}
-                    >
-                      Back
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={writeQuestionIndex === 0}
+                        onClick={() => setWriteQuestionIndex((index) => Math.max(0, index - 1))}
+                      >
+                        Back
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={cancelQuestionnaire}>
+                        Cancel
+                      </Button>
+                    </div>
                     {writeQuestionIndex < writeQuestions.length - 1 ? (
                       <Button
                         type="button"
                         size="sm"
-                        disabled={!activeQuestionAnswer}
+                        disabled={!activeQuestion || !isQuestionComplete(activeQuestion)}
                         onClick={() => setWriteQuestionIndex((index) => index + 1)}
                       >
                         Next
@@ -2657,8 +2778,8 @@ export function SimpleAssist() {
                           {writeStages.map((stage) => (
                             <React.Fragment key={stage.id}>
                               <TraceLine status={stage.status === 'running' ? 'running' : undefined} className="text-[10px]">
-                                <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : <Circle className="size-3" />}</TraceIcon>
-                                <TraceTitle className="capitalize">{stage.id}</TraceTitle>
+                                <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : stage.status === 'cancelled' ? <Square className="size-3" /> : <Circle className="size-3" />}</TraceIcon>
+                                <TraceTitle className="capitalize">{stage.id}{stage.status === 'cancelled' ? ' · aborted' : ''}</TraceTitle>
                               </TraceLine>
                               {writeReasoning[stage.id] && <ReasoningTrace text={writeReasoning[stage.id]} running={stage.status === 'running'} />}
                             </React.Fragment>

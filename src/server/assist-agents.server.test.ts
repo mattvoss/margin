@@ -7,6 +7,7 @@ import {
   createAssistEditAgent,
   createAssistOrchestratorAgent,
   createAssistPostProcessAgent,
+  createWriteClarificationAgent,
   type AssistAgentTelemetry,
 } from './assist-agents.server'
 
@@ -143,7 +144,11 @@ describe('SimpleAssist agents', () => {
             choices: [
               {
                 index: 0,
-                delta: { role: 'assistant', content: 'Telemetry reply.' },
+                delta: {
+                  role: 'assistant',
+                  content: 'Telemetry reply.',
+                  reasoning_content: 'I am planning the reply.',
+                },
                 finish_reason: null,
               },
             ],
@@ -157,10 +162,12 @@ describe('SimpleAssist agents', () => {
         ]),
       ),
     )
+    const reasoning: string[] = []
     const telemetry: AssistAgentTelemetry = {
       timings: null,
       tokensCached: null,
       pending: null,
+      onReasoningDelta: (delta) => reasoning.push(delta),
     }
 
     const agent = createAssistChatAgent({
@@ -173,6 +180,71 @@ describe('SimpleAssist agents', () => {
 
     expect(telemetry.timings).toEqual({ prompt_ms: 21, prompt_n: 8, tokens_cached: 5 })
     expect(telemetry.tokensCached).toBe(5)
+    expect(reasoning.join('')).toBe('I am planning the reply.')
+  })
+
+  it('pauses on ask_user and resumes the clarification loop with its tool result', async () => {
+    const questions = [{
+      id: 'ending',
+      question: 'How should the argument resolve?',
+      options: ['A quiet apology', 'A tense interruption'],
+    }]
+    let requestCount = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      requestCount++
+      if (requestCount === 1) {
+        return completion({
+          content: null,
+          tool_calls: [{
+            id: 'call-ask-user',
+            type: 'function',
+            function: {
+              name: 'ask_user',
+              arguments: JSON.stringify({ questions }),
+            },
+          }],
+        }, 'tool_calls')
+      }
+      return completion({
+        content: null,
+        tool_calls: [{
+          id: 'call-proceed',
+          type: 'function',
+          function: { name: 'proceed_to_plan', arguments: '{}' },
+        }],
+      }, 'tool_calls')
+    }))
+
+    const agent = createWriteClarificationAgent({ endpoint, instructions: 'Clarify only when needed.' })
+    const first = await agent.generate({ prompt: 'The scene ends at the station.' })
+    expect(first.toolCalls).toHaveLength(1)
+    expect(first.toolCalls[0]).toMatchObject({
+      toolName: 'ask_user',
+      input: { questions },
+    })
+
+    const askCall = first.toolCalls[0]
+    const resumed = await agent.generate({
+      messages: [
+        { role: 'user', content: 'The scene ends at the station.' },
+        ...first.responseMessages,
+        {
+          role: 'tool',
+          content: [{
+            type: 'tool-result',
+            toolCallId: askCall.toolCallId,
+            toolName: 'ask_user',
+            input: askCall.input,
+            output: { type: 'json', value: { answers: { ending: 'A quiet apology' } } },
+          }],
+        },
+      ],
+    })
+
+    expect(resumed.staticToolCalls).toContainEqual(
+      expect.objectContaining({ toolName: 'proceed_to_plan' }),
+    )
+    expect(requestCount).toBe(2)
   })
 
   it('dispatches the orchestrator tools in order and stops on finish', async () => {

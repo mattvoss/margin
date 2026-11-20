@@ -9,6 +9,7 @@
  */
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { DATA_ROOT } from './env.server'
 import { getActiveWorkspaceDir } from './storage.server'
 
@@ -106,6 +107,89 @@ export async function clearHarnessSession(sessionId: string, harnessId?: string 
 
 const activeControllers = new Map<string, AbortController>()
 
+export interface PendingWriteClarification {
+  id: string
+  sessionId: string | null
+  expiresAt: number
+  originalMessage: string
+  context: string
+  messages: unknown[]
+  answers: Record<string, string>
+  rounds: number
+  toolCallId: string
+  toolInput: unknown
+}
+
+const pendingWriteClarifications = new Map<string, PendingWriteClarification>()
+const PENDING_CLARIFICATION_TTL_MS = 15 * 60 * 1000
+const MAX_PENDING_CLARIFICATIONS = 256
+
+function prunePendingWriteClarifications(now = Date.now()): void {
+  for (const [id, pending] of pendingWriteClarifications) {
+    if (pending.expiresAt <= now) pendingWriteClarifications.delete(id)
+  }
+}
+
+export function savePendingWriteClarification(
+  pending: Omit<PendingWriteClarification, 'id' | 'expiresAt'>,
+): PendingWriteClarification {
+  prunePendingWriteClarifications()
+  while (pendingWriteClarifications.size >= MAX_PENDING_CLARIFICATIONS) {
+    const oldest = [...pendingWriteClarifications.values()].sort(
+      (a, b) => a.expiresAt - b.expiresAt,
+    )[0]
+    if (!oldest) break
+    pendingWriteClarifications.delete(oldest.id)
+  }
+  const saved = {
+    ...pending,
+    id: randomUUID(),
+    expiresAt: Date.now() + PENDING_CLARIFICATION_TTL_MS,
+  }
+  pendingWriteClarifications.set(saved.id, saved)
+  return saved
+}
+
+/** Restore a claimed turn when its model continuation fails before completion. */
+export function restorePendingWriteClarification(pending: PendingWriteClarification): void {
+  prunePendingWriteClarifications()
+  if (pending.expiresAt <= Date.now()) return
+  if (pendingWriteClarifications.size >= MAX_PENDING_CLARIFICATIONS) {
+    const oldest = [...pendingWriteClarifications.values()].sort(
+      (a, b) => a.expiresAt - b.expiresAt,
+    )[0]
+    if (oldest) pendingWriteClarifications.delete(oldest.id)
+  }
+  pendingWriteClarifications.set(pending.id, pending)
+}
+
+/** Take is single-use so replaying a clarification ID cannot duplicate a turn. */
+export function takePendingWriteClarification(
+  id: string,
+  sessionId: string | null,
+): PendingWriteClarification | null {
+  prunePendingWriteClarifications()
+  const pending = pendingWriteClarifications.get(id)
+  if (!pending || pending.sessionId !== sessionId) return null
+  pendingWriteClarifications.delete(id)
+  return pending
+}
+
+export function getPendingWriteClarification(
+  id: string,
+  sessionId: string | null,
+): PendingWriteClarification | null {
+  prunePendingWriteClarifications()
+  const pending = pendingWriteClarifications.get(id)
+  return pending?.sessionId === sessionId ? pending : null
+}
+
+export function clearPendingWriteClarifications(sessionId: string | null): void {
+  for (const [id, pending] of pendingWriteClarifications) {
+    if (pending.sessionId === sessionId) pendingWriteClarifications.delete(id)
+  }
+}
+
 export function registerController(sessionId: string): AbortController {
   const c = new AbortController()
   activeControllers.set(sessionId, c)
@@ -113,6 +197,7 @@ export function registerController(sessionId: string): AbortController {
 }
 
 export function stopSession(sessionId: string): boolean {
+  clearPendingWriteClarifications(sessionId)
   const c = activeControllers.get(sessionId)
   if (!c) return false
   try {
@@ -162,6 +247,7 @@ export async function saveSimpleAiLog(
 }
 
 export async function deleteSessionLogs(sessionId: string, workspaceDir?: string): Promise<void> {
+  clearPendingWriteClarifications(sessionId)
   const dir = await logsDir(workspaceDir)
   try {
     await rm(join(dir, `${sessionId}.json`), { force: true })

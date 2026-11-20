@@ -103,6 +103,32 @@ function completionResponse(content: string): Response {
   )
 }
 
+function toolCallResponse(name: string, args: Record<string, unknown>, id: string): Response {
+  return new Response(
+    JSON.stringify({
+      id: 'chatcmpl-test',
+      object: 'chat.completion',
+      created: 0,
+      model: 'assist-mock',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id,
+            type: 'function',
+            function: { name, arguments: JSON.stringify(args) },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
+}
+
 async function invoke(
   route: unknown,
   method: string,
@@ -362,6 +388,215 @@ describe('assist', () => {
     const text = await res.text()
     expect(text).toContain('"status":"generating"')
     expect(text).toContain('"status":"error"')
+  })
+
+  it('pauses on ask_user, then resumes with the user tool result before starting the plan', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    const freeformAnswer = 'They reconcile with a quiet apology after sunrise.'
+    let clarificationCalls = 0
+    let stageCalls = 0
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        messages?: Array<{ role?: string; content?: unknown }>
+        tools?: Array<{ function?: { name?: string } }>
+      }
+      const isClarifier = body.tools?.some((candidate) =>
+        candidate.function?.name === 'ask_user',
+      )
+      if (isClarifier) {
+        clarificationCalls++
+        const messages = JSON.stringify(body.messages ?? [])
+        if (clarificationCalls === 1) {
+          expect(messages).toContain('Have the characters reconcile after the argument.')
+          expect(messages).toContain('The chapter ends at the station.')
+          return toolCallResponse('ask_user', {
+            questions: [{
+              id: 'resolution',
+              question: 'How should the argument resolve?',
+              options: ['A quiet apology', 'A tense interruption'],
+            }],
+          }, 'call-ask-user')
+        }
+        expect(messages).toContain('"role":"tool"')
+        if (clarificationCalls === 2) {
+          expect(messages).toContain(freeformAnswer)
+          return toolCallResponse('ask_user', {
+            questions: [{
+              id: 'pacing',
+              question: 'How quickly should they reconcile?',
+              options: ['Immediately', 'Over a few days'],
+            }],
+          }, 'call-ask-pacing')
+        }
+        expect(messages).toContain('Over a few days')
+        return toolCallResponse('proceed_to_plan', {}, 'call-proceed')
+      }
+
+      stageCalls++
+      return sseResponse([
+        {
+          choices: [{
+            index: 0,
+            delta: { role: 'assistant', content: `Stage ${stageCalls} notes.` },
+            finish_reason: null,
+          }],
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      ])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      const initial = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Have the characters reconcile after the argument.',
+          content: 'The chapter ends at the station.',
+          session_id: 'write-clarification-test',
+          harness: 'none',
+        }),
+      } as never)
+      const initialEvents = parseSseEvents(await initial.text())
+      const questionnaire = initialEvents.find((event) => event.status === 'write_questionnaire')
+
+      expect(questionnaire).toMatchObject({
+        questions: [
+          {
+            id: 'resolution',
+            question: 'How should the argument resolve?',
+            options: ['A quiet apology', 'A tense interruption'],
+          },
+        ],
+      })
+      expect(questionnaire?.clarification_id).toEqual(expect.any(String))
+      expect(initialEvents.some((event) => event.status === 'write_started')).toBe(false)
+      expect(stageCalls).toBe(0)
+
+      const invalidResume = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Have the characters reconcile after the argument.',
+          content: 'The chapter ends at the station.',
+          session_id: 'write-clarification-test',
+          harness: 'none',
+          clarification_id: 'not-the-pending-id',
+          clarification_answers: { resolution: 'A quiet apology' },
+        }),
+      } as never)
+      const invalidEvents = parseSseEvents(await invalidResume.text())
+      expect(invalidEvents.find((event) => event.status === 'error')?.detail).toContain('expired')
+      expect(clarificationCalls).toBe(1)
+
+      const invalidAnswers = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Have the characters reconcile after the argument.',
+          content: 'The chapter ends at the station.',
+          session_id: 'write-clarification-test',
+          harness: 'none',
+          clarification_id: questionnaire?.clarification_id,
+          clarification_answers: { unknown: 'A quiet apology' },
+        }),
+      } as never)
+      const invalidAnswerEvents = parseSseEvents(await invalidAnswers.text())
+      expect(invalidAnswerEvents.find((event) => event.status === 'error')?.detail).toContain('do not match')
+      expect(clarificationCalls).toBe(1)
+
+      const resumed = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Have the characters reconcile after the argument.',
+          content: 'The chapter ends at the station.',
+          session_id: 'write-clarification-test',
+          harness: 'none',
+          clarification_id: questionnaire?.clarification_id,
+          clarification_answers: { resolution: freeformAnswer },
+        }),
+      } as never)
+      const resumedEvents = parseSseEvents(await resumed.text())
+      const nextQuestionnaire = resumedEvents.find((event) => event.status === 'write_questionnaire')
+
+      expect(nextQuestionnaire).toMatchObject({
+        questions: [{
+          id: 'pacing',
+          question: 'How quickly should they reconcile?',
+          options: ['Immediately', 'Over a few days'],
+        }],
+      })
+      expect(nextQuestionnaire?.clarification_id).toEqual(expect.any(String))
+      expect(resumedEvents.some((event) => event.status === 'write_started')).toBe(false)
+      expect(stageCalls).toBe(0)
+
+      const finalResume = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Have the characters reconcile after the argument.',
+          content: 'The chapter ends at the station.',
+          session_id: 'write-clarification-test',
+          harness: 'none',
+          clarification_id: nextQuestionnaire?.clarification_id,
+          clarification_answers: { pacing: 'Over a few days' },
+        }),
+      } as never)
+      const finalEvents = parseSseEvents(await finalResume.text())
+
+      expect(finalEvents.some((event) => event.status === 'write_questionnaire')).toBe(false)
+      expect(finalEvents.some((event) => event.status === 'write_started')).toBe(true)
+      expect(finalEvents.find((event) => event.status === 'write_completed')).toMatchObject({
+        output: 'Stage 6 notes.',
+      })
+      expect(clarificationCalls).toBe(3)
+      expect(stageCalls).toBe(6)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('starts the write plan directly when the clarifying agent proceeds', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    let stageCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        tools?: Array<{ function?: { name?: string } }>
+      }
+      if (body.tools?.some((candidate) => candidate.function?.name === 'ask_user')) {
+        return toolCallResponse('proceed_to_plan', {}, 'call-proceed-directly')
+      }
+      stageCalls++
+      return sseResponse([
+        {
+          choices: [{
+            index: 0,
+            delta: { role: 'assistant', content: `Stage ${stageCalls} notes.` },
+            finish_reason: null,
+          }],
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      ])
+    }))
+
+    try {
+      const response = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          message: 'Continue the established scene with the same point of view and tense.',
+          content: 'The scene already establishes the characters, conflict, and ending.',
+          session_id: 'write-clear-request-test',
+          harness: 'none',
+        }),
+      } as never)
+      const events = parseSseEvents(await response.text())
+
+      expect(events.some((event) => event.status === 'write_questionnaire')).toBe(false)
+      expect(events.some((event) => event.status === 'write_started')).toBe(true)
+      expect(stageCalls).toBe(6)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
   })
 
   it('orchestrates chat through the dispatcher and chat subagent', async () => {

@@ -15,7 +15,8 @@
  * planner/writer/chat prompts (and their prefix-cache layout) intact.
  */
 import { createOpenAI } from '@ai-sdk/openai'
-import { hasToolCall, isStepCount, ToolLoopAgent, type ToolSet } from 'ai'
+import { hasToolCall, isStepCount, tool, ToolLoopAgent, type ToolSet } from 'ai'
+import { z } from 'zod'
 
 export interface AssistAgentEndpoint {
   model: string
@@ -35,6 +36,7 @@ export interface AssistAgentTelemetry {
   timings: Record<string, unknown> | null
   tokensCached: number | null
   pending: Promise<void> | null
+  onReasoningDelta?: (delta: string) => void
 }
 
 /**
@@ -85,6 +87,22 @@ async function captureResponseTelemetry(
     const remember = (value: unknown) => {
       if (!value || typeof value !== 'object') return
       const record = value as Record<string, unknown>
+      const choices = record['choices']
+      if (Array.isArray(choices)) {
+        for (const choice of choices) {
+          if (!choice || typeof choice !== 'object') continue
+          const delta = (choice as { delta?: unknown }).delta
+          if (!delta || typeof delta !== 'object') continue
+          const deltaRecord = delta as Record<string, unknown>
+          const reasoning =
+            typeof deltaRecord['reasoning_content'] === 'string'
+              ? deltaRecord['reasoning_content']
+              : typeof deltaRecord['reasoning'] === 'string'
+                ? deltaRecord['reasoning']
+                : ''
+          if (reasoning) telemetry.onReasoningDelta?.(reasoning)
+        }
+      }
       const timings = record['timings']
       if (timings && typeof timings === 'object') {
         telemetry.timings = timings as Record<string, unknown>
@@ -191,6 +209,49 @@ export function createWriteStageAgent(input: {
     stopWhen: isStepCount(1),
     temperature: input.instructions.includes('finished story prose') ? 0.8 : 0.35,
     maxOutputTokens: input.maxOutputTokens ?? 1800,
+  })
+}
+
+const writeClarificationQuestionSchema = z.object({
+  id: z.string().min(1).max(48).regex(/^[A-Za-z0-9_-]+$/),
+  question: z.string().min(1).max(400),
+  context: z.string().max(400).optional(),
+  options: z.array(z.string().min(1).max(200)).min(2).max(4),
+})
+
+const writeClarificationAnswersSchema = z.object({
+  answers: z.record(z.string(), z.string()),
+})
+
+export function createWriteClarificationAgent(input: {
+  endpoint: AssistAgentEndpoint
+  instructions: string
+}) {
+  return new ToolLoopAgent({
+    model: createAssistAgentModel(input.endpoint),
+    instructions: input.instructions,
+    tools: {
+      // No execute function: this client tool intentionally pauses the agent
+      // until the user supplies a result on the next request.
+      ask_user: tool({
+        description:
+          'Pause before planning and ask the user up to four important clarifying questions. Use only when a missing detail would materially change the writing.',
+        inputSchema: z.object({
+          questions: z.array(writeClarificationQuestionSchema).min(1).max(4),
+        }),
+        outputSchema: writeClarificationAnswersSchema,
+      }),
+      proceed_to_plan: tool({
+        description:
+          'Continue to the writing plan when the request is sufficiently clear or all important questions have been answered.',
+        inputSchema: z.object({}),
+        execute: async () => ({ proceed: true }),
+      }),
+    },
+    stopWhen: [hasToolCall('proceed_to_plan'), isStepCount(4)],
+    toolCallConcurrency: 1,
+    temperature: 0.2,
+    maxOutputTokens: 1400,
   })
 }
 

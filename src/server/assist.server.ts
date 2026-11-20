@@ -102,6 +102,7 @@ export interface SimpleAssistRequest {
   endpoint_id: string | null
   write_answers?: Record<string, string | string[]> | null
   clarification_answers?: Record<string, string | string[]> | null
+  clarification_id?: string | null
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -132,6 +133,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     clarification_answers: input.clarification_answers && typeof input.clarification_answers === 'object'
       ? input.clarification_answers as Record<string, string | string[]>
       : null,
+    clarification_id: str(input.clarification_id),
   }
 }
 
