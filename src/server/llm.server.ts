@@ -363,7 +363,7 @@ export class LLMClient {
     };
 
     try {
-      for await (const part of result.fullStream) {
+      for await (const part of result.stream) {
         if (part.type === 'raw') {
           this.rememberUsage(part.rawValue);
           const reasoning = streamingReasoning(part.rawValue);
