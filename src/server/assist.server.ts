@@ -101,6 +101,7 @@ export interface SimpleAssistRequest {
   /** Override the active endpoint for this request (planner model picker). */
   endpoint_id: string | null
   write_answers?: Record<string, string | string[]> | null
+  clarification_answers?: Record<string, string | string[]> | null
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -127,6 +128,9 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     endpoint_id: str(input.endpoint_id) ?? null,
     write_answers: input.write_answers && typeof input.write_answers === 'object'
       ? input.write_answers as Record<string, string | string[]>
+      : null,
+    clarification_answers: input.clarification_answers && typeof input.clarification_answers === 'object'
+      ? input.clarification_answers as Record<string, string | string[]>
       : null,
   }
 }

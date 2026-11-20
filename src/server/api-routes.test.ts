@@ -437,6 +437,8 @@ describe('assist', () => {
           harness: 'none',
         }),
       } as never)
+      expect(res.headers.get('x-accel-buffering')).toBe('no')
+      expect(res.headers.get('cache-control')).toContain('no-transform')
       const text = await res.text()
       const events = parseSseEvents(text)
       expect(

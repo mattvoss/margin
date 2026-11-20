@@ -123,6 +123,18 @@ interface MarkdownStorage {
   markdown: { getMarkdown: () => string }
 }
 
+interface AssistQuestion {
+  id: string
+  question: string
+  options: string[]
+}
+
+interface AssistQuestionnaireRequest {
+  message: string
+  refPaths: string[]
+  selection: { text: string; from: number; to: number } | null
+}
+
 
 const PROMPT_CHIP_CLASS =
   'mx-0.5 inline-flex max-w-[240px] items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-2 py-0.5 align-middle leading-none text-[10px] font-medium text-[var(--text-heading)]'
@@ -377,8 +389,12 @@ export function SimpleAssist() {
   const [streamingChatText, setStreamingChatText] = useState('')
   const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' }>>([])
   const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
-  const [writeQuestions, setWriteQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([])
+  const [writeQuestions, setWriteQuestions] = useState<AssistQuestion[]>([])
   const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
+  const [writeQuestionIndex, setWriteQuestionIndex] = useState(0)
+  const [questionnaireOpen, setQuestionnaireOpen] = useState(false)
+  const [questionnaireMode, setQuestionnaireMode] = useState<'chat' | 'edit' | 'write'>('write')
+  const [questionnaireRequest, setQuestionnaireRequest] = useState<AssistQuestionnaireRequest | null>(null)
   const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
   const [postProcessStatus, setPostProcessStatus] = useState<{
     index: number
@@ -540,6 +556,35 @@ export function SimpleAssist() {
         void handleEdit()
       }
     }, 0)
+  }
+
+  const receiveQuestionnaire = (
+    data: Record<string, unknown>,
+    forMode: 'chat' | 'edit' | 'write',
+    request: AssistQuestionnaireRequest,
+  ) => {
+    const questions = Array.isArray(data.questions)
+      ? data.questions.flatMap((item): AssistQuestion[] => {
+          if (!item || typeof item !== 'object') return []
+          const question = item as Record<string, unknown>
+          if (
+            typeof question.id !== 'string' ||
+            typeof question.question !== 'string' ||
+            !Array.isArray(question.options)
+          ) return []
+          const options = question.options.filter((option): option is string => typeof option === 'string')
+          return options.length ? [{ id: question.id, question: question.question, options }] : []
+        })
+      : []
+    if (!questions.length) return
+    setWriteQuestions(questions)
+    setWriteAnswers({})
+    setWriteQuestionIndex(0)
+    setQuestionnaireMode(forMode)
+    setQuestionnaireRequest(request)
+    setQuestionnaireOpen(true)
+    setIsPlanning(false)
+    setIsGenerating(false)
   }
 
   // Picking an endpoint means "use this endpoint instead of the harness":
@@ -953,11 +998,17 @@ export function SimpleAssist() {
     }, 0)
   }
 
-  const handleEdit = async () => {
+  const handleEdit = async (
+    clarificationAnswers: Record<string, string> = writeAnswers,
+    retry?: AssistQuestionnaireRequest,
+  ) => {
     const activeEditor = useEditorStore.getState().editor || editor
     if (!activeEditor || activeEditor.isDestroyed || !activeEditor.view || !activeEditor.state) return
     const inputEl = inputRef.current!
-    const { text: currentInstruction, refPaths, selection: domSelection } = getInputData(inputEl)
+    const inputData = getInputData(inputEl)
+    const currentInstruction = retry?.message ?? inputData.text
+    const refPaths = retry?.refPaths ?? inputData.refPaths
+    const domSelection = retry ? retry.selection : inputData.selection
     if (!currentInstruction) return
 
     const selectionInfo = domSelection
@@ -1014,8 +1065,9 @@ export function SimpleAssist() {
         session_id: activeSessionId,
         ref_files: currentRefFiles.map(f => ({ name: f.name, path: f.path })),
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
-         active_filename: activeFilename,
-         ...(mode === 'write' ? { write_answers: Object.keys(writeAnswers).length ? writeAnswers : null } : {}),
+        active_filename: activeFilename,
+         ...(mode === 'write' ? { write_answers: Object.keys(clarificationAnswers).length ? clarificationAnswers : null } : {}),
+        ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
       }
 
       if (localHasSelection) {
@@ -1101,10 +1153,12 @@ export function SimpleAssist() {
             const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
             setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
             ids.forEach((id) => dispatchAssistRun({ type: 'stage_started', stage: id, label: id }))
-          } else if (status === 'write_questionnaire') {
-            setWriteQuestions(Array.isArray(data.questions) ? data.questions as Array<{ id: string; question: string; options: string[] }> : [])
-            setIsPlanning(false)
-            setIsGenerating(false)
+           } else if (status === 'write_questionnaire' || status === 'questionnaire') {
+            receiveQuestionnaire(data, mode === 'write' ? 'write' : 'edit', {
+              message: currentInstruction,
+              refPaths,
+              selection: domSelection,
+            })
           } else if (status === 'write_stage_started') {
             dispatchAssistRun({ type: 'stage_started', stage: String(data.stage || 'write') })
             setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'running' } : stage))
@@ -1303,10 +1357,16 @@ export function SimpleAssist() {
     }
   }
 
-  const handleChat = async () => {
+  const handleChat = async (
+    clarificationAnswers: Record<string, string> = writeAnswers,
+    retry?: AssistQuestionnaireRequest,
+  ) => {
     if (!editor) return
     const inputEl = inputRef.current!
-    const { text: currentInstruction, refPaths, selection: domSelection } = getInputData(inputEl)
+    const inputData = getInputData(inputEl)
+    const currentInstruction = retry?.message ?? inputData.text
+    const refPaths = retry?.refPaths ?? inputData.refPaths
+    const domSelection = retry ? retry.selection : inputData.selection
     if (!currentInstruction) return
 
     const selectionInfo = domSelection
@@ -1360,6 +1420,7 @@ export function SimpleAssist() {
         ref_files: currentRefFiles.map(f => ({ name: f.name, path: f.path })),
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
         active_filename: activeFilename,
+        ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
       }
 
       if (localHasSelection) {
@@ -1382,6 +1443,12 @@ export function SimpleAssist() {
             setIsGenerating(true)
           } else if (status === 'thinking_chunk') {
             setStreamingThinkingText(prev => prev + (data.chunk as string))
+          } else if (status === 'write_questionnaire' || status === 'questionnaire') {
+            receiveQuestionnaire(data, 'chat', {
+              message: currentInstruction,
+              refPaths,
+              selection: domSelection,
+            })
           } else if (status === 'post_processing_start') {
             setPostProcessStatus({
               index: 0,
@@ -1476,6 +1543,22 @@ export function SimpleAssist() {
         setActiveRefFiles([])
       }
     }
+  }
+
+  const submitQuestionnaire = () => {
+    if (writeQuestions.some((question) => !writeAnswers[question.id])) return
+    const answers = Object.fromEntries(
+      writeQuestions.map((question) => [question.question, writeAnswers[question.id]!]),
+    )
+    const targetMode = questionnaireMode
+    const request = questionnaireRequest ?? undefined
+    setQuestionnaireOpen(false)
+    setWriteQuestions([])
+    setWriteAnswers({})
+    setWriteQuestionIndex(0)
+    setQuestionnaireRequest(null)
+    if (targetMode === 'chat') void handleChat(answers, request)
+    else void handleEdit(answers, request)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1621,6 +1704,9 @@ export function SimpleAssist() {
     const activeEndpoint = settings?.active_endpoint
       ? settings.endpoints?.[settings.active_endpoint]
       : undefined
+    const activeQuestion = writeQuestions[writeQuestionIndex]
+    const activeQuestionAnswer = activeQuestion ? writeAnswers[activeQuestion.id] ?? '' : ''
+    const questionnaireComplete = writeQuestions.every((question) => Boolean(writeAnswers[question.id]))
     const composerModelLabel =
       harness !== 'none'
         ? harnessLabel(harness)
@@ -1657,33 +1743,6 @@ export function SimpleAssist() {
                   No matching workspace files
                 </div>
               )}
-            </div>
-          )}
-          {mode === 'write' && writeQuestions.length > 0 && (
-            <div className="mx-3 mb-2 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2">
-              <div className="mb-2 text-[11px] font-medium text-[var(--text)]">A few details will help shape the prose</div>
-              {writeQuestions.map((question) => (
-                <label key={question.id} className="mb-2 block text-[10px] text-[var(--text-muted)]">
-                  <span className="mb-1 block">{question.question}</span>
-                  <select
-                    className="w-full rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)]"
-                    value={writeAnswers[question.id] ?? ''}
-                    onChange={(event) => setWriteAnswers(prev => ({ ...prev, [question.id]: event.target.value }))}
-                  >
-                    <option value="">Choose an answer…</option>
-                    {question.options.map(option => <option key={option} value={option}>{option}</option>)}
-                    <option value="other">Other</option>
-                  </select>
-                  {(writeAnswers[question.id] === 'other' || writeAnswers[question.id]?.startsWith('other:')) && (
-                    <input
-                      className="mt-1 w-full rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)]"
-                      placeholder="Tell us more…"
-                      value={writeAnswers[question.id] === 'other' ? '' : writeAnswers[question.id]?.slice(6) ?? ''}
-                      onChange={(event) => setWriteAnswers(prev => ({ ...prev, [question.id]: `other:${event.target.value}` }))}
-                    />
-                  )}
-                </label>
-              ))}
             </div>
           )}
           <div
@@ -1880,7 +1939,99 @@ export function SimpleAssist() {
               </TooltipContent>
             </Tooltip>
 
-            {isWorking ? (
+            {writeQuestions.length > 0 ? (
+              <Popover open={questionnaireOpen} onOpenChange={setQuestionnaireOpen}>
+                <PopoverTrigger
+                  render={
+                    <InputGroupButton type="button" variant="outline" size="sm">
+                      Answer questions
+                      <ChevronDown className="size-3.5 opacity-60" />
+                    </InputGroupButton>
+                  }
+                />
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={8}
+                  className="w-[min(340px,calc(100vw-2rem))] gap-3 border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 text-left text-[var(--text)]"
+                >
+                  <div className="text-left">
+                    <div className="text-[12px] font-semibold">A few details will help refine this</div>
+                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                      Question {writeQuestionIndex + 1} of {writeQuestions.length}
+                    </div>
+                  </div>
+                  {activeQuestion && (
+                    <fieldset className="min-w-0 text-left">
+                      <legend className="mb-2 text-[11px] font-medium leading-relaxed">
+                        {activeQuestion.question}
+                      </legend>
+                      <div className="space-y-1.5">
+                        {activeQuestion.options.map((option, index) => {
+                          const optionId = `assist-question-${activeQuestion.id}-${index}`
+                          return (
+                            <label
+                              key={optionId}
+                              htmlFor={optionId}
+                              className="flex cursor-pointer items-start gap-2 rounded-md border border-[var(--border-subtle)] px-2.5 py-2 text-left text-[11px] hover:bg-[var(--bg-hover)] has-[:checked]:border-[var(--accent-brown)] has-[:checked]:bg-[var(--bg-hover)]"
+                            >
+                              <input
+                                id={optionId}
+                                type="radio"
+                                name={`assist-question-${activeQuestion.id}`}
+                                value={option}
+                                checked={activeQuestionAnswer === option}
+                                onChange={() => setWriteAnswers((previous) => ({
+                                  ...previous,
+                                  [activeQuestion.id]: option,
+                                }))}
+                                className="mt-0.5 size-3.5 shrink-0"
+                                style={{ accentColor: 'var(--accent-brown)' }}
+                              />
+                              <span>{option}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </fieldset>
+                  )}
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={writeQuestionIndex === 0}
+                      onClick={() => setWriteQuestionIndex((index) => Math.max(0, index - 1))}
+                    >
+                      Back
+                    </Button>
+                    {writeQuestionIndex < writeQuestions.length - 1 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!activeQuestionAnswer}
+                        onClick={() => setWriteQuestionIndex((index) => index + 1)}
+                      >
+                        Next
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!questionnaireComplete || isWorking}
+                        onClick={submitQuestionnaire}
+                      >
+                        {questionnaireMode === 'write'
+                          ? 'Continue writing'
+                          : questionnaireMode === 'edit'
+                            ? 'Refine edit'
+                            : 'Send answers'}
+                      </Button>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            ) : isWorking ? (
               <InputGroupButton
                 type="button"
                 variant="outline"

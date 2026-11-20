@@ -73,7 +73,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
   const signal = ctrl.signal
 
   const stream = new ReadableStream({
-    async start(c) {
+    start(c) {
+      // Do not return the generation promise from `start`: some runtimes wait
+      // for that promise to settle before exposing queued chunks to the
+      // response reader, which turns this SSE endpoint into a buffered one.
+      void (async () => {
       const send = (obj: unknown) => c.enqueue(new TextEncoder().encode(sse(obj)))
       let systemPrompt = ''
       let userPrompt = ''
@@ -88,6 +92,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             return null
           })
         const mode = payload.mode.trim().toLowerCase()
+        const questionnaireAnswers = payload.clarification_answers ?? payload.write_answers
+        const answerLines = Object.entries(questionnaireAnswers ?? {}).map(([question, answer]) =>
+          `${question}: ${Array.isArray(answer) ? answer.join(', ') : answer}`,
+        )
+        const requestMessage = answerLines.length
+          ? `${payload.message}\n\nClarification answers:\n${answerLines.join('\n')}`
+          : payload.message
         const isPlannerDraft = mode === 'planner_draft'
         const harness =
           !isPlannerDraft && payload.harness && payload.harness !== 'api'
@@ -252,12 +263,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             harnessPrompt = built.harnessPrompt
             console.log(formatCacheInfo('harness_edit', systemPrompt, userPrompt))
           } else {
-            const req = { ...payload, message: payload.message }
+            const req = { ...payload, message: requestMessage }
             const deps = {
               settings: settings as never,
               chatPrompt: await loadSimplePrompt('simple-chat.md').catch(() => ''),
               readFile: (p: string) => readWorkspaceFile(p, ws).catch(() => null),
-              message: payload.message,
+              message: requestMessage,
               includeHistory: false,
               expandedTagged: tagged,
             }
@@ -533,7 +544,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         }
 
         if (mode === 'write') {
-          if (!payload.write_answers && payload.message.trim().split(/\s+/).length < 8) {
+          if (!answerLines.length && payload.message.trim().split(/\s+/).length < 8) {
             send({
               status: 'write_questionnaire',
               questions: [
@@ -556,7 +567,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             `User request:\n${payload.message}`,
             payload.selected_text ? `Selected passage:\n${payload.selected_text}` : '',
             payload.content ? `Current document:\n${payload.content.slice(-30000)}` : '',
-            payload.write_answers ? `Clarification answers:\n${JSON.stringify(payload.write_answers)}` : '',
+            answerLines.length ? `Clarification answers:\n${JSON.stringify(questionnaireAnswers)}` : '',
             tagged.length ? `Referenced files:\n${tagged.join('\n')}` : '',
           ].filter(Boolean).join('\n\n')
           let prior = ''
@@ -745,7 +756,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           ).catch(() => [])
           const planner = runPlannerPrompt({
             content: payload.content,
-            message: payload.message,
+            message: requestMessage,
             selectedText: payload.selected_text,
             cursorParagraphText: payload.cursor_paragraph_text,
             sessionId: payload.session_id,
@@ -795,7 +806,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             system: planner.system,
             user: userPrompt,
             raw: planRaw,
-            plan: parsePlannerOutput(planRaw, payload.message),
+            plan: parsePlannerOutput(planRaw, requestMessage),
             promptTokens: result.usage.inputTokens ?? 0,
             completionTokens: result.usage.outputTokens ?? 0,
             thinking: result.reasoningText || filteredPlan.thinking || null,
@@ -823,7 +834,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             send({ status: 'context_resolved', context_needed: taggedContext })
           }
           send({ status: 'generating' })
-          const query = plan?.plan.refined_query || payload.message
+          const query = plan?.plan.refined_query || requestMessage
           const contextNeeded: string[] = plan
             ? [...(plan.plan.context_needed ?? [])]
             : [...taggedContext]
@@ -970,17 +981,17 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           send({ status: 'generating' })
           const chatPrompt = await loadSimplePrompt('simple-chat.md').catch(() => '')
           const chatLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
-           const composed = await composeChatMessages(payload as never, {
+             const composed = await composeChatMessages({ ...payload, message: requestMessage } as never, {
              settings: settings as never,
             chatPrompt,
             readFile,
-            message: payload.message,
+            message: requestMessage,
             logs: chatLogs as never,
              expandedTagged: tagged,
            })
            let memoryContext = ''
             try {
-              memoryContext = await recallMemoryContext(ws, payload.message, memoryConfig(process.env, settings))
+              memoryContext = await recallMemoryContext(ws, requestMessage, memoryConfig(process.env, settings))
               send({ status: 'memory_recall', state: memoryContext ? 'used' : 'none' })
             } catch (error) {
               console.warn(`Memory recall unavailable: ${errMsg(error)}`)
@@ -1315,7 +1326,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 role: 'user',
                 content: [
                   `Mode: ${isEditFlow ? 'edit' : 'chat'}`,
-                  `Instruction: ${payload.message}`,
+                  `Instruction: ${requestMessage}`,
                   payload.selected_text
                     ? 'A text selection is active.'
                     : 'No text selection is active.',
@@ -1386,14 +1397,24 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
       } finally {
         if (payload.session_id) releaseController(payload.session_id)
       }
+      })().catch((error: unknown) => {
+        // The workflow handles expected failures itself; this protects the
+        // stream from an unexpected failure in its cleanup path.
+        try {
+          c.error(error)
+        } catch {
+          // The client may already have cancelled the response.
+        }
+      })
     },
   })
 
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     },
   })
 }
