@@ -125,7 +125,12 @@ function validateWriteClarificationAnswers(
     throw new Error('Clarification answers are required.')
   }
   const input = rawAnswers as Record<string, unknown>
-  if (Object.keys(input).length !== questions.length) {
+  const expectedIds = new Set(questions.map((question) => question.id))
+  const submittedIds = Object.keys(input)
+  if (
+    submittedIds.length !== questions.length ||
+    submittedIds.some((id) => !expectedIds.has(id))
+  ) {
     throw new Error('The clarification answers do not match the pending questions.')
   }
   const byId = Object.create(null) as Record<string, string>
@@ -531,6 +536,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 instructions: composed.system,
                 availableFiles: availableForAgent,
                 readFile,
+                memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
               })
           let fullPlanner = ''
           let fullThinking = ''
@@ -994,6 +1000,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const agent = createAssistPlannerAgent({
             endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(plannerCache) },
             instructions: planner.system,
+            memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
           })
           const result = await agent.generate({
             messages: plannerMsgs.messages.filter(
@@ -1230,15 +1237,16 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokensCached: null,
             pending: null,
           }
-          const agent = createAssistChatAgent({
+           const agent = createAssistChatAgent({
             endpoint: {
               ...agentEndpoint,
               requestBody: cacheRequestBody(chatCache),
               telemetry: chatTelemetry,
             },
-            instructions: composed.system,
-            maxOutputTokens: maxToks,
-          })
+             instructions: composed.system,
+             maxOutputTokens: maxToks,
+             memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
+           })
           let fullChat = ''
           let fullThinking = ''
           const thinkingFilter = new ThinkingTagFilter(

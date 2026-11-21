@@ -15,6 +15,7 @@ import {
   consolidateMemories,
   getMemoryStatus,
   searchMemories,
+  searchMemoryText,
 } from './memory.server'
 
 const temporaryDirectories: string[] = []
@@ -136,6 +137,53 @@ describe('memory store', () => {
     )
 
     await expect(embed('remember this')).resolves.toEqual([0.1, 0.2])
+  })
+
+  it('searches text memory within one workspace without exposing scores or vectors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    await saveMemory(store, {
+      workspaceKey: 'workspace-a', kind: 'character', content: 'Elara is an artist.', embedding: [1, 0],
+    })
+    await closeMemoryStore(store)
+
+    const result = await searchMemoryText({
+      workspaceKey: 'workspace-a',
+      query: 'Elara',
+      config: {
+        enabled: true, extractionEnabled: false, databasePath: join(directory, 'memory.duckdb'),
+        embeddingUrl: 'http://embed.test/v1', embeddingApiKey: undefined, embeddingModel: 'embed',
+        topK: 5, minimumScore: 0, maxPromptChars: 6000,
+      },
+      embed: async () => [1, 0],
+    })
+    expect(result).toEqual({ available: true, memories: [{ kind: 'character', content: 'Elara is an artist.' }] })
+    expect(JSON.stringify(result)).not.toContain('score')
+    expect(JSON.stringify(result)).not.toContain('embedding')
+  })
+
+  it('returns unavailable safely when text memory cannot be searched', async () => {
+    const result = await searchMemoryText({
+      workspaceKey: 'workspace-a',
+      query: 'anything',
+      config: { ...memoryConfig({}), enabled: false },
+    })
+    expect(result).toEqual({ available: false, memories: [] })
+  })
+
+  it('returns unavailable when the memory store cannot be opened', async () => {
+    const result = await searchMemoryText({
+      workspaceKey: 'workspace-a',
+      query: 'anything',
+      config: {
+        enabled: true, extractionEnabled: false, databasePath: '/definitely/missing/memory.duckdb',
+        embeddingUrl: 'http://embed.test/v1', embeddingApiKey: undefined, embeddingModel: 'embed',
+        topK: 5, minimumScore: 0.45, maxPromptChars: 6000,
+      },
+      embed: async () => [1, 0],
+    })
+    expect(result).toEqual({ available: false, memories: [] })
   })
 
   it('opens a persistent database and creates the memory schema', async () => {

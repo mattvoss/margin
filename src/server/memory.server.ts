@@ -34,6 +34,11 @@ export interface MemorySearchResult {
   accessCount: number
 }
 
+export interface MemoryTextSearchResult {
+  available: boolean
+  memories: Array<Pick<MemorySearchResult, 'kind' | 'content'>>
+}
+
 export interface MemoryListItem extends MemorySearchResult {
   workspaceKey: string
   sessionId: string | null
@@ -238,6 +243,43 @@ export async function recallMemoryContext(
     return formatMemoryContext(memories, config.maxPromptChars)
   } finally {
     await closeMemoryStore(store)
+  }
+}
+
+/** Search workspace memory from plain text without exposing vectors or scores. */
+export async function searchMemoryText(input: {
+  workspaceKey: string
+  query: string
+  config?: MemoryConfig
+  kinds?: MemoryKind[]
+  limit?: number
+  embed?: MemoryEmbedder
+}): Promise<MemoryTextSearchResult> {
+  const config = input.config ?? memoryConfig()
+  const query = input.query.trim()
+  if (!config.enabled || !config.embeddingUrl || !config.embeddingModel || !query) {
+    return { available: false, memories: [] }
+  }
+
+  let store: MemoryStore | null = null
+  try {
+    store = await openMemoryStore(config.databasePath ?? join(DATA_ROOT, 'memory.duckdb'))
+    const embedding = await (input.embed ?? createMemoryEmbedder(config))(query)
+    const memories = await searchMemories(store, {
+      workspaceKey: input.workspaceKey,
+      embedding,
+      kinds: input.kinds,
+      limit: input.limit,
+      minimumScore: config.minimumScore,
+    })
+    return {
+      available: true,
+      memories: memories.map(({ kind, content }) => ({ kind, content })),
+    }
+  } catch {
+    return { available: false, memories: [] }
+  } finally {
+    if (store) await closeMemoryStore(store)
   }
 }
 

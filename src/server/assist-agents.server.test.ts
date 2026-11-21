@@ -18,6 +18,15 @@ const endpoint = {
   baseUrl: 'http://localhost:1234/v1',
 }
 
+const memory = {
+  workspaceKey: 'workspace-a',
+  config: {
+    enabled: false, extractionEnabled: false, databasePath: undefined,
+    embeddingUrl: undefined, embeddingApiKey: undefined, embeddingModel: undefined,
+    topK: 5, minimumScore: 0.45, maxPromptChars: 6000,
+  },
+}
+
 function completion(message: Record<string, unknown>, finishReason = 'stop') {
   return new Response(
     JSON.stringify({
@@ -102,6 +111,22 @@ describe('SimpleAssist agents', () => {
     const agent = createAssistChatAgent({ endpoint, instructions: 'Chat.' })
     const result = await agent.stream({ prompt: 'Hello.' })
     await expect(result.text).resolves.toBe('A chat reply.')
+  })
+
+  it('exposes bounded memory search only when memory context is supplied', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => completion({ content: 'Planner reply.' })))
+    const withoutMemory = createAssistChatAgent({ endpoint, instructions: 'Chat.' })
+    expect(Object.keys(withoutMemory.tools ?? {})).toEqual([])
+    const withMemory = createAssistChatAgent({ endpoint, instructions: 'Chat.', memory })
+    expect(Object.keys(withMemory.tools ?? {})).toEqual(['search_memory'])
+    const schema = withMemory.tools?.search_memory as unknown as { inputSchema?: { safeParse: (value: unknown) => { success: boolean } } }
+    expect(schema.inputSchema?.safeParse({ query: '' }).success).toBe(false)
+    expect(schema.inputSchema?.safeParse({ query: 'x'.repeat(1001) }).success).toBe(false)
+  })
+
+  it('keeps the edit writer tool-free even when memory is configured elsewhere', async () => {
+    const agent = createAssistEditAgent({ endpoint, instructions: 'Rewrite the paragraph.' })
+    expect(Object.keys(agent.tools ?? {})).toEqual([])
   })
 
   it('keeps cache hints and disables thinking for post-processing subagents', async () => {

@@ -22,6 +22,7 @@ import { Route as CreateRoute } from '../routes/api.workspace.create'
 import { Route as MediaRoute } from '../routes/api.workspace.media'
 import { Route as MediaSplatRoute } from '../routes/api.workspace.media.$'
 import { Route as MediaFromUrlRoute } from '../routes/api.workspace.media.from-url'
+import { Route as MemoryIndexRoute } from '../routes/api.memory.index'
 import { Route as ImagesStylesRoute } from '../routes/api.images.styles'
 import { Route as ImagesLogsRoute } from '../routes/api.images.logs'
 import { Route as ImagesGenerateRoute } from '../routes/api.images.generate'
@@ -381,13 +382,23 @@ describe('assist', () => {
   })
 
   it('streams an error event when no LLM is reachable', async () => {
-    const res = await handlersOf(AssistSimpleRoute).POST({
-      request: req('assist/simple', 'POST', { mode: 'chat', message: 'hi', session_id: 't1', harness: 'none' }),
-    } as never)
-    expect(res.headers.get('content-type')).toContain('text/event-stream')
-    const text = await res.text()
-    expect(text).toContain('"status":"generating"')
-    expect(text).toContain('"status":"error"')
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://unreachable.test/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'unreachable-test')
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('connection refused')
+    }))
+    try {
+      const res = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', { mode: 'chat', message: 'hi', session_id: 't1', harness: 'none' }),
+      } as never)
+      expect(res.headers.get('content-type')).toContain('text/event-stream')
+      const text = await res.text()
+      expect(text).toContain('"status":"generating"')
+      expect(text).toContain('"status":"error"')
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
   })
 
   it('pauses on ask_user, then resumes with the user tool result before starting the plan', async () => {
@@ -607,8 +618,11 @@ describe('assist', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[] }
-        if (Array.isArray(body.tools) && body.tools.length > 0) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          tools?: Array<{ function?: { name?: string } }>
+        }
+        const toolNames = body.tools?.map((candidate) => candidate.function?.name) ?? []
+        if (toolNames.some((name) => ['write_chat', 'post_process', 'finish'].includes(name ?? ''))) {
           const names = ['write_chat', 'post_process', 'finish']
           const name = names[orchestrationStep++]
           calls.push(name)
@@ -705,10 +719,11 @@ describe('assist', () => {
       'fetch',
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? '{}')) as {
-          tools?: unknown[]
+          tools?: Array<{ function?: { name?: string } }>
           stream?: boolean
         }
-        if (Array.isArray(body.tools) && body.tools.length > 0) {
+        const toolNames = body.tools?.map((candidate) => candidate.function?.name) ?? []
+        if (toolNames.some((name) => ['plan_edit', 'write_edit', 'post_process', 'finish'].includes(name ?? ''))) {
           const names =
             orchestrationStep++ === 0
               ? ['plan_edit', 'write_edit', 'post_process']
@@ -857,6 +872,9 @@ describe('per-client settings (localStorage keys on the request)', () => {
   })
 
   it('overlays only browser-owned keys (allowlist)', async () => {
+    // This test concerns request-level filtering, so establish a known shared
+    // baseline rather than inheriting endpoints written by another test.
+    await invoke(SettingsRoute, 'PATCH', 'settings/', { endpoints: {} })
     const h = new Request('http://localhost/x', {
       headers: clientHeader({ theme: 'dark', endpoints: { evil: {} as Record<string, unknown> } }),
     })
@@ -909,6 +927,14 @@ describe('per-client settings (localStorage keys on the request)', () => {
     } as never)
     const data = (await stats.json()) as { stats: { markdown_files: number } }
     expect(data.stats.markdown_files).toBe(1)
+  })
+
+  it('rejects workspace memory indexing when embeddings are not configured', async () => {
+    const response = await handlersOf(MemoryIndexRoute).POST({
+      request: new Request('http://localhost/api/memory/index', { method: 'POST' }),
+    } as never)
+    expect(response.status).toBe(503)
+    await expect(response.text()).resolves.toContain('Memory embeddings are not configured')
   })
 })
 
