@@ -22,6 +22,7 @@ export const CLIENT_ONLY_KEYS = [
   'workspace_profiles',
   'theme',
   'theme_family',
+  'default_verbosity',
   'text_style',
   'editor_stats',
   'character_tracking',

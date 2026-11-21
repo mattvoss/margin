@@ -26,6 +26,14 @@ type Memory = {
   archived: boolean
 }
 
+type IndexResult = {
+  filesDiscovered: number
+  filesIndexed: number
+  memoriesSaved: number
+  filesSkipped: number
+  failures: Array<{ path: string; reason: string }>
+}
+
 const stateCopy: Record<MemoryStatus['state'], { label: string; detail: string }> = {
   off: { label: 'Memory is off', detail: 'Enable memory on the server to use workspace memory.' },
   needs_embedding_model: { label: 'Embedding model needed', detail: 'Add an embedding model to the active endpoint in Settings → Endpoints.' },
@@ -42,6 +50,8 @@ export function MemorySettings({ query }: { query: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [testing, setTesting] = useState(false)
+  const [indexing, setIndexing] = useState(false)
+  const [indexResult, setIndexResult] = useState<IndexResult | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -87,6 +97,25 @@ export function MemorySettings({ query }: { query: string }) {
     }
   }
 
+  const indexMarkdown = async () => {
+    setIndexing(true)
+    setIndexResult(null)
+    setError(null)
+    try {
+      const response = await apiFetch(`${API_BASE}/api/memory/index`, { method: 'POST' })
+      const body = await response.json().catch(() => null) as IndexResult | { detail?: string } | null
+      if (!response.ok) {
+        throw new Error(body && 'detail' in body && typeof body.detail === 'string' ? body.detail : 'Could not index Markdown files.')
+      }
+      setIndexResult(body as IndexResult)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not index Markdown files.')
+    } finally {
+      setIndexing(false)
+    }
+  }
+
   const visible = memories.filter(memory =>
     !filter.trim() || `${memory.kind} ${memory.content}`.toLowerCase().includes(filter.trim().toLowerCase()),
   )
@@ -121,7 +150,15 @@ export function MemorySettings({ query }: { query: string }) {
                 <button onClick={() => void load()} className="self-start inline-flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-heading)]" aria-label="Refresh memory status">
                   <RefreshCw size={13} /> Refresh
                 </button>
+                <button onClick={() => void indexMarkdown()} disabled={indexing || status?.state !== 'ready'} className="self-start inline-flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-heading)] disabled:opacity-50" aria-label="Index all Markdown files">
+                  <RefreshCw size={13} /> {indexing ? 'Indexing…' : 'Index Markdown files'}
+                </button>
                 </div>
+                <p className="text-[11px] text-[var(--text-muted)]">Indexing sends Markdown content to the configured LLM and embedding providers. Existing memories generated from each file are replaced after successful indexing.</p>
+                {indexResult && <div role="status" className="text-[12px] text-[var(--text-secondary)]">
+                  Indexed {indexResult.filesIndexed} of {indexResult.filesDiscovered} files and saved {indexResult.memoriesSaved} memories{indexResult.filesSkipped ? `; skipped ${indexResult.filesSkipped}` : ''}.
+                  {indexResult.failures.length > 0 && <span className="block text-[var(--accent-brown)]">{indexResult.failures.length} file{indexResult.failures.length === 1 ? '' : 's'} failed: {indexResult.failures.map(failure => failure.path).join(', ')}</span>}
+                </div>}
               </div>
             )}
             {error && <p role="alert" className="mt-3 text-[12px] text-red-600">{error}</p>}

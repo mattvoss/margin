@@ -682,16 +682,27 @@ async function loadManifest(manifestAbsPath: string): Promise<Record<string, str
   return mapping;
 }
 
-async function collectMarkdownFiles(dir: string, out: string[]): Promise<void> {
+async function collectMarkdownFiles(dir: string, root: string, out: string[]): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await collectMarkdownFiles(full, out);
+      if (entry.name === 'outputs') continue;
+      await collectMarkdownFiles(full, root, out);
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
-      out.push(full);
+      out.push(posixRel(full, root));
     }
   }
+}
+
+/** Recursively list safe, workspace-relative Markdown paths. */
+export async function listMarkdownFiles(workspaceDir?: string): Promise<string[]> {
+  const ws = await resolveWorkspace(workspaceDir);
+  const root = resolve(ws);
+  const paths: string[] = [];
+  await collectMarkdownFiles(root, root, paths);
+  return paths.sort();
 }
 
 export async function listInputFiles(
@@ -721,9 +732,9 @@ export async function listInputFiles(
   const files: InputFileEntry[] = [];
   for (const folder of folders) {
     const found: string[] = [];
-    await collectMarkdownFiles(join(root, folder), found);
-    for (const abs of found) {
-      const relPath = posixRel(abs, root);
+    await collectMarkdownFiles(join(root, folder), root, found);
+    for (const relPath of found) {
+      const abs = join(root, ...relPath.split('/'));
       let desc = '';
       for (const [prefix, manifest] of manifests) {
         if (relPath.startsWith(prefix)) {

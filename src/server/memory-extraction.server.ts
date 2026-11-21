@@ -67,7 +67,7 @@ export function memoryKindForFile(path: string): MemoryKind | null {
   if (folder === 'characters') return 'character'
   if (folder === 'locations') return 'location'
   if (folder === 'styles') return 'style'
-  return null
+  return normalized.toLowerCase().endsWith('.md') ? 'project_context' : null
 }
 
 export async function extractFileMemories(input: {

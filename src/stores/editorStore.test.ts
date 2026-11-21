@@ -59,13 +59,16 @@ describe('acceptAiEdit', () => {
 
     await useEditorStore.getState().acceptAiEdit()
 
-    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+    // Saving a categorized Markdown file also performs the non-blocking
+    // manuscript-memory refresh.
+    expect(apiFetchMock).toHaveBeenCalledTimes(2)
     const [url, init] = apiFetchMock.mock.calls[0] as [string, RequestInit]
     expect(String(url)).toBe('/api/workspace/files')
     expect(init.method).toBe('PUT')
     const body = JSON.parse(String(init.body)) as { filename: string; content: string }
     expect(body.filename).toBe('chapters/chapter-1.md')
     expect(body.content).toBe('# Chapter 1\n\nAI rewritten text')
+    expect(String(apiFetchMock.mock.calls[1]?.[0])).toBe('/api/memory/file')
 
     const s = useEditorStore.getState()
     expect(s.aiPendingEdit).toBeNull()

@@ -7,7 +7,7 @@ describe('file memory extraction', () => {
     expect(memoryKindForFile('characters/samantha.md')).toBe('character')
     expect(memoryKindForFile('locations/ballroom.md')).toBe('location')
     expect(memoryKindForFile('styles/samantha-style.md')).toBe('style')
-    expect(memoryKindForFile('notes/ideas.md')).toBeNull()
+    expect(memoryKindForFile('notes/ideas.md')).toBe('project_context')
   })
 
   it('accepts the manuscript-specific memory kinds', () => {

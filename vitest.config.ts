@@ -16,5 +16,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
+    // This route is named `api.memory.test.ts` because `test` is part of its
+    // URL, not because it contains a Vitest suite.
+    exclude: ['src/routes/**/*.test.{ts,tsx}'],
   },
 })
