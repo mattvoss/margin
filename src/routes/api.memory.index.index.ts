@@ -6,7 +6,7 @@ import { createMemoryEmbedder, memoryConfig, openMemoryStore } from '../server/m
 import { indexWorkspaceMarkdown } from '../server/memory-indexing.server'
 import { requestSettings, requestWorkspaceDir } from '../server/storage.server'
 
-export const Route = createFileRoute('/api/memory/')({
+export const Route = createFileRoute('/api/memory/index/')({
   server: { handlers: { POST: async ({ request }) => {
     const settings = await requestSettings(request)
     const config = memoryConfig(process.env, settings)
