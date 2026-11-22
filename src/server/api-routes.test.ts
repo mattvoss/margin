@@ -130,6 +130,34 @@ function toolCallResponse(name: string, args: Record<string, unknown>, id: strin
   )
 }
 
+function toolCallsResponse(
+  calls: Array<{ name: string; args: Record<string, unknown>; id: string }>,
+): Response {
+  return new Response(
+    JSON.stringify({
+      id: 'chatcmpl-test',
+      object: 'chat.completion',
+      created: 0,
+      model: 'assist-mock',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: calls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: JSON.stringify(call.args) },
+          })),
+        },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
+}
+
 async function invoke(
   route: unknown,
   method: string,
@@ -421,13 +449,20 @@ describe('assist', () => {
         if (clarificationCalls === 1) {
           expect(messages).toContain('Have the characters reconcile after the argument.')
           expect(messages).toContain('The chapter ends at the station.')
-          return toolCallResponse('ask_user', {
-            questions: [{
-              id: 'resolution',
-              question: 'How should the argument resolve?',
-              options: ['A quiet apology', 'A tense interruption'],
-            }],
-          }, 'call-ask-user')
+          return toolCallsResponse([
+            {
+              name: 'ask_user',
+              args: {
+                questions: [{
+                  id: 'resolution',
+                  question: 'How should the argument resolve?',
+                  options: ['A quiet apology', 'A tense interruption'],
+                }],
+              },
+              id: 'call-ask-user',
+            },
+            { name: 'proceed_to_plan', args: {}, id: 'call-proceed-too-early' },
+          ])
         }
         expect(messages).toContain('"role":"tool"')
         if (clarificationCalls === 2) {

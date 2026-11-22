@@ -751,8 +751,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             const askCalls = clarification.toolCalls.filter((call) => call.toolName === 'ask_user')
             const askCall = askCalls[0]
             if (askCall) {
-              if (askCalls.length !== 1 || clarification.toolCalls.some((call) => call.toolName === 'proceed_to_plan')) {
-                throw new Error('The clarifying agent returned conflicting tool calls.')
+              // Prefer an explicit questionnaire when a small model emits both
+              // tools in one turn. Asking is the safe, reversible action;
+              // proceeding would silently discard the unanswered questions.
+              if (askCalls.length !== 1) {
+                throw new Error('The clarifying agent returned multiple questionnaires.')
               }
               const questions = normalizeWriteClarificationQuestions(askCall.input)
               if (!questions.length) throw new Error('The clarifying agent returned an invalid questionnaire.')
