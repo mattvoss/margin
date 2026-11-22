@@ -1,6 +1,7 @@
 import duckdb from 'duckdb'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { copyFile, rename } from 'node:fs/promises'
 import { DATA_ROOT } from './env.server'
 
 export type MemoryKind = 'fact' | 'preference' | 'skill' | 'project_context' | 'instruction' | 'chapter' | 'character' | 'location' | 'style'
@@ -588,6 +589,26 @@ export async function openMemoryStore(databasePath: string): Promise<MemoryStore
     run: (sql: string, ...params: unknown[]) => run(database, sql, params),
     close: () => close(database),
   }
+}
+
+/**
+ * Preserve a damaged DuckDB file and recreate an empty memory store. Memory is
+ * derived data, so losing the index is safer than repeatedly failing saves and
+ * blocking the editor. The backup is intentionally best effort.
+ */
+export async function recoverMemoryStore(databasePath: string): Promise<MemoryStore> {
+  const backupPath = `${databasePath}.corrupt-${Date.now()}`
+  try {
+    await rename(databasePath, backupPath)
+  } catch {
+    try {
+      await copyFile(databasePath, backupPath)
+    } catch {
+      // The original open error remains the useful failure if recovery cannot
+      // preserve the file.
+    }
+  }
+  return openMemoryStore(databasePath)
 }
 
 export function closeMemoryStore(store: MemoryStore): Promise<void> {

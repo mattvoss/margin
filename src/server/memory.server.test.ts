@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +8,7 @@ import {
   formatMemoryContext,
   memoryConfig,
   openMemoryStore,
+  recoverMemoryStore,
   archiveMemory,
   listMemories,
   saveMemory,
@@ -28,6 +29,17 @@ afterEach(async () => {
 })
 
 describe('memory store', () => {
+  it('backs up a corrupt database before recreating the derived index', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'memory.duckdb')
+    await writeFile(databasePath, 'not a duckdb database')
+
+    const store = await recoverMemoryStore(databasePath)
+    await expect(store.all<{ count: bigint }>('SELECT count(*) AS count FROM memories')).resolves.toEqual([{ count: 0n }])
+    await store.close()
+  })
+
   it('formats recalled memories as bounded untrusted context', () => {
     expect(
       formatMemoryContext([

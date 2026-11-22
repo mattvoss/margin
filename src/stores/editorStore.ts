@@ -13,6 +13,8 @@ export interface FileEntry {
   originalContent: string
 }
 
+const pendingMemoryUpdates = new Set<string>()
+
 interface EditorState {
   content: string
   setContent: (content: string) => void
@@ -366,11 +368,17 @@ export const useEditorStore = create<EditorState>()(
         // from arbitrary chat text. Failure is deliberately non-blocking: a
         // memory provider outage must not make a successful file save fail.
         if (/^(chapters|characters|locations|styles)\//i.test(path) && path.toLowerCase().endsWith('.md')) {
-          void apiFetch(`${API_BASE}/api/memory/file`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, content }),
-          }).catch((error) => console.warn('Failed to update file memory:', error))
+          const memoryKey = `${path}\0${content}`
+          if (!pendingMemoryUpdates.has(memoryKey)) {
+            pendingMemoryUpdates.add(memoryKey)
+            void apiFetch(`${API_BASE}/api/memory/file`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path, content }),
+            })
+              .catch((error) => console.warn('Failed to update file memory:', error))
+              .finally(() => pendingMemoryUpdates.delete(memoryKey))
+          }
         }
       } else {
         const err = await res.json().catch(() => ({}))

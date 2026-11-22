@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { join } from 'node:path'
 import { err, json, readJson } from '../server/http.server'
-import { archiveMemoriesBySource, createMemoryEmbedder, memoryConfig, openMemoryStore, saveMemoryText } from '../server/memory.server'
+import { archiveMemoriesBySource, createMemoryEmbedder, memoryConfig, openMemoryStore, recoverMemoryStore, saveMemoryText } from '../server/memory.server'
 import { extractFileMemories, memoryKindForFile } from '../server/memory-extraction.server'
 import { DATA_ROOT } from '../server/env.server'
 import { requestSettings, requestWorkspaceDir } from '../server/storage.server'
@@ -16,7 +16,14 @@ export const Route = createFileRoute('/api/memory/file')({
     const config = memoryConfig(process.env, settings)
     if (!config.enabled || !config.extractionEnabled || !config.embeddingUrl || !config.embeddingModel) return json({ saved: 0, disabled: true })
     const workspace = await requestWorkspaceDir(request)
-    const store = await openMemoryStore(config.databasePath ?? join(DATA_ROOT, 'memory.duckdb'))
+    const databasePath = config.databasePath ?? join(DATA_ROOT, 'memory.duckdb')
+    let store
+    try {
+      store = await openMemoryStore(databasePath)
+    } catch (error) {
+      console.warn('Memory database was unreadable; recreating the derived index:', error)
+      store = await recoverMemoryStore(databasePath)
+    }
     const source = `file:${body.path}`
     try {
       const candidates = await extractFileMemories({ path: body.path, content: body.content, settings: settings as never })
