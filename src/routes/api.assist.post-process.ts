@@ -1,8 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  pickWriterMaxTokens,
-  type AnchorContext,
-} from '../server/assist.server'
+import { type AnchorContext } from '../server/assist.server'
 import { readCharacterState } from '../server/characters.server'
 import { err, errMsg, json, readJson } from '../server/http.server'
 import { runSinglePostProcessPass } from '../server/post-process.server'
@@ -109,7 +106,7 @@ export const Route = createFileRoute('/api/assist/post-process')({
             characterMessage,
             availableFiles: readAvailableFiles(body.available_files),
             readFile: (path) => readWorkspaceFile(path, workspaceDir).catch(() => null),
-            defaultMaxTokens: pickWriterMaxTokens(settings),
+            defaultMaxTokens: null,
             anchor,
             text,
             passId,

@@ -96,6 +96,5 @@ export function createSceneDraftingAgent(input: {
     instructions: input.instructions,
     stopWhen: isStepCount(1),
     temperature: 0.8,
-    maxOutputTokens: 8192,
   })
 }

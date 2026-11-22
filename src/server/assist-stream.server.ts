@@ -12,7 +12,6 @@ import {
   formatCacheInfo,
   loadSimplePrompt,
   parsePlannerOutput,
-  pickWriterMaxTokens,
   prefixHash,
   runPlannerPrompt,
   taggedPaths,
@@ -98,13 +97,6 @@ function generationBudget(
   const promptTokens = Math.ceil(promptChars / 4)
   const available = Math.max(visibleTokens, contextWindow - promptTokens - 256)
   return Math.min(requested, available)
-}
-
-function messageChars(messages: Array<{ content?: unknown }>): number {
-  return messages.reduce((total, message) =>
-    total + (typeof message.content === 'string' ? message.content.length : 0),
-    0,
-  )
 }
 
 function normalizeWriteClarificationQuestions(input: unknown): WriteClarificationQuestion[] {
@@ -238,7 +230,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           readFile,
           ignoredRefFiles: (settings as { ignored_ref_files?: string[] }).ignored_ref_files,
         })
-        const maxToks = pickWriterMaxTokens(settings as never) ?? 1800
         const postConfig = normalizePostProcessing(settings.post_processing)
         const sendPostEvent = (event: PostProcessEvent) => {
           if (event.type === 'start') {
@@ -310,7 +301,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           characterMessage,
           availableFiles: payload.available_files,
           readFile,
-          defaultMaxTokens: maxToks,
+          defaultMaxTokens: null,
           signal,
           onEvent: sendPostEvent,
           generatePass,
@@ -849,9 +840,19 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               instructions: id === 'prose'
                 ? 'You are the final prose writer. Follow the request and notes, but output only finished story prose.'
                 : `You are the ${id} subagent in a writing pipeline. Return concise useful notes for the next stage.`,
-              maxOutputTokens: id === 'prose'
-                ? generationBudget(maxToks, client.isThinking, prompt.length, getActiveContextWindow(settings as never))
-                : generationBudget(1800, client.isThinking, prompt.length, getActiveContextWindow(settings as never)),
+              // Internal notes stay bounded, but the final prose stage is
+              // intentionally uncapped; the provider's context window remains
+              // the hard limit.
+              ...(id === 'prose'
+                ? {}
+                : {
+                    maxOutputTokens: generationBudget(
+                      1800,
+                      client.isThinking,
+                      prompt.length,
+                      getActiveContextWindow(settings as never),
+                    ),
+                  }),
             })
             const result = await agent.stream({
               messages: [{ role: 'user', content: prompt }],
@@ -1153,12 +1154,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               telemetry: writerTelemetry,
             },
             instructions: gen.system,
-            maxOutputTokens: generationBudget(
-              maxToks,
-              client.isThinking,
-              messageChars(writerMsgs.messages),
-              getActiveContextWindow(settings as never),
-            ),
           })
           let fullRaw = ''
           let fullThinking = ''
@@ -1300,12 +1295,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               telemetry: chatTelemetry,
             },
              instructions: composed.system,
-             maxOutputTokens: generationBudget(
-               maxToks,
-               client.isThinking,
-               messageChars(chatMsgs.messages),
-               getActiveContextWindow(settings as never),
-             ),
              memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
            })
           let fullChat = ''

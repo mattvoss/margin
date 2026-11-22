@@ -213,14 +213,14 @@ export function createAssistEditAgent(input: {
 export function createWriteStageAgent(input: {
   endpoint: AssistAgentEndpoint
   instructions: string
-  maxOutputTokens?: number
+  maxOutputTokens?: number | null
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions,
     stopWhen: isStepCount(1),
     temperature: input.instructions.includes('finished story prose') ? 0.8 : 0.35,
-    maxOutputTokens: input.maxOutputTokens ?? 1800,
+    ...(input.maxOutputTokens != null ? { maxOutputTokens: input.maxOutputTokens } : {}),
   })
 }
 

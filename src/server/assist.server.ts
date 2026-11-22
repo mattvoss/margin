@@ -607,20 +607,6 @@ export async function injectPinnedRefFiles(
 /* ------------------------------------------------------------------ */
 
 /**
- * Mirror of `_pick_writer_max_tokens`. `disableTokenLimits` defaults to the
- * DISABLE_TOKEN_LIMITS env var (config.py:23: "true"/"1"/"yes").
- */
-export function pickWriterMaxTokens(settings: AssistSettings, disableTokenLimits?: boolean): number | null {
-  const disabled =
-    disableTokenLimits ?? ['true', '1', 'yes'].includes((process.env.DISABLE_TOKEN_LIMITS ?? '').toLowerCase())
-  if (disabled) return null
-  const mapping: Record<string, number | null> = { concise: 250, balanced: 500, expansive: 1000, none: null }
-  const verbosity = settings.default_verbosity ?? 'balanced'
-  if (Object.prototype.hasOwnProperty.call(mapping, verbosity)) return mapping[verbosity]
-  return 500
-}
-
-/**
  * Mirror of `_get_active_context_window`. Minor leniency deviation: Python's
  * int() raises on garbage (only ValueError is caught); here unparseable
  * values fall through to the default instead of throwing.
