@@ -1550,6 +1550,8 @@ export function SimpleAssist() {
             // merge-at-done path, this syncs added and deleted files).
             if (data.path && !['read', 'glob', 'grep'].includes(String(data.tool).toLowerCase())) scheduleFileRefresh()
           } else if (status === 'chat') {
+            setIsPlanning(false)
+            setIsGenerating(false)
             if (data.model_used) {
               useEditorStore.getState().setActiveModel(data.model_used as string)
             }
@@ -1573,6 +1575,9 @@ export function SimpleAssist() {
                 }
               })
               .catch((e) => setErrorText('Error: ' + (e as Error).message))
+          } else if (status === 'error') {
+            questionnaireSubmittingRef.current = false
+            setErrorText(`Error: ${String(data.detail || data.message || 'Assist request failed')}`)
           }
         },
         abortRef.current.signal
@@ -1596,8 +1601,6 @@ export function SimpleAssist() {
       setActiveHarness('none')
       setPostProcessStatus(null)
       if (!wasAbortedRef.current) {
-        setStreamingThinkingText('')
-        setStreamingChatText('')
         setActiveInstruction('')
         setActiveRefFiles([])
       }
