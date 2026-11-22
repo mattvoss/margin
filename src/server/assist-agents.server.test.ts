@@ -272,6 +272,42 @@ describe('SimpleAssist agents', () => {
     expect(requestCount).toBe(2)
   })
 
+  it('can disable model thinking for clarification tool calls', async () => {
+    let requestBody: Record<string, unknown> | null = null
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      return completion({
+        content: null,
+        tool_calls: [{
+          id: 'call-ask-user',
+          type: 'function',
+          function: {
+            name: 'ask_user',
+            arguments: JSON.stringify({
+              questions: [{
+                id: 'tone',
+                question: 'What tone should the scene use?',
+                options: ['Horror', 'Surreal'],
+              }],
+            }),
+          },
+        }],
+      }, 'tool_calls')
+    }))
+
+    const agent = createWriteClarificationAgent({
+      endpoint: {
+        ...endpoint,
+        requestBody: { chat_template_kwargs: { enable_thinking: false } },
+      },
+      instructions: 'Clarify only when needed.',
+    })
+    const result = await agent.generate({ prompt: 'Write a scene.' })
+
+    expect(result.toolCalls[0]).toMatchObject({ toolName: 'ask_user' })
+    expect(requestBody?.chat_template_kwargs).toEqual({ enable_thinking: false })
+  })
+
   it('dispatches the orchestrator tools in order and stops on finish', async () => {
     const calls: string[] = []
     const dispatch = (name: string) =>

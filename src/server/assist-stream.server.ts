@@ -8,6 +8,7 @@ import {
   composeChatMessages,
   composeScenePlannerMessages,
   extractAnchorContext,
+  getActiveContextWindow,
   formatCacheInfo,
   loadSimplePrompt,
   parsePlannerOutput,
@@ -82,6 +83,29 @@ interface WriteClarificationQuestion {
 }
 
 const MAX_WRITE_CLARIFICATION_ROUNDS = 4
+const THINKING_OUTPUT_RESERVE = 2000
+
+/** `maxOutputTokens` includes reasoning tokens on thinking models. */
+function generationBudget(
+  visibleTokens: number | null,
+  thinking: boolean,
+  promptChars?: number,
+  contextWindow?: number,
+): number | undefined {
+  if (visibleTokens == null) return undefined
+  const requested = visibleTokens + (thinking ? THINKING_OUTPUT_RESERVE : 0)
+  if (!promptChars || !contextWindow || contextWindow <= 0) return requested
+  const promptTokens = Math.ceil(promptChars / 4)
+  const available = Math.max(visibleTokens, contextWindow - promptTokens - 256)
+  return Math.min(requested, available)
+}
+
+function messageChars(messages: Array<{ content?: unknown }>): number {
+  return messages.reduce((total, message) =>
+    total + (typeof message.content === 'string' ? message.content.length : 0),
+    0,
+  )
+}
 
 function normalizeWriteClarificationQuestions(input: unknown): WriteClarificationQuestion[] {
   if (!input || typeof input !== 'object') return []
@@ -244,6 +268,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           }
         }
         const generatePass: PostProcessGenerator = async (input) => {
+          const passMaxTokens = input.maxTokens == null
+            ? undefined
+            : input.maxTokens + (input.disableThinking ? 0 : THINKING_OUTPUT_RESERVE)
           const agent = createAssistPostProcessAgent({
             endpoint: {
               model: input.client.model,
@@ -252,7 +279,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             },
             instructions: input.system,
             temperature: input.temperature,
-            maxOutputTokens: input.maxTokens,
+            maxOutputTokens: passMaxTokens,
             disableThinking: input.disableThinking,
           })
           const result = await agent.generate({
@@ -710,7 +737,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 baseUrl: client.baseUrl,
                 apiKey: client.apiKey,
                 requestBody: {
-                  chat_template_kwargs: { enable_thinking: client.isThinking },
+                  // This is a structured tool-call gate, not a prose stage. Some
+                  // reasoning models can consume the entire output budget in
+                  // reasoning_content and return no ask_user call at all.
+                  // Disable thinking so the questionnaire is emitted reliably.
+                  chat_template_kwargs: { enable_thinking: false },
                 },
               },
               instructions: [
@@ -755,6 +786,18 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               })
               c.close()
               return
+            }
+            const clarificationFinishReason =
+              clarification.rawFinishReason ?? clarification.finishReason ?? null
+            if (clarificationFinishReason === 'length') {
+              throw new Error(
+                'The clarification agent ran out of output before asking its question. Please retry the writing request.',
+              )
+            }
+            if (!clarification.toolCalls.some((call) => call.toolName === 'proceed_to_plan')) {
+              throw new Error(
+                'The clarification agent did not complete its decision. Please retry the writing request.',
+              )
             }
           }
 
@@ -806,7 +849,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               instructions: id === 'prose'
                 ? 'You are the final prose writer. Follow the request and notes, but output only finished story prose.'
                 : `You are the ${id} subagent in a writing pipeline. Return concise useful notes for the next stage.`,
-              maxOutputTokens: id === 'prose' ? maxToks : 1800,
+              maxOutputTokens: id === 'prose'
+                ? generationBudget(maxToks, client.isThinking, prompt.length, getActiveContextWindow(settings as never))
+                : generationBudget(1800, client.isThinking, prompt.length, getActiveContextWindow(settings as never)),
             })
             const result = await agent.stream({
               messages: [{ role: 'user', content: prompt }],
@@ -1000,6 +1045,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const agent = createAssistPlannerAgent({
             endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(plannerCache) },
             instructions: planner.system,
+            maxOutputTokens: generationBudget(
+              800,
+              client.isThinking,
+              messageChars(plannerMsgs.messages),
+              getActiveContextWindow(settings as never),
+            ),
             memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
           })
           const result = await agent.generate({
@@ -1102,7 +1153,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               telemetry: writerTelemetry,
             },
             instructions: gen.system,
-            maxOutputTokens: maxToks,
+            maxOutputTokens: generationBudget(
+              maxToks,
+              client.isThinking,
+              messageChars(writerMsgs.messages),
+              getActiveContextWindow(settings as never),
+            ),
           })
           let fullRaw = ''
           let fullThinking = ''
@@ -1244,7 +1300,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               telemetry: chatTelemetry,
             },
              instructions: composed.system,
-             maxOutputTokens: maxToks,
+             maxOutputTokens: generationBudget(
+               maxToks,
+               client.isThinking,
+               messageChars(chatMsgs.messages),
+               getActiveContextWindow(settings as never),
+             ),
              memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
            })
           let fullChat = ''

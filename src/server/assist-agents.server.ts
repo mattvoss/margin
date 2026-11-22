@@ -184,13 +184,14 @@ export function createAssistPlannerAgent(input: {
   endpoint: AssistAgentEndpoint
   instructions: string
   memory?: MemoryToolContext
+  maxOutputTokens?: number
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions + memoryInstructions(input.memory),
     ...(memoryTools(input.memory) ? { tools: memoryTools(input.memory), stopWhen: isStepCount(3) } : { stopWhen: isStepCount(1) }),
     temperature: 0.3,
-    maxOutputTokens: 800,
+    maxOutputTokens: input.maxOutputTokens ?? 800,
   })
 }
 
