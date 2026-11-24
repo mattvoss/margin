@@ -74,6 +74,19 @@ describe('writing evaluation', () => {
     })
   })
 
+  it('normalizes common confidence labels from evaluator models', () => {
+    const review = {
+      ...validReview,
+      criteria: validReview.criteria.map((criterion, index) => ({
+        ...criterion,
+        confidence: index === 0 ? 'high' : index === 1 ? 'medium' : 'low',
+      })),
+    }
+    expect(parseWritingModelReview(JSON.stringify(review)).criteria.map((criterion) => criterion.confidence)).toEqual([
+      'supported', 'limited', 'insufficient_context', 'insufficient_context', 'insufficient_context', 'insufficient_context',
+    ])
+  })
+
   it('bounds and labels prompt inputs as reference data', () => {
     const prompt = buildWritingEvaluationPrompt({
       instruction: 'Continue the scene.',

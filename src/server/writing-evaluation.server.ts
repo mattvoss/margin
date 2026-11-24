@@ -262,6 +262,19 @@ function normalizeWritingModelReview(value: unknown): unknown {
           id,
         }))
       : criteria
+  const normalizeConfidence = (value: unknown): unknown => {
+    const confidence = String(value ?? '').toLowerCase().replace(/[\s-]+/gu, '_')
+    if (confidence === 'supported' || confidence === 'high' || confidence === 'strong' || confidence === 'yes' || confidence === 'true') return 'supported'
+    if (confidence === 'insufficient_context' || confidence === 'insufficient' || confidence === 'none' || confidence === 'low' || confidence === 'no' || confidence === 'false') return 'insufficient_context'
+    return 'limited'
+  }
+  const normalizedCriteriaWithConfidence = Array.isArray(normalizedCriteria)
+    ? normalizedCriteria.map((criterion) => {
+        if (!criterion || typeof criterion !== 'object' || Array.isArray(criterion)) return criterion
+        const item = criterion as Record<string, unknown>
+        return { ...item, confidence: normalizeConfidence(item.confidence) }
+      })
+    : normalizedCriteria
   const findings = Array.isArray(record.findings)
     ? record.findings.map((finding) => {
         if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return finding
@@ -275,5 +288,5 @@ function normalizeWritingModelReview(value: unknown): unknown {
         }
       })
     : findings
-  return { ...record, criteria: normalizedCriteria, findings }
+  return { ...record, criteria: normalizedCriteriaWithConfidence, findings }
 }
