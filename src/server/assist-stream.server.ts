@@ -65,6 +65,7 @@ import {
   createWriteClarificationAgent,
   createWriteEvaluationAgent,
   createWriteStageAgent,
+  logprobProviderOptions,
   type AssistAgentTelemetry,
 } from './assist-agents.server'
 import { splitThinkingTags, ThinkingTagFilter } from './thinking-filter.server'
@@ -80,12 +81,15 @@ import {
   buildPredictablePatternRewritePrompt,
   runBoundedPatternRewrite,
   parseWritingModelReview,
+  attachPerplexity,
+  extractTokenLogprobs,
 } from './writing-evaluation.server'
 import type {
   WritingEvaluationRecord,
   WritingEvaluationResult,
   WritingModelReview,
 } from '../lib/writingEvaluation'
+import { checkEnglishStyle } from './english-style-checker.server'
 
 interface WriteClarificationQuestion {
   id: string
@@ -110,6 +114,17 @@ function generationBudget(
   const promptTokens = Math.ceil(promptChars / 4)
   const available = Math.max(visibleTokens, contextWindow - promptTokens - 256)
   return Math.min(requested, available)
+}
+
+function messageChars(messages: ModelMessage[]): number {
+  return messages.reduce((total, message) => {
+    if (typeof message.content === 'string') return total + message.content.length
+    return total + message.content.reduce((length, part) => {
+      if (typeof part === 'string') return length + part.length
+      if ('text' in part && typeof part.text === 'string') return length + part.text.length
+      return length
+    }, 0)
+  }, 0)
 }
 
 function normalizeWriteClarificationQuestions(input: unknown): WriteClarificationQuestion[] {
@@ -816,6 +831,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const evaluateProse = payload.evaluate_prose ?? (settings.write_evaluation_enabled !== false)
           let allThinking = ''
           let finalOutput = ''
+          let proseLogprobs: number[] | null = null
           let originalDraftForLog = ''
           let writingEvaluation: WritingEvaluationRecord = evaluateProse
             ? { status: 'skipped', reason: 'not_run' }
@@ -839,6 +855,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 timings: null,
                 tokensCached: null,
                 pending: null,
+                tokenLogprobs: [],
                 onReasoningDelta: (delta) => {
                   stageThinking += delta
                   allThinking += delta
@@ -849,6 +866,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 endpoint: {
                   model: client.model,
                   baseUrl: client.baseUrl,
+                providerName: client.providerName,
                   apiKey: client.apiKey,
                   telemetry: stageTelemetry,
                   requestBody: {
@@ -876,6 +894,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               const result = await agent.stream({
                 messages: [{ role: 'user', content: prompt }],
                 abortSignal: signal,
+                ...(id === 'prose' ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
               })
               const thinkingFilter = new ThinkingTagFilter(
                 client.isThinking,
@@ -896,6 +915,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     if (id === 'prose') send({ status: 'write_prose', chunk: filtered.text })
                   }
                 }
+                if (id === 'prose' && part.type === 'finish-step') {
+                  proseLogprobs = extractTokenLogprobs(part.providerMetadata, client.providerName) ?? proseLogprobs
+                }
               }
               const filteredTail = thinkingFilter.flush()
               if (filteredTail.thinking) {
@@ -908,6 +930,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
               }
               await stageTelemetry.pending
+              if (id === 'prose' && stageTelemetry.tokenLogprobs?.length) {
+                proseLogprobs = stageTelemetry.tokenLogprobs
+              }
               const resultReasoning = await result.reasoningText
               if (resultReasoning && !stageThinking) {
                 stageThinking = resultReasoning
@@ -936,7 +961,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   paragraphBefore: anchor.paragraphBefore,
                   paragraphAfter: anchor.paragraphAfter,
                 })
-                let predictablePattern = evaluatePredictablePatterns(finalOutput)
+                let predictablePattern = attachPerplexity(evaluatePredictablePatterns(finalOutput), proseLogprobs)
+                const styleChecks = payload.english_style_checker_enabled
+                  ? checkEnglishStyle({ draft: finalOutput })
+                  : null
                 const originalDraft = finalOutput
                 if (payload.rewrite_predictable_patterns && predictablePattern.spans.length) {
                   const rewriteResult = await runBoundedPatternRewrite({
@@ -1002,6 +1030,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   deterministicChecks,
                   modelReview,
                   predictablePattern,
+                  styleChecks,
                 }
                 writingEvaluation = { status: 'complete', result }
                 send({ status: 'write_evaluation_completed', evaluation: result })
