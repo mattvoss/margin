@@ -34,7 +34,7 @@ describe('writing pipeline', () => {
       onStageComplete: (stage) => completes.push(stage.id),
       generate: async (stage, prompt) => {
         calls.push(stage.id)
-        if (stage.id === 'prose') expect(prompt).toContain('<plan_notes>Scene beats.</plan_notes>')
+        if (stage.id === 'prose') expect(prompt).toContain('<plan_notes>\nScene beats.\n</plan_notes>')
         return stage.id === 'plan' ? 'Scene beats.' : 'The scene prose.'
       },
     })

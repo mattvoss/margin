@@ -72,8 +72,6 @@ import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
-import { join } from 'node:path'
-import { DATA_ROOT } from './env.server'
 import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.server'
 import {
   buildWritingEvaluationPrompt,
@@ -667,7 +665,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           let context = pending?.context ?? ''
           let clarificationMessages: ModelMessage[] = []
           let clarificationAnswers: Record<string, string> = pending?.answers ?? {}
-          let clarificationRound = pending?.rounds ?? 0
+          const clarificationRound = pending?.rounds ?? 0
 
           if (pending) {
             const questions = normalizeWriteClarificationQuestions(pending.toolInput)

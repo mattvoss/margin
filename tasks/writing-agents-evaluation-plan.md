@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The first implementation is in place: the Write flow uses a typed stage pipeline; deterministic checks and a bounded structured evaluator produce advisory reports; users can disable evaluation from the mode/model dropdown; results stream to Assist and are retained in session logs. Automated execution is still unverified because this environment has no `node`/`npm` executable. The HackerNoon article is also still pending review.
+The first implementation is in place: the Write flow uses a typed stage pipeline; deterministic checks and a bounded structured evaluator produce advisory reports; users can disable evaluation from the mode/model dropdown; results stream to Assist and are retained in session logs. The HackerNoon article was reviewed during validation; its additional perplexity and automatic rewrite patterns remain intentionally out of scope for the advisory first version. Focused validation passes; the full suite is currently blocked by an existing `api.memory.index` test import mismatch, and repository-wide lint reports unrelated baseline errors.
 
 ## Goal
 
@@ -42,7 +42,7 @@ Adaptation decisions for Margin:
 - Do not adopt automatic blocking or a three-round writer/reviewer loop as the default. Margin should present evidence and advisory findings, preserve the draft, and let the writer decide what to do. Any optional revision must be explicit, bounded, and preserve the original candidate.
 - Do not add a perplexity/AI-detection score to the initial evaluation feature. If explored later, it must be separately optional and framed only as a predictable-pattern diagnostic, never as authorship detection or prose-quality proof.
 
-The linked HackerNoon article has not yet been reviewed; compare it with these repository findings before finalizing implementation details.
+The HackerNoon article reinforces the orchestrator → planner → writer → reviewer separation and adds a structured story bible/current-state snapshot as a way to limit long-context drift. It also describes a local perplexity-based “AI slope” diagnostic and bounded rewrite iterations. Margin adopts the state/context-boundary lesson where existing workspace context supports it, but does not add a story-state filesystem workflow, perplexity score, AI-detection framing, or automatic rewrite loop to this advisory first version. Those patterns would require separate validation, project-configurable thresholds, and explicit user opt-in.
 
 ## Design Principles
 
@@ -120,7 +120,7 @@ Use an explicit schema (likely Zod) with bounded score ranges, bounded finding c
 ### Phase 0 — Reference review and design checkpoint
 
 - [x] Read the Claude-Book repository; record its orchestrator, planner/writer/reviewer boundaries, deterministic-first style checks, report/gate pattern, and diagnostic-only perplexity framing.
-- [ ] Read the HackerNoon article and note any relevant details not represented in the repository.
+- [x] Read the HackerNoon article and note any relevant details not represented in the repository.
 - [x] Compare the repository design with Margin's existing agent, tool, prompt, context, and SSE patterns.
 - [x] Write an adoption note: explicit roles, deterministic-first checks, scoped findings, configurable rules, and no default automatic blocking/revision loop.
 - [x] Confirm evaluation criteria and enablement using existing settings conventions: evaluation is on by default and has a server-synced toggle in the Assist mode/model dropdown.
@@ -186,11 +186,12 @@ Use an explicit schema (likely Zod) with bounded score ranges, bounded finding c
 - [x] Retain clarification pause/resume coverage and disable evaluation in those focused legacy tests.
 - [x] Add pipeline cancellation coverage; evaluation cancellation uses the request signal and aborted runs are not saved as completed.
 - [x] Cover evaluator failure and confirm prose still completes and remains reviewable.
-- [ ] Run the existing edit/chat/planner/drafter/post-process regression suite.
+- [ ] Run the existing edit/chat/planner/drafter/post-process regression suite (blocked by the existing `src/server/api-routes.test.ts` import of missing `../routes/api.memory.index`; repository contains `api.memory.index.index.ts`).
 - [x] Add deterministic evaluation fixtures in unit tests; do not assert subjective scores as objective quality.
 - [x] Omit a live evaluation command from the first implementation; normal CI remains offline.
 - [x] Update `docs/ai-assist.md` and `docs/writing-guide.md` with agent responsibilities, criteria, limitations, settings, and failure behavior.
-- [ ] Run focused Vitest tests, full `npm test`, `npm run lint`, and `npm run build` (blocked here: `node` and `npm` are not installed).
+- [x] Run focused Vitest tests (18/18) and `npm run build` successfully.
+- [ ] Run full `npm test` (blocked by the existing `api.memory.index` test import mismatch) and repository-wide `npm run lint` (blocked by 41 unrelated baseline errors; targeted changed-file lint passes).
 - [x] Bound prompts, stage artifacts, schema output, and evaluator report; keep reasoning out of evaluation logs.
 
 **Checkpoint:** Existing features remain intact, documentation matches behavior, and all automated verification passes.
@@ -228,4 +229,4 @@ Use an explicit schema (likely Zod) with bounded score ranges, bounded finding c
 - [x] Use the writer's configured endpoint for evaluation; defer a separate evaluator endpoint.
 - [x] Retain the existing six writing stages as typed specialists; consider consolidation only after output evaluation.
 - [x] Store the bounded evaluation report alongside the normal AI session log.
-- [ ] Review the HackerNoon article and record any additional relevant design constraints.
+- [x] Review the HackerNoon article and record any additional relevant design constraints.
