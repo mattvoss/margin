@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Archive, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react'
 import { API_BASE, apiFetch } from '../../lib/api'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useEditorStore } from '../../stores/editorStore'
 import { FilterSection, SectionCard, SectionLabel } from './shared'
 
 type MemoryStatus = {
@@ -24,6 +25,9 @@ type Memory = {
   updatedAt: string
   accessCount: number
   archived: boolean
+  source: { path: string; startLine: number | null; endLine: number | null; heading: string | null; contentHash: string | null } | null
+  sourceReferenceStale: boolean
+  mentions: Array<{ path: string; name: string; managedBy: 'user' | 'indexer' }>
 }
 
 type IndexResult = {
@@ -52,6 +56,8 @@ export function MemorySettings({ query }: { query: string }) {
   const [testing, setTesting] = useState(false)
   const [indexing, setIndexing] = useState(false)
   const [indexResult, setIndexResult] = useState<IndexResult | null>(null)
+  const [files, setFiles] = useState<Array<{ name: string; path: string }>>([])
+  const [editingMentions, setEditingMentions] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -70,9 +76,17 @@ export function MemorySettings({ query }: { query: string }) {
     } finally {
       setLoading(false)
     }
-  }, [showArchived, workspace])
+  }, [showArchived])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void Promise.resolve().then(load)
+  }, [load])
+
+  useEffect(() => {
+    void apiFetch(`${API_BASE}/api/workspace/files`).then(response => response.ok ? response.json() : []).then(body => {
+      if (Array.isArray(body)) setFiles(body as Array<{ name: string; path: string }>)
+    }).catch(() => undefined)
+  }, [workspace])
 
   const archive = async (memoryId: string) => {
     const response = await apiFetch(`${API_BASE}/api/memory/${encodeURIComponent(memoryId)}`, { method: 'DELETE' })
@@ -113,6 +127,21 @@ export function MemorySettings({ query }: { query: string }) {
       setError(err instanceof Error ? err.message : 'Could not index Markdown files.')
     } finally {
       setIndexing(false)
+    }
+  }
+
+  const updateMentions = async (memory: Memory, paths: string[]) => {
+    setEditingMentions(memory.memoryId)
+    try {
+      const response = await apiFetch(`${API_BASE}/api/memory/${encodeURIComponent(memory.memoryId)}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mentions: paths }),
+      })
+      if (!response.ok) throw new Error('Could not update file mentions.')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update file mentions.')
+    } finally {
+      setEditingMentions(null)
     }
   }
 
@@ -181,6 +210,21 @@ export function MemorySettings({ query }: { query: string }) {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]"><span className="uppercase tracking-wide">{memory.kind.replace('_', ' ')}</span><span>·</span><span>{memory.accessCount} recalls</span></div>
                   <p className="mt-1 text-[13px] text-[var(--text)] whitespace-pre-wrap break-words">{memory.content}</p>
+                  {memory.source && <div className="mt-2 text-[11px] text-[var(--text-muted)]">
+                    <button className="underline hover:text-[var(--text)]" onClick={() => void useEditorStore.getState().openFile(memory.source!.path)}>
+                      Source: {memory.source.path}{memory.source.startLine ? ` · lines ${memory.source.startLine}${memory.source.endLine && memory.source.endLine !== memory.source.startLine ? `–${memory.source.endLine}` : ''}` : ''}
+                    </button>
+                    {memory.source.heading && <span> · {memory.source.heading}</span>}
+                    {memory.sourceReferenceStale && <span className="ml-2 text-[var(--accent-brown)]">Source changed</span>}
+                  </div>}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="text-[var(--text-muted)]">Related files:</span>
+                    {memory.mentions.map(mention => <button key={mention.path} disabled={editingMentions === memory.memoryId} className="rounded bg-[var(--bg-input)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text)]" onClick={() => void updateMentions(memory, memory.mentions.filter(item => item.path !== mention.path).map(item => item.path))} title={`Remove @${mention.path}`}>@{mention.path} ×</button>)}
+                    <select aria-label="Add related file" disabled={editingMentions === memory.memoryId} value="" onChange={event => { if (event.target.value) void updateMentions(memory, [...memory.mentions.map(item => item.path), event.target.value]) }}>
+                      <option value="">+ Add file</option>
+                      {files.filter(file => !memory.mentions.some(mention => mention.path === file.path)).map(file => <option key={file.path} value={file.path}>@{file.path}</option>)}
+                    </select>
+                  </div>
                 </div>
                 {!memory.archived && <button onClick={() => void archive(memory.memoryId)} className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-heading)]" aria-label="Archive memory"><Archive size={15} /></button>}
               </div>

@@ -1,12 +1,14 @@
 import { readWorkspaceFile, listMarkdownFiles } from './storage.server'
 import {
   archiveMemoriesBySource,
+  listMemories,
   saveMemory,
   type MemoryConfig,
   type MemoryEmbedder,
   type MemoryStore,
 } from './memory.server'
 import { extractFileMemories, type MemoryCandidate } from './memory-extraction.server'
+import { sourceReferenceFor } from './memory-references.server'
 import type { LlmSettingsLike } from './llm.server'
 
 export interface WorkspaceMemoryIndexResult {
@@ -55,6 +57,10 @@ export async function indexWorkspaceMarkdown(
       }
 
       const sourceMessage = `file:${path}`
+      const previousMentions = (await listMemories(input.store, { workspaceKey: input.workspaceKey }))
+        .filter(memory => memory.source?.path === path || memory.content === sourceMessage)
+        .flatMap(memory => memory.mentions)
+      const preservedMentions = Array.from(new Map(previousMentions.map(mention => [mention.path, mention])).values())
       await archiveMemoriesBySource(input.store, {
         workspaceKey: input.workspaceKey,
         sourceMessage,
@@ -64,9 +70,11 @@ export async function indexWorkspaceMarkdown(
           workspaceKey: input.workspaceKey,
           kind: candidate.kind,
           content: candidate.content,
-          embedding: vector,
-          sourceMessage,
-        })
+           embedding: vector,
+           sourceMessage,
+           source: sourceReferenceFor(path, content, candidate.content),
+           mentions: preservedMentions,
+         })
       }
       result.filesIndexed += 1
       result.memoriesSaved += embedded.length

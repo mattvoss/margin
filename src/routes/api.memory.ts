@@ -10,7 +10,8 @@ import {
   type MemoryKind,
 } from '../server/memory.server'
 import { DATA_ROOT } from '../server/env.server'
-import { requestSettings, requestWorkspaceDir } from '../server/storage.server'
+import { readWorkspaceFile, requestSettings, requestWorkspaceDir } from '../server/storage.server'
+import { sourceContentHash } from '../server/memory-references.server'
 
 export const Route = createFileRoute('/api/memory')({
   server: {
@@ -21,9 +22,20 @@ export const Route = createFileRoute('/api/memory')({
         const config = memoryConfig(process.env, await requestSettings(request))
         const store = await openMemoryStore(config.databasePath ?? join(DATA_ROOT, 'memory.duckdb'))
         try {
-          return json(await listMemories(store, { workspaceKey: workspace,
-            includeArchived: params.get('archived') === 'true',
-          }))
+         const memories = await listMemories(store, { workspaceKey: workspace,
+             includeArchived: params.get('archived') === 'true',
+           })
+         for (const memory of memories) {
+           if (memory.source) {
+             try {
+               const content = await readWorkspaceFile(memory.source.path, workspace)
+               memory.sourceReferenceStale = memory.source.contentHash !== null && sourceContentHash(content) !== memory.source.contentHash
+             } catch {
+               memory.sourceReferenceStale = true
+             }
+           }
+         }
+         return json(memories)
         } finally {
           await store.close()
         }

@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { closeMemoryStore, listMemories, openMemoryStore, type MemoryConfig } from './memory.server'
+import { replaceMemoryMentions } from './memory.server'
+import { mentionForPath } from './memory-references.server'
 import { indexWorkspaceMarkdown } from './memory-indexing.server'
 
 const directories: string[] = []
@@ -60,6 +62,20 @@ describe('workspace Markdown memory indexing', () => {
     expect(second.failures).toHaveLength(1)
     expect((await listMemories(store, { workspaceKey: workspace })).map(memory => memory.content))
       .toEqual(['old memory'])
+    await closeMemoryStore(store)
+  })
+
+  it('preserves user mentions when a source file is re-indexed', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'margin-index-'))
+    directories.push(workspace)
+    await writeFile(join(workspace, 'notes.md'), 'Notes')
+    const store = await openMemoryStore(join(workspace, 'memory.duckdb'))
+    const extract = async () => [{ kind: 'project_context' as const, content: 'A durable note' }]
+    await indexWorkspaceMarkdown({ workspaceDir: workspace, workspaceKey: workspace, store, config, embed: async () => [1, 0], extract })
+    const first = (await listMemories(store, { workspaceKey: workspace }))[0]!
+    await replaceMemoryMentions(store, { workspaceKey: workspace, memoryId: first.memoryId, mentions: [mentionForPath('related.md')] })
+    await indexWorkspaceMarkdown({ workspaceDir: workspace, workspaceKey: workspace, store, config, embed: async () => [1, 0], extract })
+    expect((await listMemories(store, { workspaceKey: workspace }))[0]?.mentions.map(mention => mention.path)).toEqual(['related.md'])
     await closeMemoryStore(store)
   })
 })

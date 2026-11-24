@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { copyFile, rename } from 'node:fs/promises'
 import { DATA_ROOT } from './env.server'
+import type { MemoryMention, MemorySourceReference } from './memory-references.server'
 
 export type MemoryKind = 'fact' | 'preference' | 'skill' | 'project_context' | 'instruction' | 'chapter' | 'character' | 'location' | 'style'
 
@@ -14,6 +15,8 @@ export interface SaveMemoryInput {
   embedding: number[]
   sourceMessage?: string | null
   sourceLogId?: string | null
+  source?: MemorySourceReference | null
+  mentions?: MemoryMention[]
 }
 
 export type MemoryEmbedder = (text: string) => Promise<number[]>
@@ -46,6 +49,9 @@ export interface MemoryListItem extends MemorySearchResult {
   createdAt: string
   updatedAt: string
   archived: boolean
+  source: MemorySourceReference | null
+  sourceReferenceStale: boolean
+  mentions: MemoryMention[]
 }
 
 export interface MemorySummary {
@@ -300,13 +306,29 @@ const MEMORY_SCHEMA = `
     embedding DOUBLE[],
     source_message VARCHAR,
     source_log_id VARCHAR,
+    source_path VARCHAR,
+    source_start_line INTEGER,
+    source_end_line INTEGER,
+    source_start_offset INTEGER,
+    source_end_offset INTEGER,
+    source_heading VARCHAR,
+    source_content_hash VARCHAR,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     last_accessed TIMESTAMP,
     access_count INTEGER NOT NULL DEFAULT 0,
     strength DOUBLE NOT NULL DEFAULT 1.0,
     archived BOOLEAN NOT NULL DEFAULT FALSE
-  )
+  );
+  CREATE TABLE IF NOT EXISTS memory_mentions (
+    memory_id VARCHAR NOT NULL,
+    workspace_key VARCHAR NOT NULL,
+    file_path VARCHAR NOT NULL,
+    managed_by VARCHAR NOT NULL DEFAULT 'user',
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    UNIQUE(memory_id, file_path)
+  );
 `
 
 function callbackError(error: unknown): Error {
@@ -379,8 +401,10 @@ export async function saveMemory(store: MemoryStore, input: SaveMemoryInput): Pr
     `
       INSERT INTO memories (
         memory_id, workspace_key, session_id, kind, content, embedding,
-        source_message, source_log_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        source_message, source_log_id, source_path, source_start_line,
+        source_end_line, source_start_offset, source_end_offset, source_heading,
+        source_content_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     id,
     workspaceKey,
@@ -390,7 +414,21 @@ export async function saveMemory(store: MemoryStore, input: SaveMemoryInput): Pr
     JSON.stringify(input.embedding),
     input.sourceMessage ?? null,
     input.sourceLogId ?? null,
+    input.source?.path ?? null,
+    input.source?.startLine ?? null,
+    input.source?.endLine ?? null,
+    input.source?.startOffset ?? null,
+    input.source?.endOffset ?? null,
+    input.source?.heading ?? null,
+    input.source?.contentHash ?? null,
   )
+  for (const mention of input.mentions ?? []) {
+    await store.run(
+      `INSERT INTO memory_mentions (memory_id, workspace_key, file_path, managed_by)
+       VALUES (?, ?, ?, ?) ON CONFLICT (memory_id, file_path) DO NOTHING`,
+      id, workspaceKey, mention.path, mention.managedBy,
+    )
+  }
   return id
 }
 
@@ -491,10 +529,20 @@ export async function listMemories(
     created_at: string
     updated_at: string
     archived: boolean
+    source_path: string | null
+    source_start_line: number | null
+    source_end_line: number | null
+    source_start_offset: number | null
+    source_end_offset: number | null
+    source_heading: string | null
+    source_content_hash: string | null
+    source_message: string | null
   }>(
     `
       SELECT memory_id, workspace_key, session_id, kind, content, strength,
-             access_count, created_at, updated_at, archived
+             access_count, created_at, updated_at, archived, source_path,
+             source_start_line, source_end_line, source_start_offset,
+             source_end_offset, source_heading, source_content_hash, source_message
       FROM memories
       WHERE workspace_key = ?
         AND (? OR archived = false)
@@ -506,6 +554,16 @@ export async function listMemories(
     input.kind ?? null,
     input.kind ?? null,
   )
+  const mentions = await store.all<{ memory_id: string; file_path: string; managed_by: 'user' | 'indexer'; created_at: string; updated_at: string }>(
+    `SELECT memory_id, file_path, managed_by, created_at, updated_at
+     FROM memory_mentions WHERE workspace_key = ? ORDER BY file_path ASC`, workspaceKey,
+  )
+  const mentionsByMemory = new Map<string, MemoryMention[]>()
+  for (const mention of mentions) {
+    const list = mentionsByMemory.get(mention.memory_id) ?? []
+    list.push({ path: mention.file_path, name: mention.file_path.split('/').pop() ?? mention.file_path, managedBy: mention.managed_by, createdAt: String(mention.created_at), updatedAt: String(mention.updated_at) })
+    mentionsByMemory.set(mention.memory_id, list)
+  }
   return rows.map(row => ({
     memoryId: row.memory_id,
     workspaceKey: row.workspace_key,
@@ -518,7 +576,39 @@ export async function listMemories(
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     archived: Boolean(row.archived),
+    source: (row.source_path ?? (row.source_message?.startsWith('file:') ? row.source_message.slice(5) : null)) ? {
+      path: row.source_path ?? row.source_message!.slice(5),
+      startLine: row.source_start_line === null ? null : Number(row.source_start_line),
+      endLine: row.source_end_line === null ? null : Number(row.source_end_line),
+      startOffset: row.source_start_offset === null ? null : Number(row.source_start_offset),
+      endOffset: row.source_end_offset === null ? null : Number(row.source_end_offset),
+      heading: row.source_heading,
+      contentHash: row.source_content_hash ?? null,
+    } : null,
+    sourceReferenceStale: false,
+    mentions: mentionsByMemory.get(row.memory_id) ?? [],
   }))
+}
+
+export async function replaceMemoryMentions(
+  store: MemoryStore,
+  input: { workspaceKey: string; memoryId: string; mentions: MemoryMention[] },
+): Promise<boolean> {
+  const workspaceKey = validateText(input.workspaceKey, 'workspaceKey')
+  const memoryId = validateText(input.memoryId, 'memoryId')
+  const owned = await store.all<{ memory_id: string }>(
+    'SELECT memory_id FROM memories WHERE memory_id = ? AND workspace_key = ?', memoryId, workspaceKey,
+  )
+  if (owned.length === 0) return false
+  const unique = Array.from(new Map(input.mentions.map(mention => [mention.path, mention])).values())
+  await store.run('DELETE FROM memory_mentions WHERE memory_id = ? AND workspace_key = ? AND managed_by = \'user\'', memoryId, workspaceKey)
+  for (const mention of unique) {
+    await store.run(
+      `INSERT INTO memory_mentions (memory_id, workspace_key, file_path, managed_by)
+       VALUES (?, ?, ?, 'user')`, memoryId, workspaceKey, mention.path,
+    )
+  }
+  return true
 }
 
 export async function archiveMemory(
@@ -582,6 +672,17 @@ export async function openMemoryStore(databasePath: string): Promise<MemoryStore
   })
 
   await run(database, MEMORY_SCHEMA, [])
+  for (const statement of [
+    'ALTER TABLE memories ADD COLUMN source_path VARCHAR',
+    'ALTER TABLE memories ADD COLUMN source_start_line INTEGER',
+    'ALTER TABLE memories ADD COLUMN source_end_line INTEGER',
+    'ALTER TABLE memories ADD COLUMN source_start_offset INTEGER',
+    'ALTER TABLE memories ADD COLUMN source_end_offset INTEGER',
+    'ALTER TABLE memories ADD COLUMN source_heading VARCHAR',
+    'ALTER TABLE memories ADD COLUMN source_content_hash VARCHAR',
+  ]) {
+    try { await run(database, statement, []) } catch { /* Existing databases already have this column. */ }
+  }
 
   return {
     all: <T extends Record<string, unknown>>(sql: string, ...params: unknown[]) =>

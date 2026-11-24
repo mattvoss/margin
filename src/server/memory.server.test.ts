@@ -17,7 +17,9 @@ import {
   getMemoryStatus,
   searchMemories,
   searchMemoryText,
+  replaceMemoryMentions,
 } from './memory.server'
+import { mentionForPath, sourceReferenceFor } from './memory-references.server'
 
 const temporaryDirectories: string[] = []
 
@@ -247,6 +249,41 @@ describe('memory store', () => {
     expect(results[0]?.score).toBeCloseTo(1)
     expect(results.some(result => result.content.includes('other workspace'))).toBe(false)
 
+    await closeMemoryStore(store)
+  })
+
+  it('round-trips source provenance and lets users replace related file mentions', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    const source = sourceReferenceFor('chapters/scene.md', '# Scene\nThe door is open.\n', 'The door is open.')
+    const memoryId = await saveMemory(store, {
+      workspaceKey: 'workspace-a', kind: 'chapter', content: 'The door is open.', embedding: [1, 0], source,
+    })
+
+    await expect(replaceMemoryMentions(store, {
+      workspaceKey: 'workspace-a', memoryId,
+      mentions: [mentionForPath('characters/elara.md'), mentionForPath('locations/ballroom.md')],
+    })).resolves.toBe(true)
+
+    const listed = await listMemories(store, { workspaceKey: 'workspace-a' })
+    expect(listed[0]?.source).toEqual(source)
+    expect(listed[0]?.mentions.map(mention => mention.path)).toEqual(['characters/elara.md', 'locations/ballroom.md'])
+    await closeMemoryStore(store)
+  })
+
+  it('does not update mentions through a different workspace key', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'margin-memory-'))
+    temporaryDirectories.push(directory)
+    const store = await openMemoryStore(join(directory, 'memory.duckdb'))
+    const memoryId = await saveMemory(store, {
+      workspaceKey: 'workspace-a', kind: 'fact', content: 'Private fact', embedding: [1, 0],
+    })
+
+    await expect(replaceMemoryMentions(store, {
+      workspaceKey: 'workspace-b', memoryId, mentions: [mentionForPath('notes.md')],
+    })).resolves.toBe(false)
+    expect((await listMemories(store, { workspaceKey: 'workspace-a' }))[0]?.mentions).toEqual([])
     await closeMemoryStore(store)
   })
 
