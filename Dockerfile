@@ -14,7 +14,7 @@ RUN npm run build
 FROM node:22-bookworm-slim AS run
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep \
-  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
