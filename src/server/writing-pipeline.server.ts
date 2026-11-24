@@ -101,7 +101,15 @@ export async function runWritingPipeline(input: {
     const prompt = buildWritingStagePrompt(input.context, artifacts, stage)
     const raw = (await input.generate(stage, prompt)).trim()
     if (input.signal?.aborted) return { output: '', artifacts, aborted: true }
-    if (!raw) throw new Error(`Writing stage "${stage.id}" returned no output.`)
+    // Specialist stages may find no applicable details. Keep the pipeline
+    // moving with an explicit neutral artifact; final prose remains strict.
+    if (!raw) {
+      if (stage.id === 'prose') throw new Error(`Writing stage "${stage.id}" returned no output.`)
+      const neutral = `No relevant ${stage.id} details identified.`
+      artifacts.push({ stage: stage.id, content: neutral })
+      input.onStageComplete?.(stage, neutral)
+      continue
+    }
     const generated = stage.id === 'prose' ? raw : raw.slice(0, MAX_STAGE_ARTIFACT_CHARS)
     artifacts.push({ stage: stage.id, content: generated })
     input.onStageComplete?.(stage, generated)

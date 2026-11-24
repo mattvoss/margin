@@ -52,12 +52,27 @@ describe('writing pipeline', () => {
     })
   })
 
-  it('fails explicitly when a required stage returns empty output', async () => {
+  it('fails explicitly when the final prose stage returns empty output', async () => {
     await expect(runWritingPipeline({
       context: 'Context',
       stages,
       generate: async () => ' ',
-    })).rejects.toThrow('Writing stage "plan" returned no output.')
+    })).rejects.toThrow('Writing stage "prose" returned no output.')
+  })
+
+  it('keeps going when a specialist stage has no applicable details', async () => {
+    const specialistStages: WritingStageDefinition[] = [
+      { ...stages[0]!, id: 'clothing' },
+      stages[1]!,
+    ]
+    const result = await runWritingPipeline({
+      context: 'Context',
+      stages: specialistStages,
+      generate: async stage => stage.id === 'clothing' ? '' : 'Finished prose.',
+    })
+
+    expect(result.output).toBe('Finished prose.')
+    expect(result.artifacts[0]).toEqual({ stage: 'clothing', content: 'No relevant clothing details identified.' })
   })
 
   it('bounds internal stage artifacts without truncating the final prose', async () => {
