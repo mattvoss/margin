@@ -131,7 +131,7 @@ function messageChars(messages: ModelMessage[]): number {
 function normalizeWriteClarificationQuestions(input: unknown): WriteClarificationQuestion[] {
   if (!input || typeof input !== 'object') return []
   const questions = (input as { questions?: unknown }).questions
-  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 4) return []
+  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 12) return []
   const normalized = questions.flatMap((item): WriteClarificationQuestion[] => {
     if (!item || typeof item !== 'object') return []
     const raw = item as Record<string, unknown>
@@ -698,17 +698,22 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             }
             claimedWriteClarification = pending
             clarificationAnswers = { ...clarificationAnswers, ...submitted.byQuestion }
+            const pendingCalls = pending.toolCalls ?? [{ toolCallId: pending.toolCallId, toolInput: pending.toolInput }]
             clarificationMessages = [
               ...(pending.messages as ModelMessage[]),
               {
                 role: 'tool',
-                content: [{
-                  type: 'tool-result',
-                  toolCallId: pending.toolCallId,
-                  toolName: 'ask_user',
-                  input: pending.toolInput,
-                  output: { type: 'json', value: { answers: submitted.byId } },
-                }],
+                content: pendingCalls.map((call) => {
+                  const callQuestions = normalizeWriteClarificationQuestions(call.toolInput)
+                  const answers = Object.fromEntries(callQuestions.map((question) => [question.id, submitted.byId[question.id]]))
+                  return {
+                    type: 'tool-result' as const,
+                    toolCallId: call.toolCallId,
+                    toolName: 'ask_user',
+                    input: call.toolInput,
+                    output: { type: 'json' as const, value: { answers } },
+                  }
+                }),
               } as ModelMessage,
             ]
           } else {
@@ -783,11 +788,19 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               // Prefer an explicit questionnaire when a small model emits both
               // tools in one turn. Asking is the safe, reversible action;
               // proceeding would silently discard the unanswered questions.
-              if (askCalls.length !== 1) {
-                throw new Error('The clarifying agent returned multiple questionnaires.')
+              const questionnaireCalls = askCalls.flatMap((call) => {
+                const questions = normalizeWriteClarificationQuestions(call.input)
+                return questions.length ? [{ call, questions }] : []
+              })
+              const multipleQuestionnaires = questionnaireCalls.length > 1
+              const questions = questionnaireCalls.flatMap(({ questions: items }, index) => items.map((question) => ({
+                ...question,
+                ...(multipleQuestionnaires ? { id: `${index}_${question.id}` } : {}),
+              })))
+              if (!questionnaireCalls.length || questions.length > 12) {
+                throw new Error('The clarifying agent returned invalid questionnaires.')
               }
-              const questions = normalizeWriteClarificationQuestions(askCall.input)
-              if (!questions.length) throw new Error('The clarifying agent returned an invalid questionnaire.')
+              const combinedQuestions = { questions }
               if (clarificationRound >= MAX_WRITE_CLARIFICATION_ROUNDS) {
                 throw new Error('The clarifying agent reached its question limit. Please refine the writing prompt and try again.')
               }
@@ -799,7 +812,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 answers: clarificationAnswers,
                 rounds: clarificationRound + 1,
                 toolCallId: askCall.toolCallId,
-                toolInput: askCall.input,
+                toolInput: combinedQuestions,
+                toolCalls: questionnaireCalls.map(({ call, questions: items }, index) => ({
+                  toolCallId: call.toolCallId,
+                  toolInput: { questions: items.map((question) => ({ ...question, ...(multipleQuestionnaires ? { id: `${index}_${question.id}` } : {}) })) },
+                })),
               })
               claimedWriteClarification = null
               send({

@@ -121,6 +121,8 @@ export interface PendingWriteClarification {
   rounds: number
   toolCallId: string
   toolInput: unknown
+  /** All ask_user calls emitted in one clarification turn. */
+  toolCalls?: Array<{ toolCallId: string; toolInput: unknown }>
 }
 
 const pendingWriteClarifications = new Map<string, PendingWriteClarification>()
