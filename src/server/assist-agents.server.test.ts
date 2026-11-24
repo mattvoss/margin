@@ -122,6 +122,82 @@ describe('SimpleAssist agents', () => {
     const schema = withMemory.tools?.search_memory as unknown as { inputSchema?: { safeParse: (value: unknown) => { success: boolean } } }
     expect(schema.inputSchema?.safeParse({ query: '' }).success).toBe(false)
     expect(schema.inputSchema?.safeParse({ query: 'x'.repeat(1001) }).success).toBe(false)
+
+    const clarificationWithoutMemory = createWriteClarificationAgent({
+      endpoint,
+      instructions: 'Clarify only when needed.',
+    })
+    expect(Object.keys(clarificationWithoutMemory.tools ?? {}).sort()).toEqual([
+      'ask_user',
+      'proceed_to_plan',
+    ])
+
+    const clarificationWithMemory = createWriteClarificationAgent({
+      endpoint,
+      instructions: 'Clarify only when needed.',
+      memory,
+    })
+    expect(Object.keys(clarificationWithMemory.tools ?? {}).sort()).toEqual([
+      'ask_user',
+      'proceed_to_plan',
+      'search_memory',
+    ])
+    const memorySchema = clarificationWithMemory.tools?.search_memory as unknown as {
+      inputSchema?: { safeParse: (value: unknown) => { success: boolean } }
+    }
+    expect(memorySchema.inputSchema?.safeParse({ query: 'a', kinds: ['fact', 'style', 'skill', 'location', 'chapter'] }).success)
+      .toBe(false)
+    expect(memorySchema.inputSchema?.safeParse({ query: 'a', limit: 9 }).success).toBe(false)
+
+    const searchMemoryTool = clarificationWithMemory.tools?.search_memory as unknown as {
+      execute: (input: { query: string }, options: Record<string, unknown>) => Promise<{
+        available: boolean
+        note: string
+      }>
+    }
+    const unavailable = await searchMemoryTool.execute({ query: 'old context' }, {})
+    expect(unavailable.available).toBe(false)
+    expect(unavailable.note).toContain('untrusted workspace context')
+  })
+
+  it('continues clarification after unavailable memory search', async () => {
+    let requestCount = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      requestCount += 1
+      if (requestCount === 1) {
+        return completion({
+          content: null,
+          tool_calls: [{
+            id: 'call-search-memory',
+            type: 'function',
+            function: {
+              name: 'search_memory',
+              arguments: JSON.stringify({ query: 'the protagonist’s relationship to the station' }),
+            },
+          }],
+        }, 'tool_calls')
+      }
+      return completion({
+        content: null,
+        tool_calls: [{
+          id: 'call-proceed',
+          type: 'function',
+          function: { name: 'proceed_to_plan', arguments: '{}' },
+        }],
+      }, 'tool_calls')
+    }))
+
+    const agent = createWriteClarificationAgent({
+      endpoint,
+      instructions: 'Clarify only when needed.',
+      memory,
+    })
+    const result = await agent.generate({ prompt: 'Write a scene at the station.' })
+
+    expect(requestCount).toBe(2)
+    expect(result.staticToolCalls).toContainEqual(
+      expect.objectContaining({ toolName: 'proceed_to_plan' }),
+    )
   })
 
   it('keeps the edit writer tool-free even when memory is configured elsewhere', async () => {

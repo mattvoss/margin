@@ -757,6 +757,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             send({ status: 'write_clarifying', continuation: true })
           }
           if (pending || Object.keys(clarificationAnswers).length === 0) {
+            const clarificationMemoryConfig = memoryConfig(process.env, settings)
             const clarificationAgent = createWriteClarificationAgent({
               endpoint: {
                 model: client.model,
@@ -770,11 +771,15 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   chat_template_kwargs: { enable_thinking: false },
                 },
               },
+              memory: clarificationMemoryConfig.enabled
+                ? { workspaceKey: ws, config: clarificationMemoryConfig }
+                : undefined,
               instructions: [
                 'You are the clarification gate before a multi-stage writing pipeline.',
                 'Assess the request using the full supplied scene, passage, and referenced-file context.',
+                'When workspace memory is available, search it before asking the user about a material missing detail that may already be recorded.',
                 'If a missing decision would materially change the result, call ask_user with one questionnaire of up to four concise, specific questions. Supply two to four distinct radio options for each; the interface provides a freeform Other option.',
-                'Do not ask about details already stated or safely inferable. Do not ask merely to optimize minor preferences.',
+                'Do not ask about details already stated, safely inferable, or answered by relevant memory. Do not ask merely to optimize minor preferences.',
                 'After answers resolve the important ambiguity, call proceed_to_plan. If the request is already actionable, call proceed_to_plan immediately.',
                 'Call exactly one tool per turn. Do not write the scene or start planning yourself.',
               ].join(' '),
