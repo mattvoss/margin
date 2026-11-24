@@ -28,9 +28,9 @@ beforeEach(() => {
 
 describe('splitSettingsUpdate', () => {
   it('splits browser-owned keys from server-synced keys', () => {
-    const { client, server } = splitSettingsUpdate({ theme: 'dark', active_endpoint: 'a', history_turns: 9 })
+    const { client, server } = splitSettingsUpdate({ theme: 'dark', active_endpoint: 'a', history_turns: 9, write_evaluation_enabled: false })
     expect(client).toEqual({ theme: 'dark' })
-    expect(server).toEqual({ active_endpoint: 'a', history_turns: 9 })
+    expect(server).toEqual({ active_endpoint: 'a', history_turns: 9, write_evaluation_enabled: false })
   })
 
   it('routes every browser-owned key to the client half', () => {
@@ -67,6 +67,7 @@ describe('settingsStore', () => {
     expect(useSettingsStore.getState().clientSeeded).toBe(false)
     expect(useSettingsStore.getState().settings.theme).toBe('light')
     expect(useSettingsStore.getState().settings.active_endpoint).toBeNull()
+    expect(useSettingsStore.getState().settings.write_evaluation_enabled).toBe(true)
   })
 
   it('keeps browser-owned updates entirely local (no PATCH)', async () => {

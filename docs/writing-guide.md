@@ -2,7 +2,7 @@
 
 ## AI Assist Overview
 
-margin uses a **dual-agent architecture** to generate context-aware writing assistance:
+margin uses role-separated agents to generate context-aware writing assistance:
 
 ```
   Your Request
@@ -27,7 +27,7 @@ margin uses a **dual-agent architecture** to generate context-aware writing assi
 
 2. **The Writer Agent** receives only the instruction, your selected text (if any), and the context prepared by the Planner. It streams the result directly into the editor.
 
-This separation means the AI doesn't need to read every file in your workspace for every request -- the Planner filters and prioritizes context efficiently.
+This separation means the AI doesn't need to read every file in your workspace for every request -- the Planner filters and prioritizes context efficiently. The separate **Write** mode uses a bounded specialist pipeline for scene planning, character and continuity analysis, dialogue, and prose drafting. When enabled, a report-only evaluation follows the draft; deterministic checks and model-based editorial findings are clearly distinguished, and neither can silently change or block the prose.
 
 > For a detailed walkthrough of using Edit and Chat modes, see [AI Assist](./ai-assist.md).
 

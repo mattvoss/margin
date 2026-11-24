@@ -47,6 +47,14 @@ The Writer is instructed to return either a short snippet (if you asked to tweak
 
 The backend identifies the paragraph containing your cursor and sends the same three-paragraph window (above, target, below) as context. The AI generates fresh content that gets inserted at the cursor -- nothing is replaced, no text is deleted.
 
+## Write Mode and Evaluation
+
+Use **Write** mode when you want a multi-stage agent pipeline to draft story prose. After the clarification step (when needed), separate specialists plan the scene, review character and physical-detail constraints, shape dialogue, check plot continuity, and draft the prose. The stages pass labeled notes forward; only the prose stage produces the manuscript candidate. The pipeline has no workspace-writing tools, and the result remains in Assist for you to review or insert.
+
+**Evaluate prose after writing** is enabled by default and can be switched off in the mode/model dropdown. When enabled, Margin runs narrow deterministic checks (including empty output, wrapper text, output size, and long exact echoes of adjacent paragraphs) and asks the configured endpoint for an advisory review of instruction/plan adherence, continuity, character consistency, plan coverage, POV/tense/voice, and prose clarity. The evaluator receives the request, plan, scoped story context, and draft; it cannot edit files or rewrite the prose.
+
+The report is expandable and is also retained with the session log. Deterministic check results and model judgments are labeled separately. Model scores are editorial estimates, not objective measures of literary quality; warnings do not block, reject, or silently change the draft. If the evaluator is unavailable or returns an invalid report, the generated prose is still available. Write mode currently evaluates the final draft directly; the separate post-processing pipeline does not run as part of this multi-stage Write flow.
+
 ## Chat Mode
 
 Use Chat mode for brainstorming, asking questions, or discussing your content with the AI.

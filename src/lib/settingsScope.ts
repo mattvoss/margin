@@ -55,6 +55,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editor_stats: 'both',
   planner_include_outline: false,
   character_tracking: true,
+  write_evaluation_enabled: true,
   linked_workspace_dir: null,
   workspace_profiles: [],
   history_turns: 5,

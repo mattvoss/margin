@@ -214,13 +214,29 @@ export function createWriteStageAgent(input: {
   endpoint: AssistAgentEndpoint
   instructions: string
   maxOutputTokens?: number | null
+  temperature?: number
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions,
     stopWhen: isStepCount(1),
-    temperature: input.instructions.includes('finished story prose') ? 0.8 : 0.35,
+    temperature: input.temperature ?? (input.instructions.includes('finished story prose') ? 0.8 : 0.35),
     ...(input.maxOutputTokens != null ? { maxOutputTokens: input.maxOutputTokens } : {}),
+  })
+}
+
+/** Advisory reviewer: returns a single structured-prose response, never edits files. */
+export function createWriteEvaluationAgent(input: {
+  endpoint: AssistAgentEndpoint
+  instructions: string
+  maxOutputTokens?: number
+}) {
+  return new ToolLoopAgent({
+    model: createAssistAgentModel(input.endpoint),
+    instructions: input.instructions,
+    stopWhen: isStepCount(1),
+    temperature: 0.1,
+    maxOutputTokens: input.maxOutputTokens ?? 1400,
   })
 }
 

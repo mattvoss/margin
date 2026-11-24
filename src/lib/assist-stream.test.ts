@@ -27,4 +27,18 @@ describe('reduceAssistStream', () => {
     expect(state.error).toBe('Provider failed')
     expect(state.stages.response.status).toBe('failed')
   })
+
+  it('tracks advisory evaluation without changing the generated output', () => {
+    let state = reduceAssistStream(initialAssistRunState, { type: 'run_started', mode: 'write' })
+    state = reduceAssistStream(state, { type: 'text_delta', stage: 'prose', delta: 'A draft.' })
+    state = reduceAssistStream(state, { type: 'evaluation_started' })
+    expect(state.evaluationRunning).toBe(true)
+    state = reduceAssistStream(state, {
+      type: 'evaluation_failed',
+      message: 'Unavailable; draft remains reviewable.',
+    })
+    expect(state.evaluationRunning).toBe(false)
+    expect(state.evaluation).toMatchObject({ status: 'failed' })
+    expect(state.stages.prose.output).toBe('A draft.')
+  })
 })

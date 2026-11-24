@@ -497,6 +497,7 @@ describe('assist', () => {
       const initial = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Have the characters reconcile after the argument.',
           content: 'The chapter ends at the station.',
           session_id: 'write-clarification-test',
@@ -522,6 +523,7 @@ describe('assist', () => {
       const invalidResume = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Have the characters reconcile after the argument.',
           content: 'The chapter ends at the station.',
           session_id: 'write-clarification-test',
@@ -537,6 +539,7 @@ describe('assist', () => {
       const invalidAnswers = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Have the characters reconcile after the argument.',
           content: 'The chapter ends at the station.',
           session_id: 'write-clarification-test',
@@ -552,6 +555,7 @@ describe('assist', () => {
       const resumed = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Have the characters reconcile after the argument.',
           content: 'The chapter ends at the station.',
           session_id: 'write-clarification-test',
@@ -577,6 +581,7 @@ describe('assist', () => {
       const finalResume = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Have the characters reconcile after the argument.',
           content: 'The chapter ends at the station.',
           session_id: 'write-clarification-test',
@@ -591,6 +596,9 @@ describe('assist', () => {
       expect(finalEvents.some((event) => event.status === 'write_started')).toBe(true)
       expect(finalEvents.find((event) => event.status === 'write_completed')).toMatchObject({
         output: 'Stage 6 notes.',
+      })
+      expect(finalEvents.find((event) => event.status === 'write_evaluation_skipped')).toMatchObject({
+        reason: 'disabled',
       })
       expect(clarificationCalls).toBe(3)
       expect(stageCalls).toBe(6)
@@ -628,6 +636,7 @@ describe('assist', () => {
       const response = await handlersOf(AssistSimpleRoute).POST({
         request: req('assist/simple', 'POST', {
           mode: 'write',
+          evaluate_prose: false,
           message: 'Continue the established scene with the same point of view and tense.',
           content: 'The scene already establishes the characters, conflict, and ending.',
           session_id: 'write-clear-request-test',
@@ -639,6 +648,113 @@ describe('assist', () => {
       expect(events.some((event) => event.status === 'write_questionnaire')).toBe(false)
       expect(events.some((event) => event.status === 'write_started')).toBe(true)
       expect(stageCalls).toBe(6)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('evaluates a completed writing draft and keeps evaluation advisory', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    let stageCalls = 0
+    const evaluation = {
+      summary: 'The scene follows the request and supplied context.',
+      criteria: [
+        { id: 'instruction_adherence', score: 5, confidence: 'supported', rationale: 'The requested event occurs.' },
+        { id: 'continuity', score: 4, confidence: 'limited', rationale: 'Only a short excerpt was supplied.' },
+        { id: 'character_consistency', score: 4, confidence: 'limited', rationale: 'Character evidence is limited.' },
+        { id: 'plan_coverage', score: 4, confidence: 'supported', rationale: 'The available beats are covered.' },
+        { id: 'pov_tense_voice', score: 4, confidence: 'limited', rationale: 'Only a short excerpt was supplied.' },
+        { id: 'prose_clarity', score: 4, confidence: 'supported', rationale: 'The action is clear.' },
+      ],
+      findings: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        messages?: Array<{ content?: unknown }>
+        tools?: Array<{ function?: { name?: string } }>
+      }
+      if (body.tools?.some((candidate) => candidate.function?.name === 'ask_user')) {
+        return toolCallResponse('proceed_to_plan', {}, 'call-eval-proceed')
+      }
+      const prompt = JSON.stringify(body.messages ?? [])
+      if (prompt.includes('advisory reviewer')) return completionResponse(JSON.stringify(evaluation))
+      stageCalls++
+      const content = stageCalls === 6 ? 'At dawn, Mara reached the station.' : `Stage ${stageCalls} notes.`
+      return sseResponse([
+        { choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      ])
+    }))
+
+    try {
+      const response = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          evaluate_prose: true,
+          message: 'Continue the scene through Mara reaching the station.',
+          content: 'The chapter ends on the road.',
+          session_id: 'write-evaluation-test',
+          harness: 'none',
+        }),
+      } as never)
+      const events = parseSseEvents(await response.text())
+      const report = events.find((event) => event.status === 'write_evaluation_completed')
+
+      expect(stageCalls).toBe(6)
+      expect(events.some((event) => event.status === 'write_evaluation_started')).toBe(true)
+      expect(report?.evaluation).toMatchObject({ version: 1, modelReview: { summary: evaluation.summary } })
+      expect(events.find((event) => event.status === 'write_completed')?.output).toBe('At dawn, Mara reached the station.')
+      const logs = await handlersOf(AssistSimpleLogsRoute).GET({
+        request: req('assist/simple/logs?session_id=write-evaluation-test'),
+      } as never)
+      const saved = await logs.json() as Array<Record<string, unknown>>
+      expect(saved.at(-1)?.writing_evaluation).toMatchObject({ status: 'complete', result: { version: 1 } })
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('keeps the draft available when the evaluator returns invalid output', async () => {
+    vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
+    vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
+    let stageCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        messages?: Array<{ content?: unknown }>
+        tools?: Array<{ function?: { name?: string } }>
+      }
+      if (body.tools?.some((candidate) => candidate.function?.name === 'ask_user')) {
+        return toolCallResponse('proceed_to_plan', {}, 'call-invalid-eval-proceed')
+      }
+      if (JSON.stringify(body.messages ?? []).includes('advisory reviewer')) {
+        return completionResponse('not JSON')
+      }
+      stageCalls++
+      const content = stageCalls === 6 ? 'The scene continues.' : `Stage ${stageCalls} notes.`
+      return sseResponse([
+        { choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      ])
+    }))
+
+    try {
+      const response = await handlersOf(AssistSimpleRoute).POST({
+        request: req('assist/simple', 'POST', {
+          mode: 'write',
+          evaluate_prose: true,
+          message: 'Continue the scene.',
+          content: 'The scene begins.',
+          session_id: 'write-evaluation-failure-test',
+          harness: 'none',
+        }),
+      } as never)
+      const events = parseSseEvents(await response.text())
+
+      expect(events.find((event) => event.status === 'write_evaluation_failed')).toBeDefined()
+      expect(events.find((event) => event.status === 'write_completed')?.output).toBe('The scene continues.')
     } finally {
       vi.unstubAllGlobals()
       vi.unstubAllEnvs()

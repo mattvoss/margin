@@ -337,6 +337,7 @@ export function defaultSettings(): Settings {
     editor_stats: 'both',
     planner_include_outline: false,
     character_tracking: true,
+    write_evaluation_enabled: true,
     history_turns: 5,
     post_processing: createDefaultPostProcessing(),
     image_endpoints: {},

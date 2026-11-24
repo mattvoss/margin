@@ -22,6 +22,11 @@ import {
 } from '../lib/postProcessing'
 import { ImageDetailPopup, type ImageLogEntry } from './ImageDetailPopup'
 import { AssistMarkdown } from './AssistMarkdown'
+import { WritingEvaluationReport } from './WritingEvaluationReport'
+import {
+  writingEvaluationRecordSchema,
+  type WritingEvaluationRecord,
+} from '../lib/writingEvaluation'
 import { AssistPlanTrace, ReasoningTrace, ToolTrace } from './AssistActivity'
 import { buildAssistPlan } from './assist-plan'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -67,6 +72,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -116,6 +122,7 @@ interface SimpleLogEntry {
   completion_tokens?: number
   total_tokens?: number
   tool_calls?: Array<{ tool: string; detail: string }>
+  writing_evaluation?: unknown
 }
 
 
@@ -391,6 +398,8 @@ export function SimpleAssist() {
   const [streamingChatText, setStreamingChatText] = useState('')
   const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' | 'cancelled' }>>([])
   const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
+  const [writeEvaluation, setWriteEvaluation] = useState<WritingEvaluationRecord | null>(null)
+  const [writeEvaluationRunning, setWriteEvaluationRunning] = useState(false)
   const [writeQuestions, setWriteQuestions] = useState<AssistQuestion[]>([])
   const [writeAnswers, setWriteAnswers] = useState<Record<string, string>>({})
   const [writeQuestionIndex, setWriteQuestionIndex] = useState(0)
@@ -1060,6 +1069,8 @@ export function SimpleAssist() {
     if (mode === 'write') {
       setWriteStages([])
       setWriteReasoning({})
+      setWriteEvaluation(null)
+      setWriteEvaluationRunning(false)
     }
     setPostProcessStatus(null)
     setActiveToolRows([])
@@ -1105,6 +1116,7 @@ export function SimpleAssist() {
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
         active_filename: activeFilename,
         ...(mode === 'write' ? { write_answers: Object.keys(clarificationAnswers).length ? clarificationAnswers : null } : {}),
+        ...(mode === 'write' ? { evaluate_prose: settings?.write_evaluation_enabled !== false } : {}),
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
         ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
       }
@@ -1198,6 +1210,8 @@ export function SimpleAssist() {
             setWriteQuestionIndex(0)
             setQuestionnaireRequest(null)
             questionnaireSubmittingRef.current = false
+            setWriteEvaluation(null)
+            setWriteEvaluationRunning(false)
             const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
             setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
             ids.forEach((id) => dispatchAssistRun({ type: 'stage_started', stage: id, label: id }))
@@ -1225,6 +1239,29 @@ export function SimpleAssist() {
             setIsPlanning(false)
             setIsGenerating(true)
             setStreamingChatText(prev => prev + String(data.chunk || ''))
+          } else if (status === 'write_evaluation_started') {
+            setWriteEvaluationRunning(true)
+            setWriteEvaluation(null)
+          } else if (status === 'write_evaluation_completed') {
+            const parsed = writingEvaluationRecordSchema.safeParse({
+              status: 'complete',
+              result: data.evaluation,
+            })
+            setWriteEvaluationRunning(false)
+            setWriteEvaluation(parsed.success
+              ? parsed.data
+              : { status: 'failed', message: 'Evaluation returned an invalid report. The draft is still available to review.' })
+          } else if (status === 'write_evaluation_failed') {
+            setWriteEvaluationRunning(false)
+            setWriteEvaluation({
+              status: 'failed',
+              message: typeof data.message === 'string'
+                ? data.message.slice(0, 300)
+                : 'Evaluation could not produce a valid report. The draft is still available to review.',
+            })
+          } else if (status === 'write_evaluation_skipped') {
+            setWriteEvaluationRunning(false)
+            setWriteEvaluation({ status: 'skipped', reason: 'disabled' })
           } else if (status === 'write_completed') {
             dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
@@ -1894,6 +1931,16 @@ export function SimpleAssist() {
                   </DropdownMenuGroup>
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={settings?.write_evaluation_enabled !== false}
+                  onCheckedChange={(checked) => void updateSettings({ write_evaluation_enabled: checked })}
+                >
+                  Evaluate prose after writing
+                </DropdownMenuCheckboxItem>
+                <p className="px-2 py-1 text-[10px] leading-snug text-[var(--text-muted)]">
+                  Adds deterministic checks and an advisory model review in Write mode.
+                </p>
+                <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup
                   value={
                     harness !== 'none'
@@ -2197,7 +2244,11 @@ export function SimpleAssist() {
         </InputGroup>
         <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
           Type @ to attach a workspace reference.{' '}
-          {mode === 'chat'
+          {mode === 'write'
+            ? settings?.write_evaluation_enabled === false
+              ? 'Prose evaluation is off; drafts are returned without a report.'
+              : 'Drafts receive advisory checks; evaluation never changes or blocks the prose.'
+            : mode === 'chat'
             ? 'Chat answers questions without changing the draft.'
             : hasSelection
               ? 'Edit replaces the selected text.'
@@ -2680,6 +2731,15 @@ export function SimpleAssist() {
                           ) : null}
                         </div>
 
+                        {log.writing_evaluation && (
+                          (() => {
+                            const evaluation = writingEvaluationRecordSchema.safeParse(log.writing_evaluation)
+                            return evaluation.success
+                              ? <WritingEvaluationReport evaluation={evaluation.data} />
+                              : null
+                          })()
+                        )}
+
                         {log.success !== false && log.output && (
                           <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                             <Tooltip>
@@ -2788,6 +2848,12 @@ export function SimpleAssist() {
                             </React.Fragment>
                           ))}
                         </Trace>
+                      )}
+                      {mode === 'write' && (writeEvaluation || writeEvaluationRunning) && (
+                        <WritingEvaluationReport
+                          evaluation={writeEvaluation}
+                          running={writeEvaluationRunning}
+                        />
                       )}
 
                       {(mode === 'chat' || mode === 'write' || activeHarness !== 'none') && (streamingChatText || assistRun.finalOutput) && (

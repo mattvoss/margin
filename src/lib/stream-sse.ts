@@ -1,5 +1,6 @@
 import { apiFetch } from './api'
 import type { AssistStreamEvent } from './assist-stream'
+import type { WritingEvaluationResult } from './writingEvaluation'
 
 export function normalizeAssistEvent(data: Record<string, unknown>): AssistStreamEvent | null {
   if (typeof data.type === 'string') return data as unknown as AssistStreamEvent
@@ -11,6 +12,15 @@ export function normalizeAssistEvent(data: Record<string, unknown>): AssistStrea
   if (status === 'write_started') return { type: 'run_started', mode: 'write', runId: typeof data.run_id === 'string' ? data.run_id : undefined }
   if (status === 'write_stage_started') return { type: 'stage_started', stage: String(data.stage ?? 'write') }
   if (status === 'write_stage_completed') return { type: 'stage_completed', stage: String(data.stage ?? 'write'), output: typeof data.output === 'string' ? data.output : undefined }
+  if (status === 'write_evaluation_started') return { type: 'evaluation_started' }
+  if (status === 'write_evaluation_completed' && data.evaluation && typeof data.evaluation === 'object') {
+    return {
+      type: 'evaluation_completed',
+      evaluation: { status: 'complete', result: data.evaluation as WritingEvaluationResult },
+    }
+  }
+  if (status === 'write_evaluation_failed') return { type: 'evaluation_failed', message: String(data.message ?? 'Evaluation failed.') }
+  if (status === 'write_evaluation_skipped') return { type: 'evaluation_skipped' }
   if (status === 'write_completed' || status === 'chat') return { type: 'completed', output: String(data.output ?? '') }
   if (status === 'error') return { type: 'failed', message: String(data.message ?? data.error ?? 'Assist request failed') }
   return null

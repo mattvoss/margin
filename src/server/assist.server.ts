@@ -103,6 +103,8 @@ export interface SimpleAssistRequest {
   write_answers?: Record<string, string | string[]> | null
   clarification_answers?: Record<string, string | string[]> | null
   clarification_id?: string | null
+  /** Whether to run the advisory prose evaluator for the dedicated writing flow. */
+  evaluate_prose?: boolean
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -134,6 +136,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
       ? input.clarification_answers as Record<string, string | string[]>
       : null,
     clarification_id: str(input.clarification_id),
+    evaluate_prose: typeof input.evaluate_prose === 'boolean' ? input.evaluate_prose : undefined,
   }
 }
 

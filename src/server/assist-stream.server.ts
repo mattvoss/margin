@@ -63,6 +63,7 @@ import {
   createAssistPlannerAgent,
   createAssistPostProcessAgent,
   createWriteClarificationAgent,
+  createWriteEvaluationAgent,
   createWriteStageAgent,
   type AssistAgentTelemetry,
 } from './assist-agents.server'
@@ -73,6 +74,17 @@ import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
 import { join } from 'node:path'
 import { DATA_ROOT } from './env.server'
+import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.server'
+import {
+  buildWritingEvaluationPrompt,
+  evaluateDraftDeterministically,
+  parseWritingModelReview,
+} from './writing-evaluation.server'
+import type {
+  WritingEvaluationRecord,
+  WritingEvaluationResult,
+  WritingModelReview,
+} from '../lib/writingEvaluation'
 
 interface WriteClarificationQuestion {
   id: string
@@ -800,114 +812,183 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             context += `\n\nClarification answers:\n${JSON.stringify(clarificationAnswers)}`
           }
 
-          const stages = [
-            ['plan', 'Plan the scene: establish purpose, beats, point of view, tense, and constraints.'],
-            ['characters', 'Analyze character goals, emotions, behavior, consistency, and arcs for this scene.'],
-            ['clothing', 'Determine only relevant clothing, appearance, physical detail, and continuity.'],
-            ['speech', 'Plan dialogue, voice, subtext, and conversational movement where appropriate.'],
-            ['plot', 'Check causality, continuity, stakes, and escalation. Identify and repair weak links.'],
-            ['prose', 'Write the finished story scene. Return only the prose of the story: no headings, analysis, notes, or commentary.'],
-          ] as const
-          let prior = ''
-          let finalOutput = ''
+          const evaluateProse = payload.evaluate_prose ?? (settings.write_evaluation_enabled !== false)
           let allThinking = ''
-          send({ status: 'write_started', stages: stages.map(([id]) => id) })
-          for (const [id, role] of stages) {
-            if (signal.aborted) break
-            send({ status: 'write_stage_started', stage: id })
-            const prompt = `${role}\n\n${context}\n\n${prior ? `Prior stage notes:\n${prior}` : ''}`
-            let output = ''
-            let stageThinking = ''
-            const stageTelemetry: AssistAgentTelemetry = {
-              timings: null,
-              tokensCached: null,
-              pending: null,
-              onReasoningDelta: (delta) => {
-                stageThinking += delta
-                allThinking += delta
-                send({ status: 'write_reasoning', stage: id, chunk: delta })
-              },
-            }
-            const agent = createWriteStageAgent({
-              endpoint: {
-                model: client.model,
-                baseUrl: client.baseUrl,
-                apiKey: client.apiKey,
-                telemetry: stageTelemetry,
-                requestBody: {
-                  chat_template_kwargs: {
-                    enable_thinking: client.isThinking,
+          let finalOutput = ''
+          let writingEvaluation: WritingEvaluationRecord = evaluateProse
+            ? { status: 'skipped', reason: 'not_run' }
+            : { status: 'skipped', reason: 'disabled' }
+          send({ status: 'write_started', stages: WRITING_PIPELINE_STAGES.map((stage) => stage.id) })
+          const pipeline = await runWritingPipeline({
+            context,
+            signal,
+            onStageStart: (stage) => send({ status: 'write_stage_started', stage: stage.id }),
+            onStageComplete: (stage, output) => send({
+              status: 'write_stage_completed',
+              stage: stage.id,
+              output: stage.id === 'prose' ? undefined : output,
+            }),
+            generate: async (stage, prompt) => {
+              const id = stage.id
+              if (signal.aborted) return ''
+              let output = ''
+              let stageThinking = ''
+              const stageTelemetry: AssistAgentTelemetry = {
+                timings: null,
+                tokensCached: null,
+                pending: null,
+                onReasoningDelta: (delta) => {
+                  stageThinking += delta
+                  allThinking += delta
+                  send({ status: 'write_reasoning', stage: id, chunk: delta })
+                },
+              }
+              const agent = createWriteStageAgent({
+                endpoint: {
+                  model: client.model,
+                  baseUrl: client.baseUrl,
+                  apiKey: client.apiKey,
+                  telemetry: stageTelemetry,
+                  requestBody: {
+                    chat_template_kwargs: {
+                      enable_thinking: client.isThinking,
+                    },
                   },
                 },
-              },
-              instructions: id === 'prose'
-                ? 'You are the final prose writer. Follow the request and notes, but output only finished story prose.'
-                : `You are the ${id} subagent in a writing pipeline. Return concise useful notes for the next stage.`,
-              // Internal notes stay bounded, but the final prose stage is
-              // intentionally uncapped; the provider's context window remains
-              // the hard limit.
-              ...(id === 'prose'
-                ? {}
-                : {
-                    maxOutputTokens: generationBudget(
-                      1800,
-                      client.isThinking,
-                      prompt.length,
-                      getActiveContextWindow(settings as never),
-                    ),
-                  }),
-            })
-            const result = await agent.stream({
-              messages: [{ role: 'user', content: prompt }],
-              abortSignal: signal,
-            })
-            const thinkingFilter = new ThinkingTagFilter(
-              client.isThinking,
-              client.customOpeningTags,
-              client.customClosingTags,
-            )
-            for await (const part of result.fullStream) {
-              if (signal.aborted) break
-              if (part.type === 'text-delta') {
-                const filtered = thinkingFilter.push(part.text)
-                if (filtered.thinking) {
-                  stageThinking += filtered.thinking
-                  allThinking += filtered.thinking
-                  send({ status: 'write_reasoning', stage: id, chunk: filtered.thinking })
-                }
-                if (filtered.text) {
-                  output += filtered.text
-                  if (id === 'prose') send({ status: 'write_prose', chunk: filtered.text })
+                instructions: stage.agentInstructions,
+                temperature: stage.temperature,
+                // Internal notes stay bounded, but the final prose stage is
+                // intentionally uncapped; the provider's context window remains
+                // the hard limit.
+                ...(stage.maxOutputTokens == null
+                  ? {}
+                  : {
+                      maxOutputTokens: generationBudget(
+                        stage.maxOutputTokens,
+                        client.isThinking,
+                        prompt.length,
+                        getActiveContextWindow(settings as never),
+                      ),
+                    }),
+              })
+              const result = await agent.stream({
+                messages: [{ role: 'user', content: prompt }],
+                abortSignal: signal,
+              })
+              const thinkingFilter = new ThinkingTagFilter(
+                client.isThinking,
+                client.customOpeningTags,
+                client.customClosingTags,
+              )
+              for await (const part of result.fullStream) {
+                if (signal.aborted) break
+                if (part.type === 'text-delta') {
+                  const filtered = thinkingFilter.push(part.text)
+                  if (filtered.thinking) {
+                    stageThinking += filtered.thinking
+                    allThinking += filtered.thinking
+                    send({ status: 'write_reasoning', stage: id, chunk: filtered.thinking })
+                  }
+                  if (filtered.text) {
+                    output += filtered.text
+                    if (id === 'prose') send({ status: 'write_prose', chunk: filtered.text })
+                  }
                 }
               }
+              const filteredTail = thinkingFilter.flush()
+              if (filteredTail.thinking) {
+                stageThinking += filteredTail.thinking
+                allThinking += filteredTail.thinking
+                send({ status: 'write_reasoning', stage: id, chunk: filteredTail.thinking })
+              }
+              if (filteredTail.text) {
+                output += filteredTail.text
+                if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
+              }
+              await stageTelemetry.pending
+              const resultReasoning = await result.reasoningText
+              if (resultReasoning && !stageThinking) {
+                stageThinking = resultReasoning
+                allThinking += resultReasoning
+                send({ status: 'write_reasoning', stage: id, chunk: resultReasoning })
+              }
+              output = output.trim() || (await result.text).trim()
+              if (id === 'prose') finalOutput = output
+              return output
+            },
+          })
+          finalOutput = pipeline.output
+
+          if (!signal.aborted) {
+            if (evaluateProse) {
+              send({ status: 'write_evaluation_started' })
+              try {
+                const anchor = extractAnchorContext(
+                  payload.content,
+                  payload.selected_text,
+                  payload.cursor_paragraph_text,
+                )
+                const deterministicChecks = evaluateDraftDeterministically({
+                  draft: finalOutput,
+                  paragraphBefore: anchor.paragraphBefore,
+                  paragraphAfter: anchor.paragraphAfter,
+                })
+                let modelReview: WritingModelReview | null = null
+                if (finalOutput.trim()) {
+                  const contextWindow = getActiveContextWindow(settings as never)
+                  const evaluatorMaxTokens = contextWindow
+                    ? Math.min(1400, Math.max(800, Math.floor(contextWindow * 0.3)))
+                    : 1400
+                  const evaluationInputChars = contextWindow
+                    ? Math.min(48_000, Math.max(2_800, (contextWindow - evaluatorMaxTokens - 600) * 4))
+                    : 48_000
+                  const prompt = buildWritingEvaluationPrompt({
+                    instruction: requestMessage,
+                    plan: pipeline.artifacts.find((artifact) => artifact.stage === 'plan')?.content,
+                    context,
+                    draft: finalOutput,
+                    maxInputChars: evaluationInputChars,
+                  })
+                  const evaluator = createWriteEvaluationAgent({
+                    endpoint: {
+                      model: client.model,
+                      baseUrl: client.baseUrl,
+                      apiKey: client.apiKey,
+                      requestBody: { chat_template_kwargs: { enable_thinking: false } },
+                    },
+                    instructions: 'Return only the requested JSON review. Be evidence-based, conservative, and advisory. Never rewrite the draft.',
+                    maxOutputTokens: evaluatorMaxTokens,
+                  })
+                  const evaluationSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000)])
+                  const evaluation = await evaluator.generate({ prompt, abortSignal: evaluationSignal })
+                  modelReview = parseWritingModelReview(evaluation.text)
+                }
+                const result: WritingEvaluationResult = {
+                  version: 1,
+                  deterministicChecks,
+                  modelReview,
+                }
+                writingEvaluation = { status: 'complete', result }
+                send({ status: 'write_evaluation_completed', evaluation: result })
+              } catch (error) {
+                if (!signal.aborted) {
+                  console.warn(`Writing evaluation unavailable: ${errMsg(error)}`)
+                  writingEvaluation = {
+                    status: 'failed',
+                    message: 'Evaluation could not produce a valid report. The draft is still available to review.',
+                  }
+                  send({ status: 'write_evaluation_failed', message: writingEvaluation.message })
+                }
+              }
+            } else {
+              send({ status: 'write_evaluation_skipped', reason: 'disabled' })
             }
-            const filteredTail = thinkingFilter.flush()
-            if (filteredTail.thinking) {
-              stageThinking += filteredTail.thinking
-              allThinking += filteredTail.thinking
-              send({ status: 'write_reasoning', stage: id, chunk: filteredTail.thinking })
-            }
-            if (filteredTail.text) {
-              output += filteredTail.text
-              if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
-            }
-            await stageTelemetry.pending
-            const resultReasoning = await result.reasoningText
-            if (resultReasoning && !stageThinking) {
-              stageThinking = resultReasoning
-              allThinking += resultReasoning
-              send({ status: 'write_reasoning', stage: id, chunk: resultReasoning })
-            }
-            output = output.trim() || (await result.text).trim()
-            prior += `\n\n${id.toUpperCase()}:\n${output}`
-            if (id === 'prose') finalOutput = output
-            send({ status: 'write_stage_completed', stage: id, output: id === 'prose' ? undefined : output })
           }
           if (!signal.aborted) {
             await saveSimpleAiLog({
               mode: 'write',
               session_id: payload.session_id,
-              system_prompt: 'Write pipeline: plan, characters, clothing, speech, plot, prose.',
+              system_prompt: `Write pipeline: ${WRITING_PIPELINE_STAGES.map((stage) => stage.id).join(', ')}.`,
               user_prompt: context,
               output: finalOutput,
               raw_output: finalOutput,
@@ -919,6 +1000,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               })),
               success: Boolean(finalOutput),
               thinking_output: allThinking || null,
+              writing_evaluation: writingEvaluation,
               model_used: client.lastModelUsed,
               prompt_tokens: 0,
               completion_tokens: 0,

@@ -1,3 +1,5 @@
+import type { WritingEvaluationRecord } from './writingEvaluation'
+
 export type AssistMode = 'chat' | 'edit' | 'write' | 'planner' | 'planner_draft'
 export type AssistStageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -19,6 +21,10 @@ export type AssistStreamEvent =
   | { type: 'tool'; stage: string; name: string; detail?: string }
   | { type: 'stage_completed'; stage: string; output?: string; reasoning?: string }
   | { type: 'questionnaire'; questions: unknown[] }
+  | { type: 'evaluation_started' }
+  | { type: 'evaluation_completed'; evaluation: WritingEvaluationRecord }
+  | { type: 'evaluation_failed'; message: string }
+  | { type: 'evaluation_skipped' }
   | { type: 'completed'; output: string; reasoning?: string }
   | { type: 'failed'; stage?: string; message: string }
   | { type: 'cancelled'; stage?: string }
@@ -33,6 +39,8 @@ export interface AssistRunState {
   finalOutput: string
   finalReasoning: string
   questions: unknown[]
+  evaluation: WritingEvaluationRecord | null
+  evaluationRunning: boolean
   error: string | null
   complete: boolean
 }
@@ -47,6 +55,8 @@ export const initialAssistRunState: AssistRunState = {
   finalOutput: '',
   finalReasoning: '',
   questions: [],
+  evaluation: null,
+  evaluationRunning: false,
   error: null,
   complete: false,
 }
@@ -105,6 +115,18 @@ export function reduceAssistStream(
     }
     case 'questionnaire':
       return { ...state, questions: event.questions }
+    case 'evaluation_started':
+      return { ...state, evaluation: null, evaluationRunning: true }
+    case 'evaluation_completed':
+      return { ...state, evaluation: event.evaluation, evaluationRunning: false }
+    case 'evaluation_failed':
+      return {
+        ...state,
+        evaluation: { status: 'failed', message: event.message.slice(0, 300) },
+        evaluationRunning: false,
+      }
+    case 'evaluation_skipped':
+      return { ...state, evaluation: { status: 'skipped', reason: 'disabled' }, evaluationRunning: false }
     case 'completed':
       return { ...state, finalOutput: event.output, finalReasoning: event.reasoning ?? state.finalReasoning, complete: true }
     case 'failed': {

@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DATA_ROOT } from './env.server'
 import { getActiveWorkspaceDir } from './storage.server'
+import type { WritingEvaluationRecord } from '../lib/writingEvaluation'
 
 export interface AiLogEntry {
   id: string
@@ -25,6 +26,8 @@ export interface AiLogEntry {
   raw_output?: string | null
   /** Post-processing summary: passes, models, usage, snapshots. */
   post_processing?: unknown
+  /** Bounded advisory report for the dedicated writing pipeline. */
+  writing_evaluation?: WritingEvaluationRecord
   instruction: string
   selected_text?: string | null
   text_before?: string | null
