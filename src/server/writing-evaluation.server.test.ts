@@ -3,6 +3,10 @@ import {
   buildWritingEvaluationPrompt,
   evaluateDraftDeterministically,
   parseWritingModelReview,
+  evaluatePredictablePatterns,
+  buildPredictablePatternRewritePrompt,
+  runBoundedPatternRewrite,
+  calculatePerplexity,
 } from './writing-evaluation.server'
 
 const validReview = {
@@ -58,6 +62,18 @@ describe('writing evaluation', () => {
     }))).toThrow()
   })
 
+  it('normalizes keyed criteria and richer model finding severities', () => {
+    const keyed = {
+      ...validReview,
+      criteria: Object.fromEntries(validReview.criteria.map((criterion) => [criterion.id, criterion])),
+      findings: validReview.findings.map((finding) => ({ ...finding, severity: 'minor' })),
+    }
+    expect(parseWritingModelReview(JSON.stringify(keyed))).toMatchObject({
+      criteria: expect.arrayContaining([expect.objectContaining({ id: 'continuity' })]),
+      findings: [{ severity: 'note' }],
+    })
+  })
+
   it('bounds and labels prompt inputs as reference data', () => {
     const prompt = buildWritingEvaluationPrompt({
       instruction: 'Continue the scene.',
@@ -78,5 +94,56 @@ describe('writing evaluation', () => {
       maxInputChars: 5_000,
     })
     expect(bounded.length).toBeLessThan(6_500)
+  })
+
+  it('reports bounded predictable-pattern signals without claiming authorship detection', () => {
+    const result = evaluatePredictablePatterns(
+      'The door opened slowly in the dark hallway. The door opened quietly beside the old station. The door opened carefully before the storm arrived.',
+    )
+    expect(result.method).toBe('bounded_local_pattern_diagnostic')
+    expect(result.disclaimer).toContain('not AI-authorship detection')
+    expect(result.spans[0]).toMatchObject({ signal: 'repetition' })
+    expect(result.density).toBeGreaterThan(0)
+  })
+
+  it('bounds rewrite iterations and preserves the original candidate', async () => {
+    const calls: number[] = []
+    const result = await runBoundedPatternRewrite({
+      draft: 'Original.',
+      maxIterations: 99,
+      evaluate: (draft) => ({
+        version: 1,
+        method: 'bounded_local_pattern_diagnostic',
+        disclaimer: 'This is a predictable-pattern diagnostic, not AI-authorship detection or a literary-quality score.',
+        sentenceCount: 1,
+        predictableSentenceCount: draft === 'Original.' ? 1 : 0,
+        density: draft === 'Original.' ? 1 : 0,
+        spans: draft === 'Original.' ? [{ sentence: 'Original.', signal: 'common_phrase', detail: 'Inspect.' }] : [],
+      }),
+      rewrite: async (_draft, spans, iteration) => {
+        calls.push(iteration)
+        expect(spans).toHaveLength(1)
+        return 'Revised.'
+      },
+    })
+    expect(result.original).toBe('Original.')
+    expect(result.revised).toBe('Revised.')
+    expect(result.iterations).toBe(1)
+    expect(calls).toEqual([1])
+  })
+
+  it('labels rewrite prompts as optional editorial revisions', () => {
+    const prompt = buildPredictablePatternRewritePrompt({
+      draft: 'A passage.',
+      spans: [{ sentence: 'A passage.', signal: 'uniform_rhythm', detail: 'Review rhythm.' }],
+    })
+    expect(prompt).toContain('not an attempt to evade authorship detection')
+    expect(prompt).toContain('<flagged_patterns>')
+  })
+
+  it('calculates perplexity from token log probabilities without treating it as authorship evidence', () => {
+    expect(calculatePerplexity([Math.log(0.5), Math.log(0.5)])).toBe(2)
+    expect(calculatePerplexity([])).toBeNull()
+    expect(calculatePerplexity([-1, Number.NaN])).toBeCloseTo(Math.E)
   })
 })

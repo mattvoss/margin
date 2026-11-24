@@ -31,7 +31,7 @@ export function WritingEvaluationReport(props: {
     )
   }
 
-  const { deterministicChecks, modelReview } = evaluation.result
+  const { deterministicChecks, modelReview, predictablePattern } = evaluation.result
   const warningCount = deterministicChecks.filter((check) => check.status !== 'pass').length
     + (modelReview?.findings.filter((finding) => finding.severity === 'warning').length ?? 0)
   return (
@@ -43,6 +43,33 @@ export function WritingEvaluationReport(props: {
         <p className="text-[9px] text-[var(--text-muted)]">
           Deterministic checks cover narrow rules. Model ratings are editorial estimates, not objective measures of literary quality.
         </p>
+        {predictablePattern && (
+          <section aria-label="Predictable pattern diagnostic">
+            <h4 className="mb-1 font-medium text-[var(--text-heading)]">Predictable-pattern diagnostic</h4>
+            <p className="text-[9px] text-[var(--text-muted)]">
+              This is not AI-authorship detection, plagiarism detection, or a literary-quality score. It only identifies patterns worth reviewing.
+            </p>
+            <p>
+              {predictablePattern.predictableSentenceCount}/{predictablePattern.sentenceCount} sentences flagged ({Math.round(predictablePattern.density * 100)}%).
+            </p>
+            {predictablePattern.perplexity && (
+              <p className="text-[var(--text-muted)]">
+                Perplexity: {predictablePattern.perplexity.status === 'available' && predictablePattern.perplexity.mean != null
+                  ? predictablePattern.perplexity.mean
+                  : 'unavailable — endpoint did not provide token log probabilities.'}
+              </p>
+            )}
+            {predictablePattern.spans.length > 0 && (
+              <ul className="mt-1 flex flex-col gap-1">
+                {predictablePattern.spans.map((span, index) => (
+                  <li key={`${span.signal}-${index}`} className="text-[var(--text-muted)]">
+                    <span className="font-medium">{span.signal.replace(/_/g, ' ')}</span> · {span.detail}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
         {modelReview && (
           <section aria-label="Editorial review">
             <p className="mb-1">{modelReview.summary}</p>

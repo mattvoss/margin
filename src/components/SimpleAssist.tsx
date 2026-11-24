@@ -1116,7 +1116,10 @@ export function SimpleAssist() {
         available_files: openedFiles.map(f => ({ name: f.name, path: f.path })),
         active_filename: activeFilename,
         ...(mode === 'write' ? { write_answers: Object.keys(clarificationAnswers).length ? clarificationAnswers : null } : {}),
-        ...(mode === 'write' ? { evaluate_prose: settings?.write_evaluation_enabled !== false } : {}),
+        ...(mode === 'write' ? {
+          evaluate_prose: settings?.write_evaluation_enabled !== false,
+          rewrite_predictable_patterns: settings?.write_pattern_rewrite_enabled === true,
+        } : {}),
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
         ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
       }
@@ -1262,6 +1265,9 @@ export function SimpleAssist() {
           } else if (status === 'write_evaluation_skipped') {
             setWriteEvaluationRunning(false)
             setWriteEvaluation({ status: 'skipped', reason: 'disabled' })
+          } else if (status === 'write_rewrite_candidate') {
+            if (typeof data.output === 'string') setStreamingChatText(data.output)
+            setNoticeText(`Optional predictable-pattern revision generated (${Number(data.iterations ?? 0)} pass${Number(data.iterations ?? 0) === 1 ? '' : 'es'}). Review before applying.`)
           } else if (status === 'write_completed') {
             dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
@@ -1937,8 +1943,14 @@ export function SimpleAssist() {
                 >
                   Evaluate prose after writing
                 </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={settings?.write_pattern_rewrite_enabled === true}
+                  onCheckedChange={(checked) => void updateSettings({ write_pattern_rewrite_enabled: checked })}
+                >
+                  Suggest predictable-pattern revisions
+                </DropdownMenuCheckboxItem>
                 <p className="px-2 py-1 text-[10px] leading-snug text-[var(--text-muted)]">
-                  Adds deterministic checks and an advisory model review in Write mode.
+                  Adds advisory checks and optional revision suggestions. This is not AI-authorship detection.
                 </p>
                 <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup

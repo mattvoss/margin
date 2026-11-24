@@ -338,6 +338,7 @@ export function defaultSettings(): Settings {
     planner_include_outline: false,
     character_tracking: true,
     write_evaluation_enabled: true,
+    write_pattern_rewrite_enabled: false,
     history_turns: 5,
     post_processing: createDefaultPostProcessing(),
     image_endpoints: {},

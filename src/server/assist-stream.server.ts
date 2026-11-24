@@ -76,6 +76,9 @@ import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.
 import {
   buildWritingEvaluationPrompt,
   evaluateDraftDeterministically,
+  evaluatePredictablePatterns,
+  buildPredictablePatternRewritePrompt,
+  runBoundedPatternRewrite,
   parseWritingModelReview,
 } from './writing-evaluation.server'
 import type {
@@ -813,6 +816,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const evaluateProse = payload.evaluate_prose ?? (settings.write_evaluation_enabled !== false)
           let allThinking = ''
           let finalOutput = ''
+          let originalDraftForLog = ''
           let writingEvaluation: WritingEvaluationRecord = evaluateProse
             ? { status: 'skipped', reason: 'not_run' }
             : { status: 'skipped', reason: 'disabled' }
@@ -916,6 +920,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             },
           })
           finalOutput = pipeline.output
+          originalDraftForLog = finalOutput
 
           if (!signal.aborted) {
             if (evaluateProse) {
@@ -931,6 +936,37 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   paragraphBefore: anchor.paragraphBefore,
                   paragraphAfter: anchor.paragraphAfter,
                 })
+                let predictablePattern = evaluatePredictablePatterns(finalOutput)
+                const originalDraft = finalOutput
+                if (payload.rewrite_predictable_patterns && predictablePattern.spans.length) {
+                  const rewriteResult = await runBoundedPatternRewrite({
+                    draft: finalOutput,
+                    maxIterations: 3,
+                    evaluate: evaluatePredictablePatterns,
+                    rewrite: async (draft, spans) => {
+                      const rewriter = createWriteEvaluationAgent({
+                        endpoint: {
+                          model: client.model,
+                          baseUrl: client.baseUrl,
+                          apiKey: client.apiKey,
+                          requestBody: { chat_template_kwargs: { enable_thinking: false } },
+                        },
+                        instructions: 'Return only the revised passage. Preserve meaning, facts, voice, and all unflagged text. This is an optional editorial revision, not authorship detection.',
+                        maxOutputTokens: 1800,
+                      })
+                      const result = await rewriter.generate({
+                        prompt: buildPredictablePatternRewritePrompt({ draft, spans }),
+                        abortSignal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
+                      })
+                      return result.text
+                    },
+                  })
+                  if (rewriteResult.revised !== originalDraft) {
+                    finalOutput = rewriteResult.revised
+                    predictablePattern = rewriteResult.diagnostic
+                    send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: rewriteResult.iterations })
+                  }
+                }
                 let modelReview: WritingModelReview | null = null
                 if (finalOutput.trim()) {
                   const contextWindow = getActiveContextWindow(settings as never)
@@ -944,7 +980,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     instruction: requestMessage,
                     plan: pipeline.artifacts.find((artifact) => artifact.stage === 'plan')?.content,
                     context,
-                    draft: finalOutput,
+                  draft: finalOutput,
                     maxInputChars: evaluationInputChars,
                   })
                   const evaluator = createWriteEvaluationAgent({
@@ -965,6 +1001,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   version: 1,
                   deterministicChecks,
                   modelReview,
+                  predictablePattern,
                 }
                 writingEvaluation = { status: 'complete', result }
                 send({ status: 'write_evaluation_completed', evaluation: result })
@@ -989,7 +1026,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               system_prompt: `Write pipeline: ${WRITING_PIPELINE_STAGES.map((stage) => stage.id).join(', ')}.`,
               user_prompt: context,
               output: finalOutput,
-              raw_output: finalOutput,
+               raw_output: originalDraftForLog || finalOutput,
               instruction: payload.message,
               selected_text: payload.selected_text,
               ref_files: tagged.map(path => ({

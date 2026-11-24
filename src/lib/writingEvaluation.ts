@@ -39,10 +39,33 @@ export const writingDeterministicCheckSchema = z.object({
   evidence: z.string().max(500).optional(),
 })
 
+export const writingPredictablePatternSpanSchema = z.object({
+  sentence: z.string().trim().min(1).max(500),
+  signal: z.enum(['repetition', 'uniform_rhythm', 'common_phrase']),
+  detail: z.string().trim().min(1).max(300),
+})
+
+export const writingPredictablePatternSchema = z.object({
+  version: z.literal(1),
+  method: z.literal('bounded_local_pattern_diagnostic'),
+  disclaimer: z.literal('This is a predictable-pattern diagnostic, not AI-authorship detection or a literary-quality score.'),
+  sentenceCount: z.number().int().nonnegative().max(2000),
+  predictableSentenceCount: z.number().int().nonnegative().max(2000),
+  density: z.number().min(0).max(1),
+  spans: z.array(writingPredictablePatternSpanSchema).max(12),
+  perplexity: z.object({
+    status: z.enum(['available', 'unavailable']),
+    mean: z.number().positive().finite().optional(),
+    tokenCount: z.number().int().nonnegative().max(100_000).optional(),
+    detail: z.string().min(1).max(300),
+  }).optional(),
+})
+
 export const writingEvaluationResultSchema = z.object({
   version: z.literal(1),
   deterministicChecks: z.array(writingDeterministicCheckSchema).max(12),
   modelReview: writingModelReviewSchema.nullable(),
+  predictablePattern: writingPredictablePatternSchema.nullable().optional(),
 })
 
 export const writingEvaluationRecordSchema = z.discriminatedUnion('status', [
@@ -55,5 +78,6 @@ export type WritingEvaluationCriterion = z.infer<typeof writingEvaluationCriteri
 export type WritingEvaluationFinding = z.infer<typeof writingEvaluationFindingSchema>
 export type WritingModelReview = z.infer<typeof writingModelReviewSchema>
 export type WritingDeterministicCheck = z.infer<typeof writingDeterministicCheckSchema>
+export type WritingPredictablePattern = z.infer<typeof writingPredictablePatternSchema>
 export type WritingEvaluationResult = z.infer<typeof writingEvaluationResultSchema>
 export type WritingEvaluationRecord = z.infer<typeof writingEvaluationRecordSchema>

@@ -105,6 +105,8 @@ export interface SimpleAssistRequest {
   clarification_id?: string | null
   /** Whether to run the advisory prose evaluator for the dedicated writing flow. */
   evaluate_prose?: boolean
+  /** Explicitly request a bounded predictable-pattern revision candidate. */
+  rewrite_predictable_patterns?: boolean
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -137,6 +139,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
       : null,
     clarification_id: str(input.clarification_id),
     evaluate_prose: typeof input.evaluate_prose === 'boolean' ? input.evaluate_prose : undefined,
+    rewrite_predictable_patterns: input.rewrite_predictable_patterns === true,
   }
 }
 

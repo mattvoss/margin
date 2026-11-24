@@ -29,4 +29,10 @@ describe('normalizeAssistEvent', () => {
       evaluation: { status: 'complete', result: { version: 1 } },
     })
   })
+
+  it('normalizes optional rewrite candidates', () => {
+    expect(normalizeAssistEvent({ status: 'write_rewrite_candidate', output: 'Revised.', iterations: 2 })).toEqual({
+      type: 'rewrite_candidate', output: 'Revised.', iterations: 2,
+    })
+  })
 })

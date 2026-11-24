@@ -41,4 +41,12 @@ describe('reduceAssistStream', () => {
     expect(state.evaluation).toMatchObject({ status: 'failed' })
     expect(state.stages.prose.output).toBe('A draft.')
   })
+
+  it('replaces the displayed candidate only when an explicit rewrite event arrives', () => {
+    const state = reduceAssistStream(
+      { ...initialAssistRunState, finalOutput: 'Original.' },
+      { type: 'rewrite_candidate', output: 'Revised.', iterations: 1 },
+    )
+    expect(state.finalOutput).toBe('Revised.')
+  })
 })

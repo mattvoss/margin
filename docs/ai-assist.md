@@ -14,6 +14,12 @@ If you have a subscription to an agentic coding tool, you can run it directly fr
 
 ## Edit Mode
 
+### Writing evaluation and predictable-pattern diagnostics
+
+Write mode can run bounded deterministic checks and an advisory model review after generating prose. An optional **Suggest predictable-pattern revisions** setting can also inspect repeated openings and unusually uniform sentence lengths, then request up to three revision passes. The original generated candidate is retained and the revised candidate is shown separately for review; Margin never silently applies or blocks it.
+
+The predictable-pattern diagnostic is not AI-authorship detection, plagiarism detection, or a literary-quality score. It is only an editorial signal about patterns that may be worth inspecting. True perplexity requires token log-probabilities from a compatible endpoint; when those are unavailable, Margin reports that no perplexity score was calculated rather than inferring one.
+
 Use Edit mode when you want the AI to modify or add content. The behavior depends on whether you have text selected or just a cursor placed.
 
 ### Replace (with text selected)

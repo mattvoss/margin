@@ -21,6 +21,11 @@ export function normalizeAssistEvent(data: Record<string, unknown>): AssistStrea
   }
   if (status === 'write_evaluation_failed') return { type: 'evaluation_failed', message: String(data.message ?? 'Evaluation failed.') }
   if (status === 'write_evaluation_skipped') return { type: 'evaluation_skipped' }
+  if (status === 'write_rewrite_candidate') return {
+    type: 'rewrite_candidate',
+    output: String(data.output ?? ''),
+    iterations: Number(data.iterations ?? 0),
+  }
   if (status === 'write_completed' || status === 'chat') return { type: 'completed', output: String(data.output ?? '') }
   if (status === 'error') return { type: 'failed', message: String(data.message ?? data.error ?? 'Assist request failed') }
   return null

@@ -25,6 +25,7 @@ export type AssistStreamEvent =
   | { type: 'evaluation_completed'; evaluation: WritingEvaluationRecord }
   | { type: 'evaluation_failed'; message: string }
   | { type: 'evaluation_skipped' }
+  | { type: 'rewrite_candidate'; output: string; iterations: number }
   | { type: 'completed'; output: string; reasoning?: string }
   | { type: 'failed'; stage?: string; message: string }
   | { type: 'cancelled'; stage?: string }
@@ -127,6 +128,8 @@ export function reduceAssistStream(
       }
     case 'evaluation_skipped':
       return { ...state, evaluation: { status: 'skipped', reason: 'disabled' }, evaluationRunning: false }
+    case 'rewrite_candidate':
+      return { ...state, finalOutput: event.output }
     case 'completed':
       return { ...state, finalOutput: event.output, finalReasoning: event.reasoning ?? state.finalReasoning, complete: true }
     case 'failed': {

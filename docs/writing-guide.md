@@ -27,7 +27,7 @@ margin uses role-separated agents to generate context-aware writing assistance:
 
 2. **The Writer Agent** receives only the instruction, your selected text (if any), and the context prepared by the Planner. It streams the result directly into the editor.
 
-This separation means the AI doesn't need to read every file in your workspace for every request -- the Planner filters and prioritizes context efficiently. The separate **Write** mode uses a bounded specialist pipeline for scene planning, character and continuity analysis, dialogue, and prose drafting. When enabled, a report-only evaluation follows the draft; deterministic checks and model-based editorial findings are clearly distinguished, and neither can silently change or block the prose.
+This separation means the AI doesn't need to read every file in your workspace for every request -- the Planner filters and prioritizes context efficiently. The separate **Write** mode uses a bounded specialist pipeline for scene planning, character and continuity analysis, dialogue, and prose drafting. When enabled, an advisory evaluation follows the draft; deterministic checks, model-based editorial findings, and the optional predictable-pattern diagnostic are clearly distinguished. Predictable-pattern signals are not AI-authorship detection or literary-quality scores. If the optional revision setting is enabled, Margin can request up to three separate revision passes, retains the original candidate, and shows the revised candidate for review without silently applying or blocking prose.
 
 > For a detailed walkthrough of using Edit and Chat modes, see [AI Assist](./ai-assist.md).
 
