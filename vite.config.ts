@@ -18,6 +18,9 @@ export default defineConfig({
       srcDirectory: 'src',
     }),
     react(),
-    nitro(),
+    nitro({
+      // Keep DuckDB's native .node binding out of the Nitro JS bundle.
+      traceDeps: ['@duckdb/node-api'],
+    }),
   ],
 })
