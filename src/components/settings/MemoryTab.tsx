@@ -116,7 +116,7 @@ export function MemorySettings({ query }: { query: string }) {
     setIndexResult(null)
     setError(null)
     try {
-      const response = await apiFetch(`${API_BASE}/api/memory/index`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE}/api/memory/index/`, { method: 'POST' })
       const body = await response.json().catch(() => null) as IndexResult | { detail?: string } | null
       if (!response.ok) {
         throw new Error(body && 'detail' in body && typeof body.detail === 'string' ? body.detail : 'Could not index Markdown files.')

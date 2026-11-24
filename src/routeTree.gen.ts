@@ -21,7 +21,6 @@ import { Route as ApiImagesGenerateRouteImport } from './routes/api.images.gener
 import { Route as ApiImagesLogsRouteImport } from './routes/api.images.logs'
 import { Route as ApiImagesRevealRouteImport } from './routes/api.images.reveal'
 import { Route as ApiImagesStylesRouteImport } from './routes/api.images.styles'
-import { Route as ApiMemoryIndexRouteImport } from './routes/api.memory.index'
 import { Route as ApiMemoryIdRouteImport } from './routes/api.memory.$id'
 import { Route as ApiMemoryFileRouteImport } from './routes/api.memory.file'
 import { Route as ApiMemoryStatusRouteImport } from './routes/api.memory.status'
@@ -41,6 +40,7 @@ import { Route as ApiWorkspaceMediaRouteImport } from './routes/api.workspace.me
 import { Route as ApiWorkspaceProfilesRouteImport } from './routes/api.workspace.profiles'
 import { Route as ApiWorkspaceStatsRouteImport } from './routes/api.workspace.stats'
 import { Route as ApiWorkspaceStylesRouteImport } from './routes/api.workspace.styles'
+import { Route as ApiMemoryIndexIndexRouteImport } from './routes/api.memory.index.index'
 import { Route as ApiAssistPromptsSplatRouteImport } from './routes/api.assist.prompts.$'
 import { Route as ApiAssistSimpleLogsRouteImport } from './routes/api.assist.simple.logs'
 import { Route as ApiHarnessesIdModelsRouteImport } from './routes/api.harnesses.$id.models'
@@ -113,11 +113,6 @@ const ApiImagesStylesRoute = ApiImagesStylesRouteImport.update({
   id: '/api/images/styles',
   path: '/api/images/styles',
   getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMemoryIndexRoute = ApiMemoryIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiMemoryIdRoute = ApiMemoryIdRouteImport.update({
   id: '/$id',
@@ -214,6 +209,11 @@ const ApiWorkspaceStylesRoute = ApiWorkspaceStylesRouteImport.update({
   id: '/api/workspace/styles',
   path: '/api/workspace/styles',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMemoryIndexIndexRoute = ApiMemoryIndexIndexRouteImport.update({
+  id: '/index/',
+  path: '/index/',
+  getParentRoute: () => ApiMemoryRoute,
 } as any)
 const ApiAssistPromptsSplatRoute = ApiAssistPromptsSplatRouteImport.update({
   id: '/$',
@@ -312,7 +312,6 @@ export interface FileRoutesByFullPath {
   '/api/workspace/profiles': typeof ApiWorkspaceProfilesRouteWithChildren
   '/api/workspace/stats': typeof ApiWorkspaceStatsRoute
   '/api/workspace/styles': typeof ApiWorkspaceStylesRoute
-  '/api/memory/': typeof ApiMemoryIndexRoute
   '/api/assist/prompts/$': typeof ApiAssistPromptsSplatRoute
   '/api/assist/simple/logs': typeof ApiAssistSimpleLogsRoute
   '/api/harnesses/$id/models': typeof ApiHarnessesIdModelsRoute
@@ -323,12 +322,14 @@ export interface FileRoutesByFullPath {
   '/api/workspace/media/$': typeof ApiWorkspaceMediaSplatRoute
   '/api/workspace/media/from-url': typeof ApiWorkspaceMediaFromUrlRoute
   '/api/workspace/profiles/$id': typeof ApiWorkspaceProfilesIdRoute
+  '/api/memory/index/': typeof ApiMemoryIndexIndexRoute
   '/api/assist/simple/session/$': typeof ApiAssistSimpleSessionSplatRoute
   '/api/assist/simple/stop/$': typeof ApiAssistSimpleStopSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/harnesses': typeof ApiHarnessesRouteWithChildren
+  '/api/memory': typeof ApiMemoryRouteWithChildren
   '/api/settings': typeof ApiSettingsRouteWithChildren
   '/api/assist/characters': typeof ApiAssistCharactersRoute
   '/api/assist/post-process': typeof ApiAssistPostProcessRoute
@@ -357,7 +358,6 @@ export interface FileRoutesByTo {
   '/api/workspace/profiles': typeof ApiWorkspaceProfilesRouteWithChildren
   '/api/workspace/stats': typeof ApiWorkspaceStatsRoute
   '/api/workspace/styles': typeof ApiWorkspaceStylesRoute
-  '/api/memory': typeof ApiMemoryIndexRoute
   '/api/assist/prompts/$': typeof ApiAssistPromptsSplatRoute
   '/api/assist/simple/logs': typeof ApiAssistSimpleLogsRoute
   '/api/harnesses/$id/models': typeof ApiHarnessesIdModelsRoute
@@ -368,6 +368,7 @@ export interface FileRoutesByTo {
   '/api/workspace/media/$': typeof ApiWorkspaceMediaSplatRoute
   '/api/workspace/media/from-url': typeof ApiWorkspaceMediaFromUrlRoute
   '/api/workspace/profiles/$id': typeof ApiWorkspaceProfilesIdRoute
+  '/api/memory/index': typeof ApiMemoryIndexIndexRoute
   '/api/assist/simple/session/$': typeof ApiAssistSimpleSessionSplatRoute
   '/api/assist/simple/stop/$': typeof ApiAssistSimpleStopSplatRoute
 }
@@ -404,7 +405,6 @@ export interface FileRoutesById {
   '/api/workspace/profiles': typeof ApiWorkspaceProfilesRouteWithChildren
   '/api/workspace/stats': typeof ApiWorkspaceStatsRoute
   '/api/workspace/styles': typeof ApiWorkspaceStylesRoute
-  '/api/memory/': typeof ApiMemoryIndexRoute
   '/api/assist/prompts/$': typeof ApiAssistPromptsSplatRoute
   '/api/assist/simple/logs': typeof ApiAssistSimpleLogsRoute
   '/api/harnesses/$id/models': typeof ApiHarnessesIdModelsRoute
@@ -415,6 +415,7 @@ export interface FileRoutesById {
   '/api/workspace/media/$': typeof ApiWorkspaceMediaSplatRoute
   '/api/workspace/media/from-url': typeof ApiWorkspaceMediaFromUrlRoute
   '/api/workspace/profiles/$id': typeof ApiWorkspaceProfilesIdRoute
+  '/api/memory/index/': typeof ApiMemoryIndexIndexRoute
   '/api/assist/simple/session/$': typeof ApiAssistSimpleSessionSplatRoute
   '/api/assist/simple/stop/$': typeof ApiAssistSimpleStopSplatRoute
 }
@@ -452,7 +453,6 @@ export interface FileRouteTypes {
     | '/api/workspace/profiles'
     | '/api/workspace/stats'
     | '/api/workspace/styles'
-    | '/api/memory/'
     | '/api/assist/prompts/$'
     | '/api/assist/simple/logs'
     | '/api/harnesses/$id/models'
@@ -463,12 +463,14 @@ export interface FileRouteTypes {
     | '/api/workspace/media/$'
     | '/api/workspace/media/from-url'
     | '/api/workspace/profiles/$id'
+    | '/api/memory/index/'
     | '/api/assist/simple/session/$'
     | '/api/assist/simple/stop/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/api/harnesses'
+    | '/api/memory'
     | '/api/settings'
     | '/api/assist/characters'
     | '/api/assist/post-process'
@@ -497,7 +499,6 @@ export interface FileRouteTypes {
     | '/api/workspace/profiles'
     | '/api/workspace/stats'
     | '/api/workspace/styles'
-    | '/api/memory'
     | '/api/assist/prompts/$'
     | '/api/assist/simple/logs'
     | '/api/harnesses/$id/models'
@@ -508,6 +509,7 @@ export interface FileRouteTypes {
     | '/api/workspace/media/$'
     | '/api/workspace/media/from-url'
     | '/api/workspace/profiles/$id'
+    | '/api/memory/index'
     | '/api/assist/simple/session/$'
     | '/api/assist/simple/stop/$'
   id:
@@ -543,7 +545,6 @@ export interface FileRouteTypes {
     | '/api/workspace/profiles'
     | '/api/workspace/stats'
     | '/api/workspace/styles'
-    | '/api/memory/'
     | '/api/assist/prompts/$'
     | '/api/assist/simple/logs'
     | '/api/harnesses/$id/models'
@@ -554,6 +555,7 @@ export interface FileRouteTypes {
     | '/api/workspace/media/$'
     | '/api/workspace/media/from-url'
     | '/api/workspace/profiles/$id'
+    | '/api/memory/index/'
     | '/api/assist/simple/session/$'
     | '/api/assist/simple/stop/$'
   fileRoutesById: FileRoutesById
@@ -672,13 +674,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/images/styles'
       preLoaderRoute: typeof ApiImagesStylesRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/api/memory/': {
-      id: '/api/memory/'
-      path: '/'
-      fullPath: '/api/memory/'
-      preLoaderRoute: typeof ApiMemoryIndexRouteImport
-      parentRoute: typeof ApiMemoryRoute
     }
     '/api/memory/$id': {
       id: '/api/memory/$id'
@@ -813,6 +808,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWorkspaceStylesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/memory/index/': {
+      id: '/api/memory/index/'
+      path: '/index'
+      fullPath: '/api/memory/index/'
+      preLoaderRoute: typeof ApiMemoryIndexIndexRouteImport
+      parentRoute: typeof ApiMemoryRoute
+    }
     '/api/assist/prompts/$': {
       id: '/api/assist/prompts/$'
       path: '/$'
@@ -917,7 +919,7 @@ interface ApiMemoryRouteChildren {
   ApiMemoryFileRoute: typeof ApiMemoryFileRoute
   ApiMemoryStatusRoute: typeof ApiMemoryStatusRoute
   ApiMemoryTestRoute: typeof ApiMemoryTestRoute
-  ApiMemoryIndexRoute: typeof ApiMemoryIndexRoute
+  ApiMemoryIndexIndexRoute: typeof ApiMemoryIndexIndexRoute
 }
 
 const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
@@ -925,7 +927,7 @@ const ApiMemoryRouteChildren: ApiMemoryRouteChildren = {
   ApiMemoryFileRoute: ApiMemoryFileRoute,
   ApiMemoryStatusRoute: ApiMemoryStatusRoute,
   ApiMemoryTestRoute: ApiMemoryTestRoute,
-  ApiMemoryIndexRoute: ApiMemoryIndexRoute,
+  ApiMemoryIndexIndexRoute: ApiMemoryIndexIndexRoute,
 }
 
 const ApiMemoryRouteWithChildren = ApiMemoryRoute._addFileChildren(
