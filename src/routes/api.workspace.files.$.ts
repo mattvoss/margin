@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { createWorkspaceFile, deleteWorkspaceFile, listInputFiles, readWorkspaceFile, renameWorkspaceFile, requestWorkspaceDir, writeWorkspaceFile } from '../server/storage.server'
+import { createWorkspaceFile, deleteWorkspaceFile, listInputFiles, readWorkspaceFile, renameWorkspaceFile, requestSettings, requestWorkspaceDir, writeWorkspaceFile } from '../server/storage.server'
 import { dec, err, errMsg, json, readJson } from '../server/http.server'
+import { scheduleCurrentStateReview } from '../server/current-state-review.server'
 
 export const Route = createFileRoute('/api/workspace/files/$')({
   server: {
@@ -72,11 +73,29 @@ export const Route = createFileRoute('/api/workspace/files/$')({
           return err(400, 'filename or path is required')
         }
         try {
+          const workspaceDir = await requestWorkspaceDir(request, b)
+          const content = String(b.content ?? '')
+          const previousContent = await readWorkspaceFile(rel, workspaceDir)
           await writeWorkspaceFile(
             rel,
-            String(b.content ?? ''),
-            await requestWorkspaceDir(request, b),
+            content,
+            workspaceDir,
           )
+          if (previousContent === content) return json({ success: true })
+          void requestSettings(request, b)
+            .then(async (settings) => {
+              const latestContent = await readWorkspaceFile(rel, workspaceDir).catch(() => null)
+              if (latestContent !== content) return
+              scheduleCurrentStateReview({
+                workspaceDir,
+                filePath: rel,
+                content,
+                settings: settings as never,
+              })
+            })
+            .catch((error) => {
+              console.warn(`Could not schedule current-state review for ${rel}: ${errMsg(error)}`)
+            })
           return json({ success: true })
         } catch (e) {
           return err(400, errMsg(e))

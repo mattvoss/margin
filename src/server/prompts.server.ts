@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { DATA_ROOT } from './env.server'
 
 import characterTrackerPrompt from '../../prompts/character-tracker.md?raw'
+import currentStateReviewerPrompt from '../../prompts/current-state-reviewer.md?raw'
 import harnessEditPrompt from '../../prompts/harness-edit.md?raw'
 import sceneDrafterPrompt from '../../prompts/scene-drafter.md?raw'
 import scenePlannerPrompt from '../../prompts/scene-planner.md?raw'
@@ -32,6 +33,7 @@ import simpleWriterPrompt from '../../prompts/simple-writer.md?raw'
 /** Build-time copies of the shipped prompts, used when no file is on disk. */
 export const BUNDLED_PROMPTS: Readonly<Record<string, string>> = {
   'character-tracker.md': characterTrackerPrompt,
+  'current-state-reviewer.md': currentStateReviewerPrompt,
   'harness-edit.md': harnessEditPrompt,
   'scene-drafter.md': sceneDrafterPrompt,
   'scene-planner.md': scenePlannerPrompt,

@@ -73,6 +73,7 @@ import { tool, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
+import { scheduleCurrentStateReview } from './current-state-review.server'
 import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.server'
 import {
   buildWritingEvaluationPrompt,
@@ -488,6 +489,17 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               }
             } catch (error) {
               console.warn(`Harness post-processing failed for ${activePath}: ${errMsg(error)}`)
+            }
+          }
+          if (!isPlanner && activePath && runOk && !signal.aborted) {
+            const updatedChapter = await readWorkspaceFile(activePath, ws).catch(() => null)
+            if (updatedChapter !== null && updatedChapter !== payload.content) {
+              scheduleCurrentStateReview({
+                workspaceDir: ws,
+                filePath: activePath,
+                content: updatedChapter,
+                settings: settings as never,
+              })
             }
           }
           const harnessPostLog =

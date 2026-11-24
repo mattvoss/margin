@@ -272,6 +272,7 @@ const PROMPT_ENTRIES = [
   { id: 'chat', file: 'simple-chat.md', label: 'Chat', description: 'Converses and answers — makes no edits, for endpoints and harnesses.' },
   { id: 'harness-edit', file: 'harness-edit.md', label: 'Harness Edit', description: 'Standing instructions for agent harnesses in Edit mode (OpenCode, Pi, Claude Code, Codex, Antigravity) — including the rule that changes land in files, not in the reply.' },
   { id: 'character-tracker', file: 'character-tracker.md', label: 'Character Tracker', description: 'Extracts the active cast from new prose and chapter rescans. Returns JSON; does not write the manuscript.' },
+  { id: 'current-state-reviewer', file: 'current-state-reviewer.md', label: 'Current State Reviewer', description: 'Reviews saved chapter updates in the background and proposes current-state changes when the story clearly advances.' },
 ]
 
 function PromptsSettings() {

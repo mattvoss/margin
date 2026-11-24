@@ -19,6 +19,7 @@ import {
   writeCharacterState,
   type ExtractedCharacter,
 } from './characters.server'
+import { reviewCurrentStateFromChapter } from './current-state-review.server'
 import { Route as CharactersRoute } from '../routes/api.assist.characters'
 import type { AssistSettings } from './assist.server'
 import {
@@ -481,6 +482,171 @@ describe('character state I/O', () => {
     expect(
       ((await deleted.json()) as { state: CharacterState }).state.characters,
     ).toEqual([])
+  })
+})
+
+describe('background current-state review', () => {
+  const settings = {
+    active_endpoint: 'mock',
+    endpoints: {
+      mock: {
+        url: 'http://mock.local/v1',
+        model: 'mock',
+        context_window: 8192,
+        is_thinking: true,
+      },
+    },
+  } as unknown as AssistSettings
+
+  it('updates current state when the revised chapter clearly establishes a new situation', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'margin-current-state-review-'))
+    tempDirs.push(workspace)
+    mkdirSync(join(workspace, 'chapters'), { recursive: true })
+    const filePath = 'chapters/07.md'
+    const content = '# The Crossing\n\nElara reaches the observatory as the storm breaks.'
+    writeFileSync(join(workspace, filePath), content, 'utf-8')
+    const state = makeState([])
+    state.current_state = {
+      location: 'The northern road',
+      description: 'Elara is still travelling toward the observatory.',
+    }
+    await writeCharacterState(workspace, state)
+
+    const requestBodies: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(requestBody(init))
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              should_update: true,
+              location: 'The observatory',
+              description: 'Elara has reached the observatory as the storm breaks.',
+            }),
+          },
+          finish_reason: 'stop',
+        }],
+      })
+    }))
+
+    await expect(reviewCurrentStateFromChapter({
+      workspaceDir: workspace,
+      filePath,
+      content,
+      settings,
+    })).resolves.toBe(true)
+
+    expect(requestBodies).toHaveLength(1)
+    expect(JSON.stringify(requestBodies[0])).toContain('UPDATED CHAPTER PATH: chapters/07.md')
+    const loaded = await readCharacterState(workspace)
+    expect(loaded.current_state).toEqual({
+      location: 'The observatory',
+      description: 'Elara has reached the observatory as the storm breaks.',
+    })
+  })
+
+  it('does not apply a review if the current state changes while the agent is running', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'margin-current-state-stale-'))
+    tempDirs.push(workspace)
+    mkdirSync(join(workspace, 'chapters'), { recursive: true })
+    const filePath = 'chapters/07.md'
+    const content = '# The Crossing\n\nElara reaches the observatory.'
+    writeFileSync(join(workspace, filePath), content, 'utf-8')
+    const state = makeState([])
+    state.current_state = { location: 'The road', description: 'Elara is travelling.' }
+    await writeCharacterState(workspace, state)
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const manualEdit = await readCharacterState(workspace)
+      manualEdit.current_state = { location: 'The observatory', description: 'Manual update.' }
+      await writeCharacterState(workspace, manualEdit)
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              should_update: true,
+              location: 'An older road',
+              description: 'A stale agent result.',
+            }),
+          },
+          finish_reason: 'stop',
+        }],
+      })
+    }))
+
+    await expect(reviewCurrentStateFromChapter({
+      workspaceDir: workspace,
+      filePath,
+      content,
+      settings,
+    })).resolves.toBe(false)
+    expect((await readCharacterState(workspace)).current_state).toEqual({
+      location: 'The observatory',
+      description: 'Manual update.',
+    })
+  })
+
+  it('does not apply a review if the chapter is saved again while the agent is running', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'margin-current-state-chapter-stale-'))
+    tempDirs.push(workspace)
+    mkdirSync(join(workspace, 'chapters'), { recursive: true })
+    const filePath = 'chapters/07.md'
+    const content = '# The Crossing\n\nElara reaches the observatory.'
+    writeFileSync(join(workspace, filePath), content, 'utf-8')
+    const state = makeState([])
+    state.current_state = { location: 'The road', description: 'Elara is travelling.' }
+    await writeCharacterState(workspace, state)
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      writeFileSync(join(workspace, filePath), `${content}\n\nA later revision changes the ending.`, 'utf-8')
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              should_update: true,
+              location: 'The observatory',
+              description: 'The old ending.',
+            }),
+          },
+          finish_reason: 'stop',
+        }],
+      })
+    }))
+
+    await expect(reviewCurrentStateFromChapter({
+      workspaceDir: workspace,
+      filePath,
+      content,
+      settings,
+    })).resolves.toBe(false)
+    expect((await readCharacterState(workspace)).current_state).toEqual(state.current_state)
+  })
+
+  it('preserves the current state when the reviewer finds no clear change', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'margin-current-state-unchanged-'))
+    tempDirs.push(workspace)
+    mkdirSync(join(workspace, 'chapters'), { recursive: true })
+    const filePath = 'chapters/07.md'
+    const content = '# The Crossing\n\nElara continues along the road.'
+    writeFileSync(join(workspace, filePath), content, 'utf-8')
+    const state = makeState([])
+    state.current_state = { location: 'The road', description: 'Elara is travelling.' }
+    await writeCharacterState(workspace, state)
+
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      choices: [{
+        message: { content: '{"should_update":false,"location":"","description":""}' },
+        finish_reason: 'stop',
+      }],
+    })))
+
+    await expect(reviewCurrentStateFromChapter({
+      workspaceDir: workspace,
+      filePath,
+      content,
+      settings,
+    })).resolves.toBe(false)
+    expect((await readCharacterState(workspace)).current_state).toEqual(state.current_state)
   })
 })
 

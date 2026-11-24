@@ -71,6 +71,7 @@ describe('prompt resolution', () => {
     expect(names).toContain('simple-chat.md')
     expect(names).toContain('harness-edit.md')
     expect(names).toContain('character-tracker.md')
+    expect(names).toContain('current-state-reviewer.md')
     expect(names).toContain('scene-planner.md')
     expect(names).toContain('scene-drafter.md')
   })
@@ -79,6 +80,12 @@ describe('prompt resolution', () => {
     const content = await readPrompt('character-tracker.md')
     expect(content).toContain('ACTIVE STATUS')
     expect(content).toContain('Absence is not evidence')
+  })
+
+  it('ships a readable current-state reviewer prompt', async () => {
+    const content = await readPrompt('current-state-reviewer.md')
+    expect(content).toContain('should_update')
+    expect(content).toContain('Most updates should return `should_update: false`')
   })
 
   it('rejects directory traversal and empty names', async () => {
