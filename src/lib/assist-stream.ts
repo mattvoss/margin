@@ -14,6 +14,7 @@ export interface AssistStageState {
 }
 
 export type AssistStreamEvent =
+  | { type: 'reset' }
   | { type: 'run_started'; runId?: string; mode: AssistMode; model?: string; endpointId?: string }
   | { type: 'stage_started'; stage: string; label?: string }
   | { type: 'reasoning_delta'; stage: string; delta: string }
@@ -78,6 +79,8 @@ export function reduceAssistStream(
   event: AssistStreamEvent,
 ): AssistRunState {
   switch (event.type) {
+    case 'reset':
+      return initialAssistRunState
     case 'run_started':
       return {
         ...initialAssistRunState,

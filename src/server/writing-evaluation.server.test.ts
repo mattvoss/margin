@@ -161,7 +161,7 @@ describe('writing evaluation', () => {
     expect(calls).toEqual([1])
   })
 
-  it('labels rewrite prompts as optional editorial revisions', () => {
+  it('frames pattern rewrites as editorial revisions, not authorship evasion', () => {
     const prompt = buildPredictablePatternRewritePrompt({
       draft: 'A passage.',
       spans: [{ sentence: 'A passage.', signal: 'uniform_rhythm', detail: 'Review rhythm.' }],

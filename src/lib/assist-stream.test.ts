@@ -49,4 +49,19 @@ describe('reduceAssistStream', () => {
     )
     expect(state.finalOutput).toBe('Revised.')
   })
+
+  it('resets the run state to its initial value', () => {
+    const active = reduceAssistStream(initialAssistRunState, {
+      type: 'run_started',
+      mode: 'write',
+      runId: 'run-1',
+    })
+    const withOutput = reduceAssistStream(active, {
+      type: 'text_delta',
+      stage: 'prose',
+      delta: 'A draft.',
+    })
+
+    expect(reduceAssistStream(withOutput, { type: 'reset' })).toEqual(initialAssistRunState)
+  })
 })

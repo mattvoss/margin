@@ -87,6 +87,7 @@ function makeState(characters: TrackedCharacter[]): CharacterState {
     updated_at: NOW,
     source_path: 'chapters/01.md',
     source_session: null,
+    current_state: { location: '', description: '' },
     characters,
   }
 }
@@ -151,6 +152,10 @@ describe('mergeExtraction', () => {
       makeCharacter({ id: 'kaelen', name: 'Kaelen', active: true }),
       makeCharacter({ id: 'mira', name: 'Mira', active: false }),
     ])
+    prior.current_state = {
+      location: 'The northern pass',
+      description: 'A storm is closing in.',
+    }
 
     const result = mergeExtraction(
       prior,
@@ -173,6 +178,7 @@ describe('mergeExtraction', () => {
     expect(result.characters.find((c) => c.id === 'mira')!.active).toBe(false)
     expect(result.source_path).toBe('chapters/02.md')
     expect(result.source_session).toBe('s1')
+    expect(result.current_state).toEqual(prior.current_state)
   })
 
   it('only deactivates a character when the extraction explicitly does', () => {
@@ -301,6 +307,27 @@ describe('parseExtraction', () => {
 })
 
 describe('applyManualAction', () => {
+  it('updates current location and description, including clearing fields', () => {
+    const state = makeState([])
+    const updated = applyManualAction(
+      state,
+      {
+        action: 'update_current_state',
+        current_state: { location: 'The northern pass', description: 'A storm is closing in.' },
+      },
+      LATER,
+    )
+    expect(updated.current_state).toEqual({
+      location: 'The northern pass',
+      description: 'A storm is closing in.',
+    })
+    expect(updated.updated_at).toBe(LATER)
+    expect(applyManualAction(updated, {
+      action: 'update_current_state',
+      current_state: { location: '', description: '' },
+    }, NOW).current_state).toEqual({ location: '', description: '' })
+  })
+
   it('creates, replaces provided fields, and deletes', () => {
     const state = makeState([])
     const created = applyManualAction(
@@ -413,6 +440,16 @@ describe('character state I/O', () => {
     const empty = await handlers.GET({ request: workspaceRequest('GET', workspace) })
     expect(empty.status).toBe(200)
     expect(((await empty.json()) as { state: CharacterState }).state.characters).toEqual([])
+
+    const currentStateResponse = await handlers.PATCH({
+      request: workspaceRequest('PATCH', workspace, {
+        action: 'update_current_state',
+        current_state: { location: 'The archive', description: 'The wards have failed.' },
+      }),
+    })
+    expect(currentStateResponse.status).toBe(200)
+    expect(((await currentStateResponse.json()) as { state: CharacterState }).state.current_state)
+      .toEqual({ location: 'The archive', description: 'The wards have failed.' })
 
     const created = await handlers.PATCH({
       request: workspaceRequest('PATCH', workspace, {

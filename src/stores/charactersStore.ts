@@ -54,6 +54,7 @@ interface CharactersState {
   setEditing: (editing: boolean) => void
   rememberChapter: (workspaceDir: string | null | undefined, path: string) => void
   updateCharacter: (id: string, updates: Partial<CharacterDraft>) => Promise<void>
+  updateCurrentState: (currentState: { location: string; description: string }) => Promise<void>
   createCharacter: (character: CharacterDraft) => Promise<void>
   deleteCharacter: (id: string) => Promise<void>
   resetForWorkspace: () => void
@@ -223,6 +224,27 @@ export const useCharactersStore = create<CharactersState>()(
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'update', id, updates }),
+          })
+          if (!res.ok) throw new Error(await responseError(res))
+          const data = (await res.json()) as { state?: CharacterState }
+          if (sequence !== fetchSequence) return
+          if (data.state) set({ state: data.state })
+        } catch (e) {
+          if (sequence === fetchSequence) set({ error: (e as Error).message })
+          throw e
+        } finally {
+          set({ saving: false })
+        }
+      },
+
+      updateCurrentState: async (currentState) => {
+        const sequence = ++fetchSequence
+        set({ saving: true, loading: false, error: null })
+        try {
+          const res = await apiFetch(`${API_BASE}/api/assist/characters`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update_current_state', current_state: currentState }),
           })
           if (!res.ok) throw new Error(await responseError(res))
           const data = (await res.json()) as { state?: CharacterState }

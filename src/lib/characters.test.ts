@@ -29,6 +29,22 @@ describe('formatCharacterPrompt', () => {
     expect(formatCharacterPrompt(emptyCharacterState())).toBeNull()
   })
 
+  it('includes the editable current state even when the cast is empty', () => {
+    const state = emptyCharacterState()
+    state.current_state = { location: 'The archive', description: 'The wards have failed.' }
+    const result = formatCharacterPrompt(state)
+    expect(result).not.toBeNull()
+    const payload = JSON.parse(result!.slice('```CHARACTERS:```\n'.length)) as {
+      current_state: { location: string; description: string }
+      characters: unknown[]
+    }
+    expect(payload.current_state).toEqual({
+      location: 'The archive',
+      description: 'The wards have failed.',
+    })
+    expect(payload.characters).toEqual([])
+  })
+
   it('prefixes all cast entries with the marker and excludes storage metadata', () => {
     const state = emptyCharacterState()
     state.characters = [character(), character({
@@ -42,6 +58,7 @@ describe('formatCharacterPrompt', () => {
     const result = formatCharacterPrompt(state)
     expect(result?.startsWith('```CHARACTERS:```\n')).toBe(true)
     const payload = JSON.parse(result!.slice('```CHARACTERS:```\n'.length)) as {
+      current_state: { location: string; description: string }
       characters: Array<Record<string, unknown>>
     }
     expect(payload.characters).toHaveLength(2)
@@ -54,6 +71,7 @@ describe('formatCharacterPrompt', () => {
       accessories: 'brass compass',
     })
     expect(payload.characters[1]).toMatchObject({ name: 'Orin Vale', status: 'inactive' })
+    expect(payload.current_state).toEqual({ location: '', description: '' })
     expect(payload.characters[0]).not.toHaveProperty('id')
     expect(payload.characters[0]).not.toHaveProperty('first_seen')
   })

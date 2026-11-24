@@ -265,6 +265,7 @@ export function CharacterDialog() {
   const rescanLastChapter = useCharactersStore((s) => s.rescanLastChapter)
   const setEditing = useCharactersStore((s) => s.setEditing)
   const updateCharacter = useCharactersStore((s) => s.updateCharacter)
+  const updateCurrentState = useCharactersStore((s) => s.updateCurrentState)
   const createCharacter = useCharactersStore((s) => s.createCharacter)
   const deleteCharacter = useCharactersStore((s) => s.deleteCharacter)
   const clearError = useCharactersStore((s) => s.clearError)
@@ -278,6 +279,14 @@ export function CharacterDialog() {
   const [isNew, setIsNew] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [showInactive, setShowInactive] = useState(false)
+  const [currentStateDraft, setCurrentStateDraft] = useState({ location: '', description: '' })
+  const [currentStateDirty, setCurrentStateDirty] = useState(false)
+
+  useEffect(() => {
+    if (!currentStateDirty) {
+      setCurrentStateDraft(characterState?.current_state ?? { location: '', description: '' })
+    }
+  }, [characterState?.current_state, currentStateDirty])
 
   useEffect(() => {
     // Read once per open. If an extraction is already in flight, its response
@@ -403,6 +412,15 @@ export function CharacterDialog() {
     void updateCharacter(character.id, { active: !character.active }).catch(() => undefined)
   }
 
+  const saveCurrentState = async () => {
+    try {
+      await updateCurrentState(currentStateDraft)
+      setCurrentStateDirty(false)
+    } catch {
+      // The store surfaces the server message in the error banner.
+    }
+  }
+
   const busy = tracking || saving
 
   return (
@@ -420,11 +438,10 @@ export function CharacterDialog() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-[15px] text-[var(--text-heading)]">
             <Users size={16} className="text-[var(--text-secondary)]" />
-            Active characters
+            Current State
           </DialogTitle>
           <DialogDescription className="text-[12px] leading-relaxed text-[var(--text-muted)]">
-            The cast that is still part of the story. Absence from a scene is not an exit;
-            inactive characters stay here until you delete them.
+            Keep the story’s current location and situation alongside the tracked cast.
           </DialogDescription>
         </DialogHeader>
 
@@ -509,7 +526,7 @@ export function CharacterDialog() {
         {loading && !characterState && (
           <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-[var(--text-muted)]">
             <Loader2 size={14} className="animate-spin" />
-            Loading characters…
+            Loading current state…
           </div>
         )}
 
@@ -517,11 +534,10 @@ export function CharacterDialog() {
           <div className="flex flex-col items-center gap-2 py-8 text-center">
             <Users size={22} className="text-[var(--text-muted)]" />
             <p className="text-[12px] text-[var(--text-secondary)]">
-              No cast list yet.
+              No current state yet.
             </p>
             <p className="max-w-[420px] text-[11px] text-[var(--text-muted)]">
-              Run a generation with auto-track on, rescan a chapter, or add someone
-              manually.
+              Add a location and description below, or track characters automatically.
             </p>
             <Button
               type="button"
@@ -534,6 +550,48 @@ export function CharacterDialog() {
             </Button>
           </div>
         )}
+
+        <section className="space-y-2 rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-hover)]/25 p-3">
+          <div>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+              Story situation
+            </h3>
+            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+              Included with the cast in context for each request.
+            </p>
+          </div>
+          <Field
+            label="Location"
+            value={currentStateDraft.location}
+            onChange={(location) => {
+              setCurrentStateDraft((current) => ({ ...current, location }))
+              setCurrentStateDirty(true)
+            }}
+            placeholder="Where the story is currently taking place"
+            className="max-w-[420px]"
+          />
+          <TextAreaField
+            label="Current state description"
+            value={currentStateDraft.description}
+            onChange={(description) => {
+              setCurrentStateDraft((current) => ({ ...current, description }))
+              setCurrentStateDirty(true)
+            }}
+            rows={3}
+            className="sm:col-span-2"
+          />
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="xs"
+              onClick={() => void saveCurrentState()}
+              disabled={!currentStateDirty || busy}
+            >
+              {saving ? <Loader2 size={12} className="animate-spin" /> : null}
+              Save current state
+            </Button>
+          </div>
+        </section>
 
         {draft && editing && (
           <div className="rounded-[10px] border border-[var(--accent-brown)]/30 bg-[var(--bg-hover)]/35 p-3">

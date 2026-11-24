@@ -78,9 +78,7 @@ import {
   buildWritingEvaluationPrompt,
   evaluateDraftDeterministically,
   evaluatePredictablePatterns,
-  buildPredictablePatternRewritePrompt,
   buildAutomaticProseRevisionPrompt,
-  runBoundedPatternRewrite,
   parseWritingModelReview,
   attachPerplexity,
   extractTokenLogprobs,
@@ -983,77 +981,64 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 let styleChecks = payload.english_style_checker_enabled
                   ? checkEnglishStyle({ draft: finalOutput })
                   : null
-                const originalDraft = finalOutput
-                // Prose evaluation is an automatic post-write pass. Apply the
-                // bounded predictable-pattern rewrite whenever it finds spans;
-                // callers should not need a second opt-in toggle after asking
-                // for prose evaluation.
-                if (predictablePattern.spans.length) {
-                  const rewriteResult = await runBoundedPatternRewrite({
-                    draft: finalOutput,
-                    maxIterations: 3,
-                    evaluate: evaluatePredictablePatterns,
-                    rewrite: async (draft, spans) => {
-                      const rewriter = createWriteEvaluationAgent({
-                        endpoint: {
-                          model: client.model,
-                          baseUrl: client.baseUrl,
-                          apiKey: client.apiKey,
-                          requestBody: { chat_template_kwargs: { enable_thinking: false } },
-                        },
-                        instructions: 'Return only the revised passage. Preserve meaning, facts, voice, and all unflagged text. This is an optional editorial revision, not authorship detection.',
-                        maxOutputTokens: 1800,
-                      })
-                      const result = await rewriter.generate({
-                        prompt: buildPredictablePatternRewritePrompt({ draft, spans }),
-                        abortSignal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
-                      })
-                      return result.text
-                    },
-                  })
-                  if (rewriteResult.revised !== originalDraft) {
-                    finalOutput = rewriteResult.revised
-                    predictablePattern = rewriteResult.diagnostic
-                    send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: rewriteResult.iterations })
-                  }
-                }
                 let modelReview: WritingModelReview | null = null
-                if (finalOutput.trim()) {
-                  const contextWindow = getActiveContextWindow(settings as never)
-                  const evaluatorMaxTokens = contextWindow
-                    ? Math.min(1400, Math.max(800, Math.floor(contextWindow * 0.3)))
-                    : 1400
-                  const evaluationInputChars = contextWindow
-                    ? Math.min(48_000, Math.max(2_800, (contextWindow - evaluatorMaxTokens - 600) * 4))
-                    : 48_000
-                  const prompt = buildWritingEvaluationPrompt({
-                    instruction: requestMessage,
-                    plan: pipeline.artifacts.find((artifact) => artifact.stage === 'plan')?.content,
-                    context,
-                  draft: finalOutput,
-                    maxInputChars: evaluationInputChars,
+                const contextWindow = getActiveContextWindow(settings as never)
+                const evaluatorMaxTokens = contextWindow
+                  ? Math.min(1400, Math.max(800, Math.floor(contextWindow * 0.3)))
+                  : 1400
+                const evaluationInputChars = contextWindow
+                  ? Math.min(48_000, Math.max(2_800, (contextWindow - evaluatorMaxTokens - 600) * 4))
+                  : 48_000
+                let revisionIterations = 0
+                // Evaluate the current draft again after each automatic fix.
+                // The hard limit prevents noisy findings from causing an
+                // unbounded rewrite loop.
+                while (!signal.aborted) {
+                  modelReview = null
+                  if (finalOutput.trim()) {
+                    const prompt = buildWritingEvaluationPrompt({
+                      instruction: requestMessage,
+                      plan: pipeline.artifacts.find((artifact) => artifact.stage === 'plan')?.content,
+                      context,
+                      draft: finalOutput,
+                      maxInputChars: evaluationInputChars,
+                    })
+                    const evaluator = createWriteEvaluationAgent({
+                      endpoint: {
+                        model: client.model,
+                        baseUrl: client.baseUrl,
+                        apiKey: client.apiKey,
+                        requestBody: { chat_template_kwargs: { enable_thinking: false } },
+                      },
+                      instructions: 'Return only the requested JSON review. Be evidence-based, conservative, and advisory. Never rewrite the draft.',
+                      maxOutputTokens: evaluatorMaxTokens,
+                    })
+                    const evaluationSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000)])
+                    const evaluation = await evaluator.generate({ prompt, abortSignal: evaluationSignal })
+                    modelReview = parseWritingModelReview(evaluation.text)
+                  }
+
+                  deterministicChecks = evaluateDraftDeterministically({
+                    draft: finalOutput,
+                    paragraphBefore: anchor.paragraphBefore,
+                    paragraphAfter: anchor.paragraphAfter,
                   })
-                  const evaluator = createWriteEvaluationAgent({
-                    endpoint: {
-                      model: client.model,
-                      baseUrl: client.baseUrl,
-                      apiKey: client.apiKey,
-                      requestBody: { chat_template_kwargs: { enable_thinking: false } },
-                    },
-                    instructions: 'Return only the requested JSON review. Be evidence-based, conservative, and advisory. Never rewrite the draft.',
-                    maxOutputTokens: evaluatorMaxTokens,
-                  })
-                  const evaluationSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000)])
-                  const evaluation = await evaluator.generate({ prompt, abortSignal: evaluationSignal })
-                  modelReview = parseWritingModelReview(evaluation.text)
-                }
-                const actionableFindings = [
-                  ...deterministicChecks.filter(check => check.status !== 'pass'),
-                  ...(modelReview?.findings ?? []),
-                  ...(predictablePattern?.spans ?? []),
-                  ...(styleChecks?.checks ?? []).filter(check => check.status === 'warning'),
-                ]
-                if (actionableFindings.length) {
+                  predictablePattern = attachPerplexity(
+                    evaluatePredictablePatterns(finalOutput),
+                    revisionIterations === 0 ? proseLogprobs : null,
+                  )
+                  styleChecks = payload.english_style_checker_enabled
+                    ? checkEnglishStyle({ draft: finalOutput })
+                    : null
+
+                  const actionableFindings = [
+                    ...deterministicChecks.filter(check => check.status !== 'pass'),
+                    ...(modelReview?.findings ?? []),
+                    ...predictablePattern.spans,
+                    ...(styleChecks?.checks ?? []).filter(check => check.status === 'warning'),
+                  ]
+                  if (!actionableFindings.length || revisionIterations >= 3 || signal.aborted) break
+
                   const rewriter = createWriteEvaluationAgent({
                     endpoint: {
                       model: client.model,
@@ -1061,7 +1046,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                       apiKey: client.apiKey,
                       requestBody: { chat_template_kwargs: { enable_thinking: false } },
                     },
-                    instructions: 'Return only the complete revised passage. Apply every supported editorial finding while preserving facts, voice, and meaning.',
+                    instructions: 'Return only the complete revised passage. Apply every supported editorial finding while preserving facts, voice, and meaning. Leave conventional dialogue, simple actions, and intentional stylistic choices unchanged unless a concrete issue is identified.',
                     maxOutputTokens: 1800,
                   })
                   const revision = await rewriter.generate({
@@ -1076,17 +1061,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     abortSignal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
                   })
                   const revised = revision.text.trim()
-                  if (revised && revised !== finalOutput) {
-                    finalOutput = revised
-                    deterministicChecks = evaluateDraftDeterministically({
-                      draft: finalOutput,
-                      paragraphBefore: anchor.paragraphBefore,
-                      paragraphAfter: anchor.paragraphAfter,
-                    })
-                    predictablePattern = attachPerplexity(evaluatePredictablePatterns(finalOutput), proseLogprobs)
-                    styleChecks = payload.english_style_checker_enabled ? checkEnglishStyle({ draft: finalOutput }) : null
-                    send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: 1 })
-                  }
+                  if (!revised || revised === finalOutput) break
+                  finalOutput = revised
+                  revisionIterations += 1
+                  send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: revisionIterations })
                 }
                 const result: WritingEvaluationResult = {
                   version: 1,

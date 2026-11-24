@@ -654,10 +654,11 @@ describe('assist', () => {
     }
   })
 
-  it('evaluates a completed writing draft and keeps evaluation advisory', async () => {
+  it('automatically revises prose findings and re-evaluates the final draft', async () => {
     vi.stubEnv('LM_STUDIO_BASE_URL', 'http://assist-mock.local/v1')
     vi.stubEnv('LM_STUDIO_MODEL', 'assist-mock')
     let stageCalls = 0
+    let evaluationCalls = 0
     const evaluation = {
       summary: 'The scene follows the request and supplied context.',
       criteria: [
@@ -668,8 +669,14 @@ describe('assist', () => {
         { id: 'pov_tense_voice', score: 4, confidence: 'limited', rationale: 'Only a short excerpt was supplied.' },
         { id: 'prose_clarity', score: 4, confidence: 'supported', rationale: 'The action is clear.' },
       ],
-      findings: [],
+      findings: [{
+        severity: 'warning',
+        criterion: 'prose_clarity',
+        message: 'Clarify the arrival action.',
+        suggestion: 'Use a more direct verb.',
+      }],
     }
+    const cleanEvaluation = { ...evaluation, findings: [] }
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as {
         messages?: Array<{ content?: unknown }>
@@ -679,7 +686,13 @@ describe('assist', () => {
         return toolCallResponse('proceed_to_plan', {}, 'call-eval-proceed')
       }
       const prompt = JSON.stringify(body.messages ?? [])
-      if (prompt.includes('advisory reviewer')) return completionResponse(JSON.stringify(evaluation))
+      if (prompt.includes('advisory reviewer')) {
+        evaluationCalls++
+        return completionResponse(JSON.stringify(evaluationCalls === 1 ? evaluation : cleanEvaluation))
+      }
+      if (prompt.includes('Apply the findings automatically')) {
+        return completionResponse('At sunrise, Mara arrived at the station.')
+      }
       stageCalls++
       const content = stageCalls === 6 ? 'At dawn, Mara reached the station.' : `Stage ${stageCalls} notes.`
       return sseResponse([
@@ -704,12 +717,18 @@ describe('assist', () => {
 
       expect(stageCalls).toBe(6)
       expect(events.some((event) => event.status === 'write_evaluation_started')).toBe(true)
-      expect(report?.evaluation).toMatchObject({ version: 1, modelReview: { summary: evaluation.summary } })
-      expect(events.find((event) => event.status === 'write_completed')?.output).toBe('At dawn, Mara reached the station.')
+      expect(evaluationCalls).toBe(2)
+      expect(report?.evaluation).toMatchObject({ version: 1, modelReview: { summary: evaluation.summary, findings: [] } })
+      expect(events.find((event) => event.status === 'write_rewrite_candidate')).toMatchObject({
+        output: 'At sunrise, Mara arrived at the station.',
+        iterations: 1,
+      })
+      expect(events.find((event) => event.status === 'write_completed')?.output).toBe('At sunrise, Mara arrived at the station.')
       const logs = await handlersOf(AssistSimpleLogsRoute).GET({
         request: req('assist/simple/logs?session_id=write-evaluation-test'),
       } as never)
       const saved = await logs.json() as Array<Record<string, unknown>>
+      expect(saved.at(-1)?.output).toBe('At sunrise, Mara arrived at the station.')
       expect(saved.at(-1)?.writing_evaluation).toMatchObject({ status: 'complete', result: { version: 1 } })
     } finally {
       vi.unstubAllGlobals()

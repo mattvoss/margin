@@ -36,6 +36,8 @@ import {
 export { CHARACTER_STATE_PATH, MAX_TRACKED_CHARACTERS }
 
 const FIELD_LIMITS = {
+  location: 300,
+  currentStateDescription: 2000,
   name: 120,
   alias: 80,
   role: 160,
@@ -300,6 +302,8 @@ export function normalizeCharacterState(
     .map((item) => normalizeStoredCharacter(item, used, now))
     .filter((item): item is TrackedCharacter => item !== null)
     .slice(0, MAX_TRACKED_CHARACTERS)
+  const currentState = isRecord(raw.current_state) ? raw.current_state : {}
+  const description = currentState.description
 
   return {
     version: 1,
@@ -312,6 +316,13 @@ export function normalizeCharacterState(
       typeof raw.source_session === 'string' && raw.source_session.trim()
         ? raw.source_session.trim()
         : null,
+    current_state: {
+      location: text(currentState.location, FIELD_LIMITS.location),
+      description:
+        typeof description === 'string'
+          ? description.trim().slice(0, FIELD_LIMITS.currentStateDescription)
+          : '',
+    },
     characters,
   }
 }
@@ -468,6 +479,7 @@ export function mergeExtraction(
     updated_at: now,
     source_path: options.sourcePath ?? prior.source_path,
     source_session: options.sourceSession ?? prior.source_session,
+    current_state: { ...prior.current_state },
     characters: capCharacters(characters),
   }
 }
@@ -641,7 +653,10 @@ export function planCharacterChunks(
   if (!clean) return []
 
   const contextWindow = getActiveContextWindow(settings)
-  const priorChars = JSON.stringify(prior.characters.map(compactCharacterForPrompt))
+  const priorChars = JSON.stringify({
+    current_state: prior.current_state,
+    characters: prior.characters.map(compactCharacterForPrompt),
+  })
   const priorTokens = Math.ceil(priorChars.length / 4)
   const available = Math.max(
     600,
@@ -695,7 +710,10 @@ function buildExtractionPrompt(
 
   lines.push(
     'CURRENT STATE:',
-    JSON.stringify({ characters: state.characters.map(compactCharacterForPrompt) }),
+    JSON.stringify({
+      current_state: state.current_state,
+      characters: state.characters.map(compactCharacterForPrompt),
+    }),
     '',
     'TEXT:',
     chunk,
@@ -832,6 +850,26 @@ export function applyManualAction(
   now = nowIso(),
 ): CharacterState {
   const action = typeof raw.action === 'string' ? raw.action : ''
+
+  if (action === 'update_current_state') {
+    if (!isRecord(raw.current_state)) {
+      throw new CharacterValidationError('Current state is required.')
+    }
+    return {
+      ...state,
+      updated_at: now,
+      current_state: {
+        location: has(raw.current_state, 'location')
+          ? text(raw.current_state.location, FIELD_LIMITS.location)
+          : state.current_state.location,
+        description: has(raw.current_state, 'description') &&
+          typeof raw.current_state.description === 'string'
+          ? raw.current_state.description.trim().slice(0, FIELD_LIMITS.currentStateDescription)
+          : state.current_state.description,
+      },
+    }
+  }
+
   const characters = state.characters.map(cloneCharacter)
   const used = new Set(characters.map((character) => character.id))
 

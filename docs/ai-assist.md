@@ -16,7 +16,7 @@ If you have a subscription to an agentic coding tool, you can run it directly fr
 
 ### Writing evaluation and predictable-pattern diagnostics
 
-Write mode can run bounded deterministic checks and an advisory model review after generating prose. An optional **Suggest predictable-pattern revisions** setting can also inspect repeated openings and unusually uniform sentence lengths, then request up to three revision passes. The original generated candidate is retained and the revised candidate is shown separately for review; Margin never silently applies or blocks it.
+When **Evaluate prose after writing** is enabled, Write mode runs deterministic checks, a model review, and predictable-pattern checks on the generated passage. Supported findings trigger an automatic revise-and-recheck loop, capped at three rewrite passes. The final revised passage is shown in Assist for you to insert into the manuscript; the original draft is retained in the log. This is not a gate: a draft is still returned if evaluation fails or findings remain after the limit.
 
 The predictable-pattern diagnostic is not AI-authorship detection, plagiarism detection, or a literary-quality score. It is only an editorial signal about patterns that may be worth inspecting. True perplexity requires token log-probabilities from a compatible endpoint; when those are unavailable, Margin reports that no perplexity score was calculated rather than inferring one.
 

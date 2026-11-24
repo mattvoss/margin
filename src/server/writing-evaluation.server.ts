@@ -194,7 +194,7 @@ export function buildPredictablePatternRewritePrompt(input: {
 }): string {
   return [
     'Rewrite only the flagged sentences to add natural variation while preserving meaning, facts, voice, tense, and surrounding continuity.',
-    'This is an optional editorial revision, not an attempt to evade authorship detection. Do not add facts, remove constraints, or rewrite unflagged text.',
+    'This is an editorial revision, not an attempt to evade authorship detection. Do not add facts, remove constraints, or rewrite unflagged text.',
     'Return the complete revised passage only. Preserve the original passage if a flagged sentence is already intentional or natural.',
     `<flagged_patterns>\n${input.spans.map((span) => `${span.signal}: ${span.sentence} — ${span.detail}`).join('\n')}\n</flagged_patterns>`,
     `<original_draft>\n${truncate(input.draft, 40_000)}\n</original_draft>`,

@@ -740,6 +740,50 @@ export function SimpleAssist() {
     }
   }
 
+  const handleNewChat = () => {
+    const previousSessionId = activeSessionId
+    const newSessionId = crypto.randomUUID()
+
+    if (abortRef.current) {
+      wasAbortedRef.current = true
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    if (isWorking) {
+      void apiFetch(`${API_BASE}/api/assist/simple/stop/${previousSessionId}`, { method: 'POST' })
+        .catch((err) => console.error('Failed to stop previous chat session', err))
+    }
+
+    setActiveSessionId(newSessionId)
+    setIsWorking(false)
+    setIsPlanning(false)
+    setIsGenerating(false)
+    setPlannerContextFiles([])
+    setStreamingThinkingText('')
+    setStreamingChatText('')
+    setWriteStages([])
+    setWriteReasoning({})
+    setWriteEvaluation(null)
+    setWriteEvaluationRunning(false)
+    setWriteQuestions([])
+    setWriteAnswers({})
+    setWriteQuestionIndex(0)
+    setQuestionnaireOpen(false)
+    setQuestionnaireRequest(null)
+    questionnaireSubmittingRef.current = false
+    dispatchAssistRun({ type: 'reset' })
+    setPostProcessStatus(null)
+    setRunningPass(null)
+    setActiveInstruction('')
+    setActiveRefFiles([])
+    setErrorText('')
+    setNoticeText('')
+    setActiveToolRows([])
+    setActiveHarness('none')
+    setShowHistoryDropdown(false)
+    setShowFileDropdown(false)
+  }
+
   const fetchLogs = async () => {
     try {
       const res = await apiFetch(`${API_BASE}/api/assist/simple/logs`)
@@ -1270,7 +1314,7 @@ export function SimpleAssist() {
             setWriteEvaluation({ status: 'skipped', reason: 'disabled' })
           } else if (status === 'write_rewrite_candidate') {
             if (typeof data.output === 'string') setStreamingChatText(data.output)
-            setNoticeText(`Optional predictable-pattern revision generated (${Number(data.iterations ?? 0)} pass${Number(data.iterations ?? 0) === 1 ? '' : 'es'}). Review before applying.`)
+            setNoticeText(`Draft automatically revised from review findings (${Number(data.iterations ?? 0)} pass${Number(data.iterations ?? 0) === 1 ? '' : 'es'}).`)
           } else if (status === 'write_completed') {
             dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
@@ -2065,8 +2109,8 @@ export function SimpleAssist() {
                     size="icon-sm"
                     className={`relative ${activeContextWindow ? '' : 'ml-auto'}`}
                     onClick={() => setCharactersDialogOpen(true)}
-                    title="Active characters"
-                    aria-label="Open active characters"
+                    title="Current State"
+                    aria-label="Open current state"
                   >
                     <Users
                       className={`size-4 ${charactersTracking ? 'animate-pulse' : ''}`}
@@ -2088,12 +2132,12 @@ export function SimpleAssist() {
                 className="max-w-[280px] whitespace-normal bg-[var(--bg-elevated)] border-[var(--border)] text-[10.5px]"
               >
                 {charactersTracking
-                  ? 'Updating active cast…'
+                  ? 'Updating story state…'
                   : charactersError
                     ? `Character tracker: ${charactersError}`
                     : activeCharacterCount > 0
-                      ? `${activeCharacterCount} active character${activeCharacterCount === 1 ? '' : 's'} — view cast`
-                      : 'Active characters'}
+                      ? `${activeCharacterCount} active character${activeCharacterCount === 1 ? '' : 's'} — view current state`
+                      : 'Current State'}
               </TooltipContent>
             </Tooltip>
 
@@ -2262,7 +2306,7 @@ export function SimpleAssist() {
           {mode === 'write'
             ? settings?.write_evaluation_enabled === false
               ? 'Prose evaluation is off; drafts are returned without a report.'
-              : 'Drafts receive advisory checks; evaluation never changes or blocks the prose.'
+              : 'Drafts are checked and automatically revised for supported findings (up to 3 passes).'
             : mode === 'chat'
             ? 'Chat answers questions without changing the draft.'
             : hasSelection
@@ -2291,10 +2335,7 @@ export function SimpleAssist() {
           </button>
 
           <button
-            onClick={() => {
-              const newId = crypto.randomUUID()
-              setActiveSessionId(newId)
-            }}
+            onClick={handleNewChat}
             className="flex items-center justify-center w-7 h-7 text-[var(--text-secondary)] hover:text-[var(--text-heading)] hover:bg-[var(--border-sidebar)]/60 rounded-[6px] transition-all cursor-pointer active:scale-[0.95]"
             title="New Chat"
           >

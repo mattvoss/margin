@@ -34,6 +34,10 @@ export interface CharacterState {
   updated_at: string
   source_path: string | null
   source_session: string | null
+  current_state: {
+    location: string
+    description: string
+  }
   characters: TrackedCharacter[]
 }
 
@@ -55,7 +59,13 @@ export const CHARACTER_PROMPT_MARKER = '```CHARACTERS:```'
 
 /** Format the workspace cast as a standalone user-message payload. */
 export function formatCharacterPrompt(state: CharacterState): string | null {
-  if (state.characters.length === 0) return null
+  if (
+    state.characters.length === 0 &&
+    !state.current_state.location &&
+    !state.current_state.description
+  ) {
+    return null
+  }
 
   const characters = state.characters.map((character) => ({
     name: character.name,
@@ -68,7 +78,11 @@ export function formatCharacterPrompt(state: CharacterState): string | null {
     accessories: character.accessories,
   }))
 
-  return `${CHARACTER_PROMPT_MARKER}\n${JSON.stringify({ characters }, null, 2)}`
+  return `${CHARACTER_PROMPT_MARKER}\n${JSON.stringify(
+    { current_state: state.current_state, characters },
+    null,
+    2,
+  )}`
 }
 
 export function emptyAppearance(): CharacterAppearance {
@@ -81,6 +95,7 @@ export function emptyCharacterState(now = new Date().toISOString()): CharacterSt
     updated_at: now,
     source_path: null,
     source_session: null,
+    current_state: { location: '', description: '' },
     characters: [],
   }
 }

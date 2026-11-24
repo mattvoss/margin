@@ -2,13 +2,13 @@
 
 ## Implementation Status
 
-The Write flow now includes the optional predictable-pattern diagnostic, explicit non-authorship-detection framing, and user-controlled bounded rewrite candidate loop. The diagnostic is offline and conservative by default; true perplexity is calculated only when compatible token log-probabilities are supplied, otherwise it is reported as unavailable. An English-specific Style Checker is planned but not yet implemented; it will remain opt-in and separate from the general evaluator and post-processing passes. Focused validation passes; the full suite is currently blocked by an existing `api.memory.index` test import mismatch, and repository-wide lint reports unrelated baseline errors.
+The Write flow includes deterministic checks, model review, a predictable-pattern diagnostic, and an automatic evaluate→revise→re-evaluate loop capped at three rewrites when prose evaluation is enabled. Revisions apply only to the generated draft shown in Assist; the user still chooses whether to insert it into the manuscript. The diagnostic is conservative; true perplexity is calculated only when compatible token log-probabilities are supplied, otherwise it is reported as unavailable. The English-specific Style Checker remains opt-in and separate from general evaluation and post-processing.
 
 ## Goal
 
 Refactor Margin's writing-agent pipeline into clearer, testable agent/tool responsibilities and add programmatic evaluation for prose produced by agents. Use the referenced [Claude-Book repository](https://github.com/ThomasHoussin/Claude-Book) and [HackerNoon article](https://hackernoon.com/claude-book-a-multi-agent-framework-for-writing-novels-with-claude-code) as design references, adapting useful patterns to Margin's existing workspace, endpoint, streaming, and review model rather than copying the framework wholesale.
 
-The system should help users understand whether generated prose follows the request and story constraints. Evaluation is advisory: it must not claim to measure literary quality objectively, silently change a manuscript, or prevent users from reviewing generated work.
+The system should help users understand whether generated prose follows the request and story constraints, and automatically repair supported findings in the generated draft. Evaluation must not claim to measure literary quality objectively, silently mutate the manuscript, or prevent users from reviewing generated work.
 
 ## Current Architecture and Baseline
 
@@ -39,18 +39,18 @@ Adaptation decisions for Margin:
 - Keep Margin's planner/drafter distinction and user approval model. Do not copy Claude-Book's filesystem-writing workflow: Margin's generated prose remains reviewable output, and evaluator agents must not mutate workspace files.
 - Use separate evaluation dimensions for instruction/plan adherence, story continuity, character consistency, POV/tense/voice, and narrowly scoped mechanical checks. Avoid overlapping reviewer scopes.
 - Keep deterministic checks language-neutral where practical. Make style rules and thresholds project-configurable; do not copy fixed English/French assumptions, arbitrary chapter length/dialogue targets, or a generic “forbidden AI words” list as universal quality rules.
-- Do not adopt automatic blocking or a three-round writer/reviewer loop as the default. Margin should present evidence and advisory findings, preserve the draft, and let the writer decide what to do. Any optional revision must be explicit, bounded, and preserve the original candidate.
+- Do not adopt automatic blocking. Use a bounded writer/reviewer loop to apply supported findings to the generated draft, preserve the original candidate in the log, and leave insertion into the manuscript under the writer's control.
 - Add an optional perplexity-based predictable-pattern score inspired by Claude-Book's local “AI slope” diagnostic. It must be clearly labeled as an AI-pattern diagnostic—not authorship detection, plagiarism detection, or proof of prose quality—and must be independently disableable, language/project configurable, and accompanied by false-positive caveats.
 - Add an explicit AI-detection disclaimer to the evaluation UI and documentation: Margin may report predictable-pattern signals, but it must never claim to identify whether text was written by AI or a person. Do not use the signal to block, reject, rank authorship, or silently rewrite prose.
-- Add an opt-in, bounded automatic rewrite loop based on the article's flagged-sentence workflow. A rewrite may target only selected predictable-pattern findings, must preserve meaning and the original candidate, must run at most three iterations per request, and must be followed by a fresh evaluation. The default remains report-only; users must explicitly enable and apply the revised candidate.
+- When prose evaluation is enabled, automatically revise supported findings using a bounded loop inspired by the article's flagged-sentence workflow. Preserve meaning and voice, re-evaluate after each rewrite, and stop after at most three rewrites. Keep manuscript insertion user-controlled.
 
-The HackerNoon article reinforces the orchestrator → planner → writer → reviewer separation and adds a structured story bible/current-state snapshot as a way to limit long-context drift. It also describes a local perplexity-based “AI slope” diagnostic, explicit non-authorship-detection caveats, and a bounded rewrite workflow for flagged sentences. Margin adopts these three patterns as optional diagnostics and user-controlled revision features: the score measures predictable patterns only, the UI must disclaim AI authorship detection, and rewriting must preserve the original candidate and remain bounded. Margin still does not copy the story-state filesystem workflow wholesale; any state snapshot must use Margin's existing scoped workspace model.
+The HackerNoon article reinforces the orchestrator → planner → writer → reviewer separation and adds a structured story bible/current-state snapshot as a way to limit long-context drift. It also describes a local perplexity-based “AI slope” diagnostic, explicit non-authorship-detection caveats, and a bounded rewrite workflow for flagged sentences. Margin adopts these patterns as a diagnostic and an automatic, bounded draft-revision loop: signals are never authorship claims, revisions preserve meaning and voice, and manuscript insertion remains user-controlled. Margin still does not copy the story-state filesystem workflow wholesale; any state snapshot must use Margin's existing scoped workspace model.
 
 ## Design Principles
 
-1. **Writer and evaluator have distinct responsibilities.** The writer generates prose; evaluators report evidence and findings without rewriting the draft.
+1. **Writer and evaluator have distinct responsibilities.** The writer generates prose; evaluators report evidence and findings that a bounded revision step can apply automatically to the generated draft.
 2. **Agent contracts are explicit.** Each stage declares its purpose, input, output type, model settings, and failure behavior.
-3. **Keep the user in control.** Evaluation findings do not silently edit or reject text. Any future revision step must be bounded and opt-in.
+3. **Keep the user in control.** Evaluation findings may trigger bounded automatic draft revision, but never block output or silently mutate the manuscript; the user controls insertion.
 4. **Preserve existing behavior unless deliberately changed.** Keep clarification, streaming, cancellation, endpoint configuration, workspace isolation, post-processing, and manuscript review working.
 5. **Treat scores as signals, not truth.** Report criteria, evidence, uncertainty, and the limitations of perplexity. Avoid a single unexplained “quality” score and never present predictable-pattern signals as authorship detection.
 6. **Bound cost and latency.** Evaluation should have explicit token/time limits and be independently disableable or skippable.
@@ -111,16 +111,16 @@ Add a separate, optional diagnostic modeled on the Claude-Book `scripts/detectio
 - Support additional bounded signals such as low-perplexity runs, low-variance windows, and predictable-pattern density, each with its own evidence and caveats.
 - Exclude short dialogue, idioms, factual prose, and other configured exemptions where they would create predictable false positives.
 
-#### Opt-in rewrite loop
+#### Bounded automatic rewrite loop
 
-Add a separate revision action that can consume flagged spans from the predictable-pattern diagnostic. It must preserve meaning and surrounding context, retain the original draft, produce a separate revised candidate, and stop after at most three iterations. The system must never rewrite automatically merely because a score is low; the user must explicitly enable the action and choose whether to apply the revised candidate.
+When prose evaluation is enabled, consume supported findings from the evaluator and predictable-pattern diagnostic in an automatic revise-and-recheck loop. Preserve meaning and surrounding context, retain the original draft, and stop after at most three rewrites. The system must not block output based on a score; the user chooses whether to insert the final revised draft into the manuscript.
 
 #### Evaluation policy
 
 - Run deterministic checks and the model evaluator for the agentic writing flow when evaluation is enabled.
 - Make evaluation independently disableable and provide a safe failure path: a failed evaluator must not erase the draft or fail the writing request.
-- Default to report-only behavior. Do not automatically block or reject a draft based on evaluator or predictable-pattern scores.
-- The optional rewrite loop must be explicitly enabled, preserve the original draft for comparison, target only evidence-backed flagged spans, and run at most three iterations. Re-evaluate the revised candidate after the loop; do not create an unbounded “write until score passes” loop.
+- Apply supported findings automatically when evaluation is enabled; never block or reject a draft based on evaluator or predictable-pattern scores.
+- Preserve the original draft in the log, target evidence-backed findings, and run at most three rewrite iterations. Re-evaluate after each revised candidate; do not create an unbounded “write until score passes” loop.
 - Display an AI-detection disclaimer wherever the predictable-pattern score or rewrite controls appear.
 - Use the configured endpoint by default unless the settings model already supports a distinct evaluator endpoint; do not add a separate endpoint preference without checking product conventions and the reference design.
 
@@ -131,7 +131,7 @@ Add a separate revision action that can consume flagged spans from the predictab
 - Preserve the generated prose even when evaluation fails or reports warnings.
 - Persist bounded evaluation metadata in the existing AI log format so users can inspect results and tests can verify behavior. Avoid storing duplicate full prompts or unbounded evaluator output if existing logs already retain the relevant request/output.
 - Persist the bounded predictable-pattern diagnostic separately from model-review criteria, including its model/configuration version, thresholds, flagged spans, and disclaimer state. Do not persist an “AI probability” field.
-- Show an explicit opt-in rewrite control that preserves and compares original and revised candidates; never replace the manuscript silently.
+- Show that revisions are automatic and bounded, preserve the original candidate in the log, and never replace the manuscript without user action.
 - Keep existing post-processing statuses distinct. If evaluation runs before or after post-processing, explicitly decide and document which exact text is evaluated. Recommended initial sequence: draft → configured post-processing, if this flow supports it → evaluate the final candidate shown to the user.
 
 ## Implementation Phases and TODO
@@ -194,7 +194,7 @@ Add a separate revision action that can consume flagged spans from the predictab
 - [x] Label model scores as editorial estimates and deterministic checks as narrow tests.
 - [x] Add the server-synced `write_evaluation_enabled` setting and an Assist dropdown checkbox; evaluation is enabled by default.
 - [x] Store bounded evaluation metadata in existing AI logs, including the predictable-pattern diagnostic without an AI-probability field.
-- [x] Keep evaluation report-only by default; optional rewrite candidates do not modify editor text or bypass review.
+- [x] Apply supported findings automatically to the generated draft in bounded passes; do not directly mutate editor text or bypass manuscript review.
 - [x] Add report component tests and SSE event tests.
 
 **Checkpoint:** Users can see and inspect the evaluation while retaining full control over the manuscript.
@@ -293,7 +293,7 @@ Add a pure, deterministic English-language checker at `src/server/english-style-
 | Multiple writing stages repeat analysis or contradict one another | Higher latency/cost and inconsistent drafts | Review the reference, use explicit contracts, consolidate redundant stages, and test artifact handoff. |
 | Model evaluator is inconsistent or overconfident | Users may over-trust or disregard feedback | Show criteria, evidence, and uncertainty; label model judgment as advisory; avoid one opaque aggregate score. |
 | Heuristic echo checks flag valid repeated language | Unnecessary warnings or reduced trust | Keep matching conservative, scope it to replacement edits, explain evidence, and test quotations/refrains/common phrases. |
-| Evaluation adds substantial latency or cost | Poor writing flow | Bound context/output/time, provide disable/skip behavior, and avoid automatic revision by default. |
+| Evaluation adds substantial latency or cost | Poor writing flow | Bound context/output/time, provide disable/skip behavior, and cap automatic revisions at three passes. |
 | Evaluator sees unrelated/private workspace material | Privacy and context leakage | Reuse the request's scoped context; send only content needed to evaluate this draft. |
 | Evaluation events break older clients or streams | UI or generation regression | Keep SSE handling additive and tolerate unknown/missing events. |
 | Refactor changes scene planning or endpoint edit behavior unintentionally | Regressions outside the requested writing flow | Keep those flows separate and add regression tests before sharing abstractions. |
@@ -305,9 +305,9 @@ Add a pure, deterministic English-language checker at `src/server/english-style-
 
 - [x] Adopt Claude-Book's role isolation, deterministic-first checks, scoped findings, and explicit review criteria; do not adopt filesystem mutation or default hard gates.
 - [x] Enable evaluation by default, with a persistent toggle in the Assist mode/model dropdown.
-- [x] Keep the shipped evaluation report-only by default; predictable-pattern revision suggestions are opt-in and never silently applied.
+- [x] Automatically apply supported evaluation findings to the generated draft in a bounded revise-and-recheck loop; manuscript insertion remains user-controlled.
 - [x] Add the optional predictable-pattern diagnostic with explicit non-authorship-detection framing; calculate true perplexity only from supplied token log-probabilities.
-- [x] Add the opt-in bounded rewrite loop, preserving the original candidate and limiting each request to three iterations.
+- [x] Add the automatic bounded rewrite loop, re-evaluate after each pass, and limit each request to three rewrites.
 - [x] Use the writer's configured endpoint for evaluation; defer a separate evaluator endpoint.
 - [x] Retain the existing six writing stages as typed specialists; consider consolidation only after output evaluation.
 - [x] Store the bounded evaluation report alongside the normal AI session log.
