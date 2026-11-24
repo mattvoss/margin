@@ -1286,12 +1286,15 @@ export function SimpleAssist() {
             dispatchAssistRun({ type: 'stage_completed', stage: String(data.stage || 'write'), output: typeof data.output === 'string' ? data.output : undefined })
             setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'done' } : stage))
           } else if (status === 'write_prose') {
+            // Prose is buffered on the server until evaluation/revision finishes.
             setIsPlanning(false)
             setIsGenerating(true)
-            setStreamingChatText(prev => prev + String(data.chunk || ''))
           } else if (status === 'write_evaluation_started') {
             setWriteEvaluationRunning(true)
             setWriteEvaluation(null)
+            setIsPlanning(false)
+            setIsGenerating(true)
+            setNoticeText('Reviewing and refining prose before showing the draft…')
           } else if (status === 'write_evaluation_completed') {
             const parsed = writingEvaluationRecordSchema.safeParse({
               status: 'complete',
@@ -1313,11 +1316,11 @@ export function SimpleAssist() {
             setWriteEvaluationRunning(false)
             setWriteEvaluation({ status: 'skipped', reason: 'disabled' })
           } else if (status === 'write_rewrite_candidate') {
-            if (typeof data.output === 'string') setStreamingChatText(data.output)
             setNoticeText(`Draft automatically revised from review findings (${Number(data.iterations ?? 0)} pass${Number(data.iterations ?? 0) === 1 ? '' : 'es'}).`)
           } else if (status === 'write_completed') {
             dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
+            setNoticeText('')
             setIsPlanning(false)
             setIsGenerating(false)
           } else if (status === 'chunk') {

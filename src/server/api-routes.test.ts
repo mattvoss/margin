@@ -719,11 +719,11 @@ describe('assist', () => {
       expect(events.some((event) => event.status === 'write_evaluation_started')).toBe(true)
       expect(evaluationCalls).toBe(2)
       expect(report?.evaluation).toMatchObject({ version: 1, modelReview: { summary: evaluation.summary, findings: [] } })
-      expect(events.find((event) => event.status === 'write_rewrite_candidate')).toMatchObject({
-        output: 'At sunrise, Mara arrived at the station.',
-        iterations: 1,
-      })
-      expect(events.find((event) => event.status === 'write_completed')?.output).toBe('At sunrise, Mara arrived at the station.')
+      expect(events.some((event) => event.status === 'write_prose')).toBe(false)
+      expect(events.some((event) => event.status === 'write_rewrite_candidate')).toBe(false)
+      const completedIndex = events.findIndex((event) => event.status === 'write_completed')
+      expect(completedIndex).toBeGreaterThan(events.findIndex((event) => event.status === 'write_evaluation_completed'))
+      expect(events[completedIndex]?.output).toBe('At sunrise, Mara arrived at the station.')
       const logs = await handlersOf(AssistSimpleLogsRoute).GET({
         request: req('assist/simple/logs?session_id=write-evaluation-test'),
       } as never)

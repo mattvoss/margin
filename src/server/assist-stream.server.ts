@@ -948,7 +948,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   }
                   if (filtered.text) {
                     output += filtered.text
-                    if (id === 'prose') send({ status: 'write_prose', chunk: filtered.text })
                   }
                 }
                 if (id === 'prose' && part.type === 'finish-step') {
@@ -963,7 +962,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               }
               if (filteredTail.text) {
                 output += filteredTail.text
-                if (id === 'prose') send({ status: 'write_prose', chunk: filteredTail.text })
               }
               await stageTelemetry.pending
               if (id === 'prose' && stageTelemetry.tokenLogprobs?.length) {
@@ -1084,7 +1082,6 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   if (!revised || revised === finalOutput) break
                   finalOutput = revised
                   revisionIterations += 1
-                  send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: revisionIterations })
                 }
                 const result: WritingEvaluationResult = {
                   version: 1,
