@@ -24,6 +24,7 @@ import { confirmDialog } from '../stores/dialogStore'
 import { useCharactersStore } from '../stores/charactersStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { MarkdownMentionEditor } from './Editor/MarkdownMentionEditor'
 import {
   chapterDisplayName,
   resolveRescanTarget,
@@ -570,16 +571,19 @@ export function CharacterDialog() {
             placeholder="Where the story is currently taking place"
             className="max-w-[420px]"
           />
-          <TextAreaField
-            label="Current state description"
-            value={currentStateDraft.description}
-            onChange={(description) => {
-              setCurrentStateDraft((current) => ({ ...current, description }))
-              setCurrentStateDirty(true)
-            }}
-            rows={3}
-            className="sm:col-span-2"
-          />
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+              Current state description
+            </span>
+            <MarkdownMentionEditor
+              label="Current state description"
+              value={currentStateDraft.description}
+              onChange={(description) => {
+                setCurrentStateDraft((current) => ({ ...current, description }))
+                setCurrentStateDirty(true)
+              }}
+            />
+          </div>
           <div className="flex justify-end">
             <Button
               type="button"

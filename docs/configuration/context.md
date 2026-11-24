@@ -10,7 +10,7 @@ Edit the instructions each agent runs on (Writer, Planner, Chat, Harness Edit). 
 
 ## Character Tracking
 
-The Current State dialog keeps a per-workspace story location, current situation, and cast list. The location and description are editable and are included with the cast in every assist context. Character tracking is on by default and updates after each generation using the active endpoint; open Current State from the people icon in the input bar. **Rescan last chapter** rereads the last-focused chapter, using the open editor buffer when that chapter is the active file.
+The Current State dialog keeps a per-workspace story location, current situation, and cast list. The location and description are editable and are included with the cast in every assist context. The description supports Markdown and `@file` references; referenced workspace files are included in context too. Character tracking is on by default and updates after each generation using the active endpoint; open Current State from the people icon in the input bar. **Rescan last chapter** rereads the last-focused chapter, using the open editor buffer when that chapter is the active file.
 
 Absence from a scene is never treated as an exit. A character becomes inactive only when the prose explicitly kills them, permanently removes them, or otherwise writes them out. Inactive characters stay in the dialog but are de-emphasized, and every field is editable. The list is stored in `characters/ACTIVE_CHARACTERS.json` in the linked workspace. The tracked cast, including inactive entries labeled by status, is sent as a separate `CHARACTERS` context message to Planner, Writer, Chat, and harness prompts.
 

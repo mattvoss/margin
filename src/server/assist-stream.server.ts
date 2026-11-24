@@ -207,12 +207,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
       try {
         const settings = await requestSettings(request)
         const ws = await requestWorkspaceDir(request)
-        const characterMessage = await readCharacterState(ws)
-          .then(formatCharacterPrompt)
-          .catch((error) => {
-            console.warn(`Character context unavailable: ${errMsg(error)}`)
-            return null
-          })
+        const characterState = await readCharacterState(ws).catch((error) => {
+          console.warn(`Character context unavailable: ${errMsg(error)}`)
+          return null
+        })
+        const characterMessage = characterState
+          ? formatCharacterPrompt(characterState)
+          : null
         const mode = payload.mode.trim().toLowerCase()
         const questionnaireAnswers = payload.clarification_answers ?? payload.write_answers
         const answerLines = Object.entries(questionnaireAnswers ?? {}).map(([question, answer]) =>
@@ -252,6 +253,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             payload.message,
             payload.draft_plan ?? '',
             ...priorPlannerLogs.map((log) => log.instruction),
+            characterState?.current_state.location ?? '',
+            characterState?.current_state.description ?? '',
           ].join('\n'),
           availableFiles: payload.available_files,
           readFile,

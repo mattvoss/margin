@@ -57,6 +57,27 @@ describe('FileMentionExtension', () => {
     ).toHaveLength(1)
   })
 
+  it('can include the current file for standalone markdown editors', () => {
+    useEditorStore.setState({
+      openedFiles: [
+        { name: 'chapter-1.md', path: 'chapters/chapter-1.md', content: '', originalContent: '' },
+      ],
+      currentFilePath: 'chapters/chapter-1.md',
+    })
+
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        Markdown.configure({ html: false, tightLists: true }),
+        FileMentionExtension.configure({ excludeCurrentFile: false }),
+      ],
+      content: 'See @chapter-1.md here',
+    })
+    editors.push(editor)
+
+    expect(editor.view.dom.querySelectorAll('.file-mention')).toHaveLength(1)
+  })
+
   it('leaves unknown references as plain text', () => {
     const editor = createEditor('See @missing.md here')
     expect(editor.view.dom.querySelectorAll('.file-mention')).toHaveLength(0)

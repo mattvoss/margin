@@ -17,14 +17,20 @@ const fileMentionPluginKey = new PluginKey('fileMention')
 export const FileMentionExtension = Extension.create({
   name: 'fileMention',
 
+  addOptions() {
+    return { excludeCurrentFile: true }
+  },
+
   addProseMirrorPlugins() {
+    const { excludeCurrentFile } = this.options
     return [
       new Plugin({
         key: fileMentionPluginKey,
         props: {
           decorations(state) {
             const { openedFiles, currentFilePath } = useEditorStore.getState()
-            const aliases = buildMentionAliases(openedFiles, currentFilePath)
+            const excludedPath = excludeCurrentFile ? currentFilePath : null
+            const aliases = buildMentionAliases(openedFiles, excludedPath)
             if (aliases.length === 0) return null
 
             const matcher = createMentionMatcher(aliases)
