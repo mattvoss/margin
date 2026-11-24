@@ -11,6 +11,42 @@ describe('normalizeAssistEvent', () => {
     })
   })
 
+  it('normalizes subagent lifecycle data into stage runs', () => {
+    expect(normalizeAssistEvent({
+      status: 'subagent_started',
+      subagent: 'planner',
+      name: 'Planner',
+      task: 'Choose scene beats.',
+      model_used: 'example/model',
+    })).toEqual({
+      type: 'stage_started',
+      stage: 'planner',
+      label: 'Planner',
+      task: 'Choose scene beats.',
+      model: 'example/model',
+    })
+    expect(normalizeAssistEvent({
+      status: 'subagent_completed',
+      subagent: 'planner',
+      result: 'Three beats.',
+      thinking: 'Preserve the goal.',
+    })).toEqual({
+      type: 'stage_completed',
+      stage: 'planner',
+      output: 'Three beats.',
+      reasoning: 'Preserve the goal.',
+    })
+    expect(normalizeAssistEvent({
+      status: 'subagent_failed',
+      subagent: 'planner',
+      message: 'Planner unavailable.',
+    })).toEqual({
+      type: 'stage_failed',
+      stage: 'planner',
+      message: 'Planner unavailable.',
+    })
+  })
+
   it('passes through normalized events', () => {
     const event = { type: 'reasoning_delta', stage: 'plan', delta: 'Think' } as const
     expect(normalizeAssistEvent(event)).toEqual(event)

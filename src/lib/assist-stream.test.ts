@@ -16,6 +16,55 @@ describe('reduceAssistStream', () => {
     expect(state.stages.prose.output).toBe('A scene.')
   })
 
+  it('retains subagent task, model, tools, thinking, result and failure state', () => {
+    let state = reduceAssistStream(initialAssistRunState, {
+      type: 'run_started',
+      mode: 'edit',
+    })
+    state = reduceAssistStream(state, {
+      type: 'stage_started',
+      stage: 'planner',
+      label: 'Planner',
+      task: 'Choose the next scene beats.',
+      model: 'example/model',
+    })
+    state = reduceAssistStream(state, {
+      type: 'tool',
+      stage: 'planner',
+      name: 'search_memory',
+      detail: 'character motivation',
+    })
+    state = reduceAssistStream(state, {
+      type: 'reasoning_delta',
+      stage: 'planner',
+      delta: 'Keep the goal unresolved.',
+    })
+    state = reduceAssistStream(state, {
+      type: 'stage_completed',
+      stage: 'planner',
+      output: 'Three scene beats.',
+    })
+
+    expect(state.stages.planner).toMatchObject({
+      status: 'completed',
+      task: 'Choose the next scene beats.',
+      model: 'example/model',
+      reasoning: 'Keep the goal unresolved.',
+      output: 'Three scene beats.',
+      tools: [{ name: 'search_memory', detail: 'character motivation' }],
+    })
+
+    state = reduceAssistStream(state, {
+      type: 'stage_failed',
+      stage: 'writer',
+      message: 'The writer endpoint is unavailable.',
+    })
+    expect(state.stages.writer).toMatchObject({
+      status: 'failed',
+      error: 'The writer endpoint is unavailable.',
+    })
+  })
+
   it('keeps final output after completion and records stage failures', () => {
     let state = reduceAssistStream(initialAssistRunState, { type: 'run_started', mode: 'chat' })
     state = reduceAssistStream(state, { type: 'stage_started', stage: 'response' })

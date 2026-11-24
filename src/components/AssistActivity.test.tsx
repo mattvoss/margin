@@ -2,11 +2,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  AssistPlanTrace,
   ReasoningTrace,
   ToolTrace,
 } from './AssistActivity'
-import { buildAssistPlan } from './assist-plan'
+import { Subagent } from './ai-elements/subagent'
 
 describe('SimpleAssist AI activity elements', () => {
   it('renders live reasoning as an open, running trace', () => {
@@ -40,48 +39,33 @@ describe('SimpleAssist AI activity elements', () => {
     expect(markup.match(/aria-expanded="false"/g)).toHaveLength(2)
   })
 
-  it('renders agent and post-processing stages in the documented Plan trace', () => {
-    const planning = buildAssistPlan({
-      mode: 'edit',
-      harnessActive: false,
-      isPlanning: true,
-      isGenerating: false,
-    })
-    expect(planning.steps.map((step) => [step.title, step.status])).toEqual([
-      ['Planner agent', 'running'],
-      ['Editing agent', 'pending'],
-    ])
-
-    const postProcessing = buildAssistPlan({
-      mode: 'edit',
-      harnessActive: false,
-      isPlanning: false,
-      isGenerating: true,
-      postProcess: { index: 1, total: 3, name: 'Continuity', phase: 'running' },
-    })
-    expect(postProcessing.steps.map((step) => step.status)).toEqual([
-      'done',
-      'done',
-      'running',
-    ])
-
-    const failedPass = buildAssistPlan({
-      mode: 'edit',
-      harnessActive: false,
-      isPlanning: false,
-      isGenerating: true,
-      postProcess: { index: 0, total: 1, name: 'Continuity', phase: 'error' },
-    })
-    expect(failedPass.steps.at(-1)?.status).toBe('error')
-
+  it('renders a subagent run with task, thinking, steps, and result', () => {
     const markup = renderToStaticMarkup(
-      <AssistPlanTrace title={postProcessing.title} steps={postProcessing.steps} />,
+      <Subagent
+        name="Planner"
+        status="completed"
+        model="example/model"
+        task="Choose the next scene beats."
+        thinking="The scene should preserve the character's unresolved goal."
+        steps={[{ name: 'search_memory', detail: 'Found the active character motivation.' }]}
+        result={'{"beats":["Mara reaches the station"]}'}
+      />,
     )
-    expect(markup).toContain('Plan: edit request')
-    expect(markup).toContain('2 of 3 done')
-    expect(markup).toContain('Planner agent')
-    expect(markup).toContain('Editing agent')
-    expect(markup).toContain('Post-processing · Continuity')
-    expect(markup).toContain('2 of 3 passes')
+    expect(markup).toContain('Ran Planner subagent')
+    expect(markup).toContain('example/model')
+    expect(markup).toContain('search_memory')
+    expect(markup).toContain('Thinking')
+    expect(markup).toContain('The scene should preserve')
+    expect(markup).toContain('Found the active character motivation.')
+    expect(markup).toContain('Mara reaches the station')
+  })
+
+  it('renders a running subagent as expanded progress', () => {
+    const markup = renderToStaticMarkup(
+      <Subagent name="Editing" status="running" task="Revise the passage." thinking="Checking continuity." />,
+    )
+    expect(markup).toContain('Running Editing subagent')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('Checking continuity.')
   })
 })

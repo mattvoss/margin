@@ -60,6 +60,7 @@ export type PostProcessEvent =
       total: number
       id: string
       name: string
+      model?: string | null
     }
   | {
       type: 'pass_done'
@@ -69,7 +70,10 @@ export type PostProcessEvent =
       id: string
       name: string
       status: PostProcessPassStatus
+      model?: string | null
       error?: string
+      result?: string
+      thinking?: string | null
     }
   | { type: 'skipped'; source: PostProcessMode; reason: string }
 
@@ -403,6 +407,7 @@ export async function runPostProcessPipeline(
       total: passes.length,
       id: pass.id,
       name: pass.name,
+      model: input.settings.endpoints?.[pass.endpoint_id ?? input.settings.active_endpoint ?? '']?.model ?? null,
     })
 
     let client: ReturnType<typeof loadLlmConfig> | null = null
@@ -510,7 +515,15 @@ export async function runPostProcessPipeline(
       id: pass.id,
       name: pass.name,
       status: results[results.length - 1]?.status ?? 'failed',
+      model: results[results.length - 1]?.model ?? null,
       error: results[results.length - 1]?.error,
+      result:
+        results[results.length - 1]?.status === 'ok'
+          ? text.length > 12_000
+            ? `${text.slice(0, 12_000)}\n[Result excerpt truncated.]`
+            : text
+          : results[results.length - 1]?.error ?? 'The pass left the draft unchanged.',
+      thinking: results[results.length - 1]?.thinking ?? null,
     })
   }
 

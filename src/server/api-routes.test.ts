@@ -718,6 +718,12 @@ describe('assist', () => {
       expect(stageCalls).toBe(6)
       expect(events.some((event) => event.status === 'write_evaluation_started')).toBe(true)
       expect(evaluationCalls).toBe(2)
+      expect(events.find((event) => event.status === 'write_stage_started' && event.stage === 'plan')).toMatchObject({
+        name: 'Plan',
+        task: expect.stringContaining('Plan the scene'),
+      })
+      expect(events.find((event) => event.status === 'write_stage_completed' && event.stage === 'plan')?.output)
+        .toBe('Stage 1 notes.')
       expect(report?.evaluation).toMatchObject({ version: 1, modelReview: { summary: evaluation.summary, findings: [] } })
       expect(events.some((event) => event.status === 'write_prose')).toBe(false)
       expect(events.some((event) => event.status === 'write_rewrite_candidate')).toBe(false)
@@ -872,6 +878,16 @@ describe('assist', () => {
           .map((event) => event.chunk)
           .join(''),
       ).toBe('private reasoning')
+      expect(events.find((event) => event.status === 'subagent_started')).toMatchObject({
+        subagent: 'chat',
+        name: 'Chat',
+        task: 'hi',
+      })
+      expect(events.find((event) => event.status === 'subagent_completed')).toMatchObject({
+        subagent: 'chat',
+        result: 'Hello from the chat agent.',
+        thinking: 'private reasoning',
+      })
       expect(text).toContain('"status":"chat","output":"Hello from the chat agent."')
       expect(calls).toEqual(['write_chat', 'chat', 'post_process', 'finish'])
     } finally {
@@ -959,6 +975,18 @@ describe('assist', () => {
       } as never)
       const text = await res.text()
       const events = parseSseEvents(text)
+      expect(events.find((event) => event.status === 'subagent_started' && event.subagent === 'planner')).toMatchObject({
+        name: 'Planner',
+        task: 'Make it tense.',
+      })
+      expect(events.find((event) => event.status === 'subagent_completed' && event.subagent === 'planner')?.result)
+        .toContain('Make it tense.')
+      expect(events.find((event) => event.status === 'subagent_started' && event.subagent === 'writer')).toMatchObject({
+        name: 'Editor',
+        task: 'Make it tense.',
+      })
+      expect(events.find((event) => event.status === 'subagent_completed' && event.subagent === 'writer')?.result)
+        .toBe('A tenser line.')
       expect(text).toContain('"status":"planning"')
       expect(text).toContain('"status":"context_resolved"')
       expect(text).toContain('"status":"generating"')

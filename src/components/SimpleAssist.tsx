@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo, useReducer } from 'react'
-import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Circle, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Compass, Copy, CornerDownLeft, Eye, Brain, Loader2, Settings, Square, Trash2, Users, ListTodo, SquareChartGantt, Undo2, ChartNoAxesColumnIncreasing } from 'lucide-react'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCharactersStore } from '../stores/charactersStore'
@@ -27,8 +27,8 @@ import {
   writingEvaluationRecordSchema,
   type WritingEvaluationRecord,
 } from '../lib/writingEvaluation'
-import { AssistPlanTrace, ReasoningTrace, ToolTrace } from './AssistActivity'
-import { buildAssistPlan } from './assist-plan'
+import { ReasoningTrace, ToolTrace } from './AssistActivity'
+import { Subagent } from './ai-elements/subagent'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -178,7 +178,7 @@ function cleanUserPrompt(log: SimpleLogEntry): string {
 }
 
 function renderUserPrompt(text: string) {
-  const regex = /@([\w.-]+(?:\([^)]+\))?)/g
+  const regex = /@([\w./-]+(?:\([^)]+\))?)/g
   const parts: React.ReactNode[] = []
   let lastIndex = 0
   let match
@@ -396,8 +396,6 @@ export function SimpleAssist() {
   const [plannerContextFiles, setPlannerContextFiles] = useState<string[]>([])
   const [streamingThinkingText, setStreamingThinkingText] = useState('')
   const [streamingChatText, setStreamingChatText] = useState('')
-  const [writeStages, setWriteStages] = useState<Array<{ id: string; status: 'pending' | 'running' | 'done' | 'cancelled' }>>([])
-  const [writeReasoning, setWriteReasoning] = useState<Record<string, string>>({})
   const [writeEvaluation, setWriteEvaluation] = useState<WritingEvaluationRecord | null>(null)
   const [writeEvaluationRunning, setWriteEvaluationRunning] = useState(false)
   const [writeQuestions, setWriteQuestions] = useState<AssistQuestion[]>([])
@@ -408,12 +406,6 @@ export function SimpleAssist() {
   const [questionnaireRequest, setQuestionnaireRequest] = useState<AssistQuestionnaireRequest | null>(null)
   const questionnaireSubmittingRef = useRef(false)
   const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
-  const [postProcessStatus, setPostProcessStatus] = useState<{
-    index: number
-    total: number
-    name?: string
-    phase?: 'running' | 'done' | 'error'
-  } | null>(null)
   const [runningPass, setRunningPass] = useState<{ logId: string; passId: string } | null>(null)
   const [instructionText, setInstructionText] = useState('')
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
@@ -421,16 +413,19 @@ export function SimpleAssist() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [copiedResponseId, setCopiedResponseId] = useState<string | null>(null)
 
-  const handleCopyPrompt = async (log: SimpleLogEntry) => {
-    const textToCopy = log.instruction || log.user_prompt || cleanUserPrompt(log)
+  const copyPromptText = async (textToCopy: string, id: string) => {
     try {
       await navigator.clipboard.writeText(textToCopy)
-      setCopiedId(log.id)
+      setCopiedId(id)
       setTimeout(() => setCopiedId(null), 2000)
     } catch (err) {
       console.error('Failed to copy prompt text:', err)
       toast.error('Could not copy to clipboard.')
     }
+  }
+
+  const handleCopyPrompt = async (log: SimpleLogEntry) => {
+    await copyPromptText(log.instruction || log.user_prompt || cleanUserPrompt(log), log.id)
   }
 
   const handleCopyResponse = async (log: SimpleLogEntry) => {
@@ -488,22 +483,6 @@ export function SimpleAssist() {
     () => activePostProcessPreset(normalizePostProcessing(settings?.post_processing)).passes,
     [settings?.post_processing],
   )
-  const activeAssistPlan = useMemo(
-    () => buildAssistPlan({
-      mode,
-      harnessActive: activeHarness !== 'none',
-      harnessName:
-        activeHarness !== 'none'
-          ? harnessList.find((harnessOption) => harnessOption.id === activeHarness)?.name ??
-            activeHarness
-          : undefined,
-      isPlanning,
-      isGenerating,
-      postProcess: postProcessStatus,
-    }),
-    [mode, activeHarness, harnessList, isPlanning, isGenerating, postProcessStatus],
-  )
-
   const handleRunPostProcessPass = async (log: SimpleLogEntry, pass: PostProcessPass) => {
     if (!log.output || runningPass) return
     setRunningPass({ logId: log.id, passId: pass.id })
@@ -662,17 +641,12 @@ export function SimpleAssist() {
   // in the prompt keep their place, and refs missing from the stored text are
   // prepended. Anything without a resolvable path stays plain text rather than
   // a chip that tags nothing. Any pending editor-selection chip is kept.
-  const handlePromptToInput = (log: SimpleLogEntry) => {
-    const textToUse = log.instruction || log.user_prompt || cleanUserPrompt(log)
+  const restorePromptToInput = (textToUse: string, attached: MentionTarget[]) => {
     const el = inputRef.current
     if (!el) return
     try {
-      // Log entries win over workspace files: they carry the paths that were
-      // actually tagged when the prompt ran.
-      const attached: MentionTarget[] = []
-      for (const file of log.ref_files ?? []) {
-        if (file?.name && file?.path) attached.push({ name: file.name, path: file.path })
-      }
+      // Attached references win over workspace files: they preserve the exact
+      // paths that were tagged when the prompt was sent.
       const workspaceFiles: MentionTarget[] = openedFiles.map((file) => ({
         name: file.name,
         path: file.path,
@@ -710,17 +684,33 @@ export function SimpleAssist() {
     }
   }
 
+  const handlePromptToInput = (log: SimpleLogEntry) => {
+    const attached: MentionTarget[] = (log.ref_files ?? []).flatMap((file) =>
+      typeof file?.name === 'string' && typeof file.path === 'string'
+        ? [{ name: file.name, path: file.path }]
+        : [],
+    )
+    restorePromptToInput(log.instruction || log.user_prompt || cleanUserPrompt(log), attached)
+  }
+
+  const activePromptId = `${activeSessionId}:active-user`
+  const handleActivePromptToInput = () => {
+    restorePromptToInput(
+      activeInstruction,
+      activeRefFiles.map((file) => ({ name: file.name, path: file.path })),
+    )
+  }
+
   const handleStop = async () => {
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
     }
+    const activeSubagent = [...assistRun.stageOrder]
+      .reverse()
+      .find((stage) => assistRun.stages[stage]?.status === 'running')
+    if (activeSubagent) dispatchAssistRun({ type: 'cancelled', stage: activeSubagent })
     if (mode === 'write') {
-      setWriteStages((stages) => stages.map((stage) =>
-        stage.status === 'pending' || stage.status === 'running'
-          ? { ...stage, status: 'cancelled' as const }
-          : stage,
-      ))
       setIsWorking(false)
       setIsPlanning(false)
       setIsGenerating(false)
@@ -761,8 +751,6 @@ export function SimpleAssist() {
     setPlannerContextFiles([])
     setStreamingThinkingText('')
     setStreamingChatText('')
-    setWriteStages([])
-    setWriteReasoning({})
     setWriteEvaluation(null)
     setWriteEvaluationRunning(false)
     setWriteQuestions([])
@@ -772,7 +760,6 @@ export function SimpleAssist() {
     setQuestionnaireRequest(null)
     questionnaireSubmittingRef.current = false
     dispatchAssistRun({ type: 'reset' })
-    setPostProcessStatus(null)
     setRunningPass(null)
     setActiveInstruction('')
     setActiveRefFiles([])
@@ -974,8 +961,6 @@ export function SimpleAssist() {
     setStreamingThinkingText('')
     setStreamingChatText('')
     dispatchAssistRun({ type: 'run_started', mode, runId: activeSessionId, model: settings?.active_endpoint ? settings.endpoints[settings.active_endpoint]?.model : undefined })
-    dispatchAssistRun({ type: 'stage_started', stage: mode === 'write' ? 'plan' : 'response', label: mode === 'write' ? 'Plan' : 'Response' })
-    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveHarness('none')
     setNoticeText('')
@@ -1111,12 +1096,9 @@ export function SimpleAssist() {
     setStreamingThinkingText('')
     setStreamingChatText('')
     if (mode === 'write') {
-      setWriteStages([])
-      setWriteReasoning({})
       setWriteEvaluation(null)
       setWriteEvaluationRunning(false)
     }
-    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
     const currentRefFiles = Array.from(new Set(refPaths))
@@ -1128,8 +1110,14 @@ export function SimpleAssist() {
     // Snapshot for harness three-way reconciliation (editor stays editable)
     harnessBaseRef.current = useEditorStore.getState().content
     setActiveHarness(harness)
+    dispatchAssistRun({
+      type: 'run_started',
+      mode,
+      runId: activeSessionId,
+      model: settings?.active_endpoint ? settings.endpoints[settings.active_endpoint]?.model : undefined,
+    })
 
-    if (inputRef.current && mode !== 'write') {
+    if (inputRef.current) {
       inputRef.current.textContent = ''
       setInstructionText('')
     }
@@ -1218,38 +1206,18 @@ export function SimpleAssist() {
             const count = Number(data.count) || 0
             if (count > 0) setNoticeText(`Memory saved ${count} new ${count === 1 ? 'item' : 'items'}.`)
           } else if (status === 'thinking_chunk') {
-            setStreamingThinkingText(prev => prev + (data.chunk as string))
-          } else if (status === 'post_processing_start') {
-            setPostProcessStatus({
-              index: 0,
-              total: Number(data.total) || 0,
-              phase: 'running',
-            })
-          } else if (status === 'post_processing_pass') {
-            setPostProcessStatus({
-              index: Number(data.index) || 0,
-              total: Number(data.total) || 0,
-              name: String(data.name || ''),
-              phase: 'running',
-            })
+            if (typeof data.stage !== 'string' || harness !== 'none') {
+              setStreamingThinkingText(prev => prev + (data.chunk as string))
+            }
           } else if (status === 'post_processing_pass_done') {
-            setPostProcessStatus(prev => prev ? {
-              ...prev,
-              index: Number(data.index) || prev.index,
-              phase: data.result_status === 'failed' ? 'error' : 'done',
-            } : prev)
             if (data.result_status === 'failed') {
               setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
             }
           } else if (status === 'post_processing_skipped') {
-            setPostProcessStatus(null)
             const reason = String(data.reason || '')
             if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
             }
-          } else if (status === 'write_reasoning') {
-            const stage = String(data.stage || 'write')
-            setWriteReasoning(prev => ({ ...prev, [stage]: `${prev[stage] || ''}${String(data.chunk || '')}` }))
           } else if (status === 'write_started') {
             setNoticeText('')
             setIsPlanning(false)
@@ -1262,9 +1230,6 @@ export function SimpleAssist() {
             questionnaireSubmittingRef.current = false
             setWriteEvaluation(null)
             setWriteEvaluationRunning(false)
-            const ids = Array.isArray(data.stages) ? data.stages.map(String) : []
-            setWriteStages(ids.map(id => ({ id, status: 'pending' as const })))
-            ids.forEach((id) => dispatchAssistRun({ type: 'stage_started', stage: id, label: id }))
           } else if (status === 'write_clarifying') {
             setIsPlanning(true)
             setIsGenerating(false)
@@ -1278,13 +1243,7 @@ export function SimpleAssist() {
               selection: domSelection,
             })
           } else if (status === 'write_stage_started') {
-            dispatchAssistRun({ type: 'stage_started', stage: String(data.stage || 'write') })
-            setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'running' } : stage))
             setIsPlanning(true)
-            setNoticeText(`Writing: ${String(data.stage || '')}`)
-          } else if (status === 'write_stage_completed') {
-            dispatchAssistRun({ type: 'stage_completed', stage: String(data.stage || 'write'), output: typeof data.output === 'string' ? data.output : undefined })
-            setWriteStages(prev => prev.map(stage => stage.id === String(data.stage) ? { ...stage, status: 'done' } : stage))
           } else if (status === 'write_prose') {
             // Prose is buffered on the server until evaluation/revision finishes.
             setIsPlanning(false)
@@ -1320,6 +1279,13 @@ export function SimpleAssist() {
           } else if (status === 'write_completed') {
             dispatchAssistRun({ type: 'completed', output: typeof data.output === 'string' ? data.output : '' })
             if (typeof data.output === 'string') setStreamingChatText(data.output)
+            if (mode === 'write') {
+              dispatchAssistRun({
+                type: 'stage_completed',
+                stage: 'prose',
+                output: typeof data.output === 'string' ? data.output : '',
+              })
+            }
             setNoticeText('')
             setIsPlanning(false)
             setIsGenerating(false)
@@ -1356,7 +1322,9 @@ export function SimpleAssist() {
             // Every harness streams structured events and emits tool rows.
             setIsPlanning(false)
             setIsGenerating(true)
-            setActiveToolRows(prev => [...prev, { tool: String(data.tool || 'tool'), detail: String(data.detail || '') }])
+            if (typeof data.stage !== 'string') {
+              setActiveToolRows(prev => [...prev, { tool: String(data.tool || 'tool'), detail: String(data.detail || '') }])
+            }
             // Write/edit tool landed on disk → refresh the sidebar tree
             // (reads/globs are noise; the open document stays on the
             // merge-at-done path, this syncs added and deleted files).
@@ -1497,11 +1465,9 @@ export function SimpleAssist() {
       setIsGenerating(false)
       setPlannerContextFiles([])
       setActiveHarness('none')
-      setPostProcessStatus(null)
       if (!wasAbortedRef.current && mode !== 'write') {
       setStreamingThinkingText('')
       setStreamingChatText('')
-      setWriteReasoning({})
         setActiveInstruction('')
         setActiveRefFiles([])
       }
@@ -1531,8 +1497,6 @@ export function SimpleAssist() {
     setStreamingThinkingText('')
     setStreamingChatText('')
     dispatchAssistRun({ type: 'run_started', mode: 'chat', runId: activeSessionId, model: settings?.active_endpoint ? settings.endpoints[settings.active_endpoint]?.model : undefined })
-    dispatchAssistRun({ type: 'stage_started', stage: 'response', label: 'Response' })
-    setPostProcessStatus(null)
     setActiveToolRows([])
     setActiveInstruction(currentInstruction)
     const currentRefFiles = Array.from(new Set(refPaths))
@@ -1594,37 +1558,20 @@ export function SimpleAssist() {
             setIsPlanning(false)
             setIsGenerating(true)
           } else if (status === 'thinking_chunk') {
-            setStreamingThinkingText(prev => prev + (data.chunk as string))
+            if (typeof data.stage !== 'string' || harness !== 'none') {
+              setStreamingThinkingText(prev => prev + (data.chunk as string))
+            }
           } else if (status === 'write_questionnaire' || status === 'questionnaire') {
             receiveQuestionnaire(data, 'chat', {
               message: currentInstruction,
               refPaths,
               selection: domSelection,
             })
-          } else if (status === 'post_processing_start') {
-            setPostProcessStatus({
-              index: 0,
-              total: Number(data.total) || 0,
-              phase: 'running',
-            })
-          } else if (status === 'post_processing_pass') {
-            setPostProcessStatus({
-              index: Number(data.index) || 0,
-              total: Number(data.total) || 0,
-              name: String(data.name || ''),
-              phase: 'running',
-            })
           } else if (status === 'post_processing_pass_done') {
-            setPostProcessStatus(prev => prev ? {
-              ...prev,
-              index: Number(data.index) || prev.index,
-              phase: data.result_status === 'failed' ? 'error' : 'done',
-            } : prev)
             if (data.result_status === 'failed') {
               setNoticeText(`${String(data.name || 'Post-processing pass')} failed; kept the previous text.`)
             }
           } else if (status === 'post_processing_skipped') {
-            setPostProcessStatus(null)
             const reason = String(data.reason || '')
             if (reason && !['disabled', 'no_passes', 'min_chars', 'aborted'].includes(reason)) {
               setNoticeText(`Post-processing skipped: ${reason.replace(/_/g, ' ')}`)
@@ -1637,7 +1584,9 @@ export function SimpleAssist() {
             // Every harness streams structured events and emits tool rows.
             setIsPlanning(false)
             setIsGenerating(true)
-            setActiveToolRows(prev => [...prev, { tool: String(data.tool || 'tool'), detail: String(data.detail || '') }])
+            if (typeof data.stage !== 'string') {
+              setActiveToolRows(prev => [...prev, { tool: String(data.tool || 'tool'), detail: String(data.detail || '') }])
+            }
             // Write/edit tool landed on disk → refresh the sidebar tree
             // (reads/globs are noise; the open document stays on the
             // merge-at-done path, this syncs added and deleted files).
@@ -1692,7 +1641,6 @@ export function SimpleAssist() {
       setIsGenerating(false)
       setPlannerContextFiles([])
       setActiveHarness('none')
-      setPostProcessStatus(null)
       if (!wasAbortedRef.current) {
         setActiveInstruction('')
         setActiveRefFiles([])
@@ -1878,7 +1826,7 @@ export function SimpleAssist() {
     }
   }, [pendingEditSelection, handleInput, setPendingEditSelection])
 
-  const hasHistory = filteredLogs.length > 0 || isWorking || (mode === 'write' && (!!streamingChatText || writeStages.length > 0)) || !!errorText || !!noticeText
+  const hasHistory = filteredLogs.length > 0 || isWorking || assistRun.stageOrder.length > 0 || !!streamingChatText || !!errorText || !!noticeText
 
   const renderInputCard = () => {
     const activeEndpoint = settings?.active_endpoint
@@ -2826,17 +2774,49 @@ export function SimpleAssist() {
                 )
               })}
 
-              {((isWorking && activeInstruction) || (mode === 'write' && (streamingChatText || writeStages.length > 0 || Object.keys(writeReasoning).length > 0))) && (
+              {((isWorking && activeInstruction) || assistRun.stageOrder.length > 0 || !!streamingChatText) && (
                 <>
-                  <MessageScrollerItem messageId={`${activeSessionId}:active-user`} scrollAnchor>
-                    <Message align="end">
-                      <MessageContent>
-                        <Bubble align="end" variant="muted" className="text-[var(--text)] opacity-70">
-                          <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </MessageScrollerItem>
+                  {activeInstruction && (
+                    <MessageScrollerItem messageId={activePromptId} scrollAnchor>
+                      <Message align="end" className="group">
+                        <MessageContent>
+                          <Bubble align="end" variant="muted" className="text-[var(--text)] opacity-70">
+                            <BubbleContent>{renderUserPrompt(activeInstruction)}</BubbleContent>
+                          </Bubble>
+                          <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={handleActivePromptToInput}
+                                  aria-label="Restore prompt to input"
+                                >
+                                  <Undo2 />
+                                </Button>
+                              } />
+                              <TooltipContent>Restore prompt to input</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => void copyPromptText(activeInstruction, activePromptId)}
+                                  aria-label="Copy prompt"
+                                >
+                                  {copiedId === activePromptId
+                                    ? <Check className="text-green-600 dark:text-green-400" />
+                                    : <Copy />}
+                                </Button>
+                              } />
+                              <TooltipContent>{copiedId === activePromptId ? 'Copied' : 'Copy prompt'}</TooltipContent>
+                            </Tooltip>
+                          </MessageFooter>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
+                  )}
 
                   <MessageScrollerItem messageId={`${activeSessionId}:active-assistant`}>
                     <Message className="group">
@@ -2870,42 +2850,46 @@ export function SimpleAssist() {
                         </Trace>
                       )}
 
-                      <AssistPlanTrace
-                        title={activeAssistPlan.title}
-                        steps={activeAssistPlan.steps}
-                      >
-                        {activeToolRows.length > 0 && (
-                          <Trace className="mt-1 gap-1 border-t border-[var(--border-subtle)] pt-1">
-                            {activeToolRows.map((tool, i) => (
-                              <ToolTrace
-                                key={`htool-${i}`}
-                                tool={tool.tool}
-                                detail={tool.detail}
-                                running
-                              />
-                            ))}
-                          </Trace>
-                        )}
-                      </AssistPlanTrace>
+                      {activeToolRows.length > 0 && (
+                        <Trace className="gap-1">
+                          {activeToolRows.map((tool, i) => (
+                            <ToolTrace
+                              key={`htool-${i}`}
+                              tool={tool.tool}
+                              detail={tool.detail}
+                              running
+                            />
+                          ))}
+                        </Trace>
+                      )}
 
-                      {streamingThinkingText && (
+                      {streamingThinkingText && assistRun.stageOrder.length === 0 && activeHarness !== 'none' && (
                         <ReasoningTrace text={streamingThinkingText} running />
                       )}
-                      {mode === 'chat' && assistRun.stages.response?.reasoning && assistRun.stages.response.reasoning !== streamingThinkingText && (
-                        <ReasoningTrace text={assistRun.stages.response.reasoning} running={!assistRun.complete} />
-                      )}
-
-                      {mode === 'write' && writeStages.length > 0 && (
+                      {assistRun.stageOrder.length > 0 && (
                         <Trace className="gap-1 border-t border-[var(--border-subtle)] pt-1">
-                          {writeStages.map((stage) => (
-                            <React.Fragment key={stage.id}>
-                              <TraceLine status={stage.status === 'running' ? 'running' : undefined} className="text-[10px]">
-                                <TraceIcon>{stage.status === 'done' ? <Check className="size-3" /> : stage.status === 'running' ? <Loader2 className="size-3 animate-spin" /> : stage.status === 'cancelled' ? <Square className="size-3" /> : <Circle className="size-3" />}</TraceIcon>
-                                <TraceTitle className="capitalize">{stage.id}{stage.status === 'cancelled' ? ' · aborted' : ''}</TraceTitle>
-                              </TraceLine>
-                              {writeReasoning[stage.id] && <ReasoningTrace text={writeReasoning[stage.id]} running={stage.status === 'running'} />}
-                            </React.Fragment>
-                          ))}
+                          {assistRun.stageOrder.map((stageId) => {
+                            const stage = assistRun.stages[stageId]
+                            if (!stage) return null
+                            const status = assistRun.error && stage.status === 'running'
+                              ? 'failed'
+                              : stage.status
+                            const result = stage.output || stage.error ||
+                              (status === 'failed' ? assistRun.error ?? '' : '') ||
+                              (stageId === 'prose' && assistRun.complete ? assistRun.finalOutput : '')
+                            return (
+                              <Subagent
+                                key={stageId}
+                                name={stage.label ?? stageId}
+                                status={status}
+                                model={stage.model ?? assistRun.model}
+                                task={stage.task}
+                                thinking={stage.reasoning}
+                                steps={stage.tools}
+                                result={result}
+                              />
+                            )
+                          })}
                         </Trace>
                       )}
                       {mode === 'write' && (writeEvaluation || writeEvaluationRunning) && (

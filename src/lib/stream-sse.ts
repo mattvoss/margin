@@ -7,10 +7,39 @@ export function normalizeAssistEvent(data: Record<string, unknown>): AssistStrea
   const status = typeof data.status === 'string' ? data.status : ''
   if (status === 'thinking_chunk') return { type: 'reasoning_delta', stage: typeof data.stage === 'string' ? data.stage : 'response', delta: String(data.chunk ?? '') }
   if (status === 'write_reasoning') return { type: 'reasoning_delta', stage: String(data.stage ?? 'write'), delta: String(data.chunk ?? '') }
-  if (status === 'chunk' || status === 'write_prose') return { type: 'text_delta', stage: status === 'write_prose' ? 'prose' : 'response', delta: String(data.chunk ?? '') }
+  if (status === 'chunk' || status === 'write_prose') return { type: 'text_delta', stage: typeof data.stage === 'string' ? data.stage : status === 'write_prose' ? 'prose' : 'response', delta: String(data.chunk ?? '') }
   if (status === 'tool') return { type: 'tool', stage: String(data.stage ?? 'response'), name: String(data.tool ?? 'tool'), detail: typeof data.detail === 'string' ? data.detail : undefined }
-  if (status === 'write_started') return { type: 'run_started', mode: 'write', runId: typeof data.run_id === 'string' ? data.run_id : undefined }
-  if (status === 'write_stage_started') return { type: 'stage_started', stage: String(data.stage ?? 'write') }
+  if (status === 'subagent_started') return {
+    type: 'stage_started',
+    stage: String(data.subagent ?? 'agent'),
+    label: typeof data.name === 'string' ? data.name : undefined,
+    task: typeof data.task === 'string' ? data.task : undefined,
+    model: typeof data.model_used === 'string' ? data.model_used : undefined,
+  }
+  if (status === 'subagent_completed') return {
+    type: 'stage_completed',
+    stage: String(data.subagent ?? 'agent'),
+    output: typeof data.result === 'string' ? data.result : undefined,
+    reasoning: typeof data.thinking === 'string' ? data.thinking : undefined,
+  }
+  if (status === 'subagent_failed') return {
+    type: 'stage_failed',
+    stage: String(data.subagent ?? 'agent'),
+    message: String(data.message ?? 'Subagent failed.'),
+  }
+  if (status === 'write_started') return {
+    type: 'run_started',
+    mode: 'write',
+    runId: typeof data.run_id === 'string' ? data.run_id : undefined,
+    model: typeof data.model_used === 'string' ? data.model_used : undefined,
+  }
+  if (status === 'write_stage_started') return {
+    type: 'stage_started',
+    stage: String(data.stage ?? 'write'),
+    label: typeof data.name === 'string' ? data.name : undefined,
+    task: typeof data.task === 'string' ? data.task : undefined,
+    model: typeof data.model_used === 'string' ? data.model_used : undefined,
+  }
   if (status === 'write_stage_completed') return { type: 'stage_completed', stage: String(data.stage ?? 'write'), output: typeof data.output === 'string' ? data.output : undefined }
   if (status === 'write_evaluation_started') return { type: 'evaluation_started' }
   if (status === 'write_evaluation_completed' && data.evaluation && typeof data.evaluation === 'object') {

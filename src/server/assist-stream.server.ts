@@ -274,6 +274,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               id: event.id,
               name: event.name,
             })
+            send({
+              status: 'subagent_started',
+              subagent: `${event.source}-post-${event.index + 1}-${event.id}`,
+              name: `Post-processing · ${event.name}`,
+              task: `Apply the ${event.name} pass to the current draft.`,
+              model_used: event.model ?? undefined,
+            })
           } else if (event.type === 'pass_done') {
             send({
               status: 'post_processing_pass_done',
@@ -285,6 +292,21 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               result_status: event.status,
               detail: event.error,
             })
+            const subagent = `${event.source}-post-${event.index + 1}-${event.id}`
+            if (event.status === 'failed') {
+              send({
+                status: 'subagent_failed',
+                subagent,
+                message: event.error ?? `${event.name} failed.`,
+              })
+            } else {
+              send({
+                status: 'subagent_completed',
+                subagent,
+                result: event.result ?? event.error ?? 'The pass left the draft unchanged.',
+                thinking: event.thinking ?? '',
+              })
+            }
           } else if (event.type === 'skipped') {
             send({ status: 'post_processing_skipped', source: event.source, reason: event.reason })
           }
@@ -872,11 +894,22 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           let writingEvaluation: WritingEvaluationRecord = evaluateProse
             ? { status: 'skipped', reason: 'not_run' }
             : { status: 'skipped', reason: 'disabled' }
-          send({ status: 'write_started', stages: WRITING_PIPELINE_STAGES.map((stage) => stage.id) })
+          send({
+            status: 'write_started',
+            run_id: payload.session_id,
+            model_used: client.model,
+            stages: WRITING_PIPELINE_STAGES.map((stage) => stage.id),
+          })
           const pipeline = await runWritingPipeline({
             context,
             signal,
-            onStageStart: (stage) => send({ status: 'write_stage_started', stage: stage.id }),
+            onStageStart: (stage) => send({
+              status: 'write_stage_started',
+              stage: stage.id,
+              name: `${stage.id[0]?.toUpperCase()}${stage.id.slice(1)}`,
+              task: stage.purpose,
+              model_used: client.model,
+            }),
             onStageComplete: (stage, output) => send({
               status: 'write_stage_completed',
               stage: stage.id,
@@ -984,6 +1017,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (!signal.aborted) {
             if (evaluateProse) {
               send({ status: 'write_evaluation_started' })
+              let activeEvaluationSubagent: string | null = null
+              let activeRevisionSubagent: string | null = null
               try {
                 const anchor = extractAnchorContext(
                   payload.content,
@@ -1021,6 +1056,16 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                       draft: finalOutput,
                       maxInputChars: evaluationInputChars,
                     })
+                    activeEvaluationSubagent = `prose-evaluator-${revisionIterations + 1}`
+                    send({
+                      status: 'subagent_started',
+                      subagent: activeEvaluationSubagent,
+                      name: 'Prose evaluator',
+                      task: revisionIterations === 0
+                        ? 'Review the generated passage against the request, plan, and story context.'
+                        : 'Re-evaluate the revised passage against the same criteria.',
+                      model_used: client.model,
+                    })
                     const evaluator = createWriteEvaluationAgent({
                       endpoint: {
                         model: client.model,
@@ -1034,6 +1079,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     const evaluationSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000)])
                     const evaluation = await evaluator.generate({ prompt, abortSignal: evaluationSignal })
                     modelReview = parseWritingModelReview(evaluation.text)
+                    send({
+                      status: 'subagent_completed',
+                      subagent: activeEvaluationSubagent,
+                      result: JSON.stringify(modelReview, null, 2),
+                      thinking: evaluation.reasoningText ?? '',
+                    })
+                    activeEvaluationSubagent = null
                   }
 
                   deterministicChecks = evaluateDraftDeterministically({
@@ -1067,6 +1119,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     instructions: 'Return only the complete revised passage. Apply every supported editorial finding while preserving facts, voice, and meaning. Leave conventional dialogue, simple actions, and intentional stylistic choices unchanged unless a concrete issue is identified.',
                     maxOutputTokens: 1800,
                   })
+                  activeRevisionSubagent = `prose-revision-${revisionIterations + 1}`
+                  send({
+                    status: 'subagent_started',
+                    subagent: activeRevisionSubagent,
+                    name: 'Prose reviser',
+                    task: 'Apply the supported evaluation findings while preserving story facts and voice.',
+                    model_used: client.model,
+                  })
                   const revision = await rewriter.generate({
                     prompt: buildAutomaticProseRevisionPrompt({
                       draft: finalOutput,
@@ -1079,6 +1139,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                     abortSignal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
                   })
                   const revised = revision.text.trim()
+                  send({
+                    status: 'subagent_completed',
+                    subagent: activeRevisionSubagent,
+                    result: revised || 'No revision was applied.',
+                    thinking: revision.reasoningText ?? '',
+                  })
+                  activeRevisionSubagent = null
                   if (!revised || revised === finalOutput) break
                   finalOutput = revised
                   revisionIterations += 1
@@ -1094,6 +1161,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 send({ status: 'write_evaluation_completed', evaluation: result })
               } catch (error) {
                 if (!signal.aborted) {
+                  const failedSubagent = activeRevisionSubagent ?? activeEvaluationSubagent
+                  if (failedSubagent) {
+                    send({
+                      status: 'subagent_failed',
+                      subagent: failedSubagent,
+                      message: errMsg(error),
+                    })
+                  }
                   console.warn(`Writing evaluation unavailable: ${errMsg(error)}`)
                   writingEvaluation = {
                     status: 'failed',
@@ -1213,6 +1288,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           if (payload.skip_planner) return null
           if (plannerRun) return plannerRun
           if (announce) send({ status: 'planning' })
+          send({
+            status: 'subagent_started',
+            subagent: 'planner',
+            name: 'Planner',
+            task: requestMessage,
+            model_used: client.model,
+          })
           const plannerPrompt = await loadSimplePrompt('simple-planner.md').catch(() => '')
           const historyLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
           const manifests = await collectManifestSections(
@@ -1285,6 +1367,23 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             model: result.response.modelId || client.model,
           }
           plannerRun = run
+          for (const step of result.steps) {
+            for (const call of step.toolCalls) {
+              const output = step.toolResults.find((toolResult) => toolResult.toolCallId === call.toolCallId)?.output
+              send({
+                status: 'tool',
+                stage: 'planner',
+                tool: call.toolName,
+                detail: JSON.stringify({ input: call.input, output }),
+              })
+            }
+          }
+          send({
+            status: 'subagent_completed',
+            subagent: 'planner',
+            result: JSON.stringify(run.plan, null, 2),
+            thinking: run.thinking ?? '',
+          })
           const contextNeeded: string[] = [...(run.plan.context_needed ?? [])]
           for (const p of taggedContext) {
             if (!contextNeeded.includes(p)) contextNeeded.push(p)
@@ -1307,6 +1406,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           }
           send({ status: 'generating' })
           const query = plan?.plan.refined_query || requestMessage
+          send({
+            status: 'subagent_started',
+            subagent: 'writer',
+            name: 'Editor',
+            task: query,
+            model_used: client.model,
+          })
           const contextNeeded: string[] = plan
             ? [...(plan.plan.context_needed ?? [])]
             : [...taggedContext]
@@ -1381,35 +1487,35 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               const filtered = thinkingFilter.push(part.text)
               if (filtered.text) {
                 fullRaw += filtered.text
-                send({ status: 'chunk', chunk: filtered.text })
+                send({ status: 'chunk', stage: 'writer', chunk: filtered.text })
               }
               if (filtered.thinking) {
                 fullThinking += filtered.thinking
-                send({ status: 'thinking_chunk', chunk: filtered.thinking })
+                send({ status: 'thinking_chunk', stage: 'writer', chunk: filtered.thinking })
               }
             } else if (part.type === 'reasoning-delta') {
               if (client.isThinking) {
                 fullThinking += part.text
-                send({ status: 'thinking_chunk', chunk: part.text })
+                send({ status: 'thinking_chunk', stage: 'writer', chunk: part.text })
               } else {
                 fullRaw += part.text
-                send({ status: 'chunk', chunk: part.text })
+                send({ status: 'chunk', stage: 'writer', chunk: part.text })
               }
             }
           }
           const filteredTail = thinkingFilter.flush()
           if (filteredTail.text) {
             fullRaw += filteredTail.text
-            send({ status: 'chunk', chunk: filteredTail.text })
+            send({ status: 'chunk', stage: 'writer', chunk: filteredTail.text })
           }
           if (filteredTail.thinking) {
             fullThinking += filteredTail.thinking
-            send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
+            send({ status: 'thinking_chunk', stage: 'writer', chunk: filteredTail.thinking })
           }
           const editReasoning = await result.reasoningText
           if (editReasoning && !fullThinking) {
             fullThinking = editReasoning
-            send({ status: 'thinking_chunk', chunk: editReasoning })
+            send({ status: 'thinking_chunk', stage: 'writer', chunk: editReasoning })
           }
           await writerTelemetry.pending
           const usage = await result.usage
@@ -1450,6 +1556,13 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
         async function performChat(): Promise<ChatRun> {
           if (chatRun) return chatRun
           send({ status: 'generating' })
+          send({
+            status: 'subagent_started',
+            subagent: 'chat',
+            name: 'Chat',
+            task: requestMessage,
+            model_used: client.model,
+          })
           const chatPrompt = await loadSimplePrompt('simple-chat.md').catch(() => '')
           const chatLogs = await getWorkspaceAiLogs(ws, payload.session_id).catch(() => [])
              const composed = await composeChatMessages({ ...payload, message: requestMessage } as never, {
@@ -1523,39 +1636,50 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               const filtered = thinkingFilter.push(part.text)
               if (filtered.text) {
                 fullChat += filtered.text
-                send({ status: 'chunk', chunk: filtered.text })
+                send({ status: 'chunk', stage: 'chat', chunk: filtered.text })
               }
               if (filtered.thinking) {
                 fullThinking += filtered.thinking
-                send({ status: 'thinking_chunk', chunk: filtered.thinking })
+                send({ status: 'thinking_chunk', stage: 'chat', chunk: filtered.thinking })
               }
             } else if (part.type === 'reasoning-delta') {
               if (client.isThinking) {
                 fullThinking += part.text
-                send({ status: 'thinking_chunk', chunk: part.text })
+                send({ status: 'thinking_chunk', stage: 'chat', chunk: part.text })
               } else {
                 fullChat += part.text
-                send({ status: 'chunk', chunk: part.text })
+                send({ status: 'chunk', stage: 'chat', chunk: part.text })
               }
             }
           }
           const filteredTail = thinkingFilter.flush()
           if (filteredTail.text) {
             fullChat += filteredTail.text
-            send({ status: 'chunk', chunk: filteredTail.text })
+            send({ status: 'chunk', stage: 'chat', chunk: filteredTail.text })
           }
           if (filteredTail.thinking) {
             fullThinking += filteredTail.thinking
-            send({ status: 'thinking_chunk', chunk: filteredTail.thinking })
+            send({ status: 'thinking_chunk', stage: 'chat', chunk: filteredTail.thinking })
           }
           const chatReasoning = await result.reasoningText
           if (chatReasoning && !fullThinking) {
             fullThinking = chatReasoning
-            send({ status: 'thinking_chunk', chunk: chatReasoning })
+            send({ status: 'thinking_chunk', stage: 'chat', chunk: chatReasoning })
           }
           await chatTelemetry.pending
           const usage = await result.usage
           const response = await result.response
+          for (const step of await result.steps) {
+            for (const call of step.toolCalls) {
+              const output = step.toolResults.find((toolResult) => toolResult.toolCallId === call.toolCallId)?.output
+              send({
+                status: 'tool',
+                stage: 'chat',
+                tool: call.toolName,
+                detail: JSON.stringify({ input: call.input, output }),
+              })
+            }
+          }
           const raw = fullChat || splitThinkingTags(
             await result.text,
             client.isThinking,
@@ -1612,6 +1736,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               anchor: edit.anchor,
             })
             const finalOutput = post.text
+            send({
+              status: 'subagent_completed',
+              subagent: 'writer',
+              result: finalOutput,
+              thinking: edit.thinking ?? '',
+            })
             const review = post.skipped ? true : postConfig.review
             await saveSimpleAiLog({
               mode: 'edit_write',
@@ -1672,6 +1802,12 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             anchor: chat.anchor,
           })
           const finalChat = post.text
+          send({
+            status: 'subagent_completed',
+            subagent: 'chat',
+            result: finalChat,
+            thinking: chat.thinking ?? '',
+          })
           await saveSimpleAiLog({
             mode: 'chat',
             session_id: payload.session_id,

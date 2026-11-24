@@ -6,6 +6,8 @@ export type AssistStageStatus = 'pending' | 'running' | 'completed' | 'failed' |
 export interface AssistStageState {
   id: string
   label?: string
+  task?: string
+  model?: string
   status: AssistStageStatus
   reasoning: string
   output: string
@@ -16,11 +18,12 @@ export interface AssistStageState {
 export type AssistStreamEvent =
   | { type: 'reset' }
   | { type: 'run_started'; runId?: string; mode: AssistMode; model?: string; endpointId?: string }
-  | { type: 'stage_started'; stage: string; label?: string }
+  | { type: 'stage_started'; stage: string; label?: string; task?: string; model?: string }
   | { type: 'reasoning_delta'; stage: string; delta: string }
   | { type: 'text_delta'; stage: string; delta: string }
   | { type: 'tool'; stage: string; name: string; detail?: string }
   | { type: 'stage_completed'; stage: string; output?: string; reasoning?: string }
+  | { type: 'stage_failed'; stage: string; message: string }
   | { type: 'questionnaire'; questions: unknown[] }
   | { type: 'evaluation_started' }
   | { type: 'evaluation_completed'; evaluation: WritingEvaluationRecord }
@@ -93,7 +96,7 @@ export function reduceAssistStream(
       const stage = ensureStage(state, event.stage, event.label)
       return {
         ...state,
-        stages: { ...state.stages, [event.stage]: { ...stage, label: event.label ?? stage.label, status: 'running', error: undefined } },
+        stages: { ...state.stages, [event.stage]: { ...stage, label: event.label ?? stage.label, task: event.task ?? stage.task, model: event.model ?? stage.model, status: 'running', error: undefined } },
         stageOrder: state.stageOrder.includes(event.stage) ? state.stageOrder : [...state.stageOrder, event.stage],
       }
     }
@@ -115,6 +118,19 @@ export function reduceAssistStream(
         ...state,
         stages: { ...state.stages, [event.stage]: { ...stage, status: 'completed', output: event.output ?? stage.output, reasoning: event.reasoning ?? stage.reasoning } },
         stageOrder: state.stageOrder.includes(event.stage) ? state.stageOrder : [...state.stageOrder, event.stage],
+      }
+    }
+    case 'stage_failed': {
+      const stage = ensureStage(state, event.stage)
+      return {
+        ...state,
+        stages: {
+          ...state.stages,
+          [event.stage]: { ...stage, status: 'failed', error: event.message },
+        },
+        stageOrder: state.stageOrder.includes(event.stage)
+          ? state.stageOrder
+          : [...state.stageOrder, event.stage],
       }
     }
     case 'questionnaire':
