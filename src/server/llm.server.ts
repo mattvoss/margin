@@ -38,6 +38,7 @@ export interface LLMClientOptions {
   isThinking?: boolean;
   customOpeningTags?: string[];
   customClosingTags?: string[];
+  providerName?: string;
 }
 
 export interface PayloadOptions {
@@ -187,6 +188,7 @@ export class LLMClient {
   readonly isThinking: boolean;
   readonly customOpeningTags: string[];
   readonly customClosingTags: string[];
+  readonly providerName: string;
   lastUsage: TokenUsage | null = null;
   /** Reasoning text captured during the last call (streaming or blocking). */
   lastThinking: string | null = null;
@@ -208,6 +210,7 @@ export class LLMClient {
     this.isThinking = opts.isThinking ?? envIsThinking();
     this.customOpeningTags = opts.customOpeningTags ?? [];
     this.customClosingTags = opts.customClosingTags ?? [];
+    this.providerName = opts.providerName?.trim() || 'margin';
     this.lastModelUsed = this.model;
   }
 
@@ -262,7 +265,7 @@ export class LLMClient {
       // Local OpenAI-compatible servers usually accept any key; the provider
       // requires one to be present for its headers.
       apiKey: this.apiKey || 'lm-studio',
-      name: 'margin',
+      name: this.providerName,
       fetch: createRequestBodyFetch(extra),
     });
     return provider.chat(this.model);
@@ -715,6 +718,7 @@ export interface EndpointEntry {
   model?: string;
   is_thinking?: boolean;
   custom_thinking_tags?: Array<{ open: string; close: string }>;
+  provider_name?: string;
 }
 
 export interface LlmSettingsLike {
@@ -751,6 +755,7 @@ export function loadLlmConfig(
       customClosingTags: tags
         .filter((t) => typeof t?.close === 'string')
         .map((t) => t.close),
+      providerName: ep.provider_name,
     });
   }
   return new LLMClient();

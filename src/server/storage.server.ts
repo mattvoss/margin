@@ -339,6 +339,7 @@ export function defaultSettings(): Settings {
     character_tracking: true,
     write_evaluation_enabled: true,
     write_pattern_rewrite_enabled: false,
+    english_style_checker_enabled: false,
     history_turns: 5,
     post_processing: createDefaultPostProcessing(),
     image_endpoints: {},

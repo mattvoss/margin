@@ -21,6 +21,8 @@ import { createSearchMemoryTool, type MemoryToolContext } from './memory-tool.se
 export interface AssistAgentEndpoint {
   model: string
   baseUrl: string
+  /** Provider namespace used by AI SDK providerOptions (for example llama-cpp). */
+  providerName?: string
   apiKey?: string
   /**
    * Extra top-level fields merged into every chat-completions request body.
@@ -37,6 +39,7 @@ export interface AssistAgentTelemetry {
   tokensCached: number | null
   pending: Promise<void> | null
   onReasoningDelta?: (delta: string) => void
+  tokenLogprobs?: number[]
 }
 
 function memoryTools(memory: MemoryToolContext | undefined) {
@@ -111,6 +114,18 @@ async function captureResponseTelemetry(
                 ? deltaRecord['reasoning']
                 : ''
           if (reasoning) telemetry.onReasoningDelta?.(reasoning)
+          const logprobs = choice && typeof choice === 'object' ? (choice as Record<string, unknown>)['logprobs'] : undefined
+          const content = logprobs && typeof logprobs === 'object' ? (logprobs as Record<string, unknown>)['content'] : undefined
+          if (Array.isArray(content)) {
+            for (const token of content) {
+              if (!token || typeof token !== 'object') continue
+              const value = (token as Record<string, unknown>)['logprob']
+              if (typeof value === 'number' && Number.isFinite(value) && value <= 0) {
+                telemetry.tokenLogprobs ??= []
+                if (telemetry.tokenLogprobs.length < 100_000) telemetry.tokenLogprobs.push(value)
+              }
+            }
+          }
         }
       }
       const timings = record['timings']
@@ -171,12 +186,16 @@ export function createAssistAgentModel(endpoint: AssistAgentEndpoint) {
     // Local OpenAI-compatible servers commonly do not require a key, while
     // the provider requires one to be present in its request headers.
     apiKey: endpoint.apiKey || 'lm-studio',
-    name: 'margin',
+    name: endpoint.providerName || 'margin',
     ...(endpoint.requestBody || endpoint.telemetry
       ? { fetch: requestBodyFetch(endpoint.requestBody, endpoint.telemetry) }
       : {}),
   })
   return provider.chat(endpoint.model)
+}
+
+export function logprobProviderOptions(providerName = 'margin'): Record<string, unknown> {
+  return { [providerName]: { logprobs: true, top_logprobs: 5 } }
 }
 
 /** Planning subagent: returns the planner JSON for one edit. */

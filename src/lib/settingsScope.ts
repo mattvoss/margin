@@ -57,6 +57,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   character_tracking: true,
   write_evaluation_enabled: true,
   write_pattern_rewrite_enabled: false,
+  english_style_checker_enabled: false,
   linked_workspace_dir: null,
   workspace_profiles: [],
   history_turns: 5,

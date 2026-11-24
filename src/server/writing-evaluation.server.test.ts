@@ -7,6 +7,8 @@ import {
   buildPredictablePatternRewritePrompt,
   runBoundedPatternRewrite,
   calculatePerplexity,
+  attachPerplexity,
+  extractTokenLogprobs,
 } from './writing-evaluation.server'
 
 const validReview = {
@@ -23,6 +25,19 @@ const validReview = {
 }
 
 describe('writing evaluation', () => {
+  it('extracts OpenAI token log probabilities from provider metadata', () => {
+    expect(extractTokenLogprobs({ openai: { logprobs: [{ token: 'A', logprob: -0.5 }, { token: 'B', logprob: -1 }] } })).toEqual([-0.5, -1])
+    expect(extractTokenLogprobs({ 'llama-cpp': { logprobs: { content: [{ token: 'A', logprob: -0.25 }] } } }, 'llama-cpp')).toEqual([-0.25])
+    expect(extractTokenLogprobs({ openai: { logprobs: [{ logprob: 1 }, { logprob: 'bad' }] } })).toBeNull()
+    expect(extractTokenLogprobs({ other: { logprobs: [] } })).toBeNull()
+  })
+
+  it('attaches an available perplexity summary without changing the diagnostic', () => {
+    const diagnostic = evaluatePredictablePatterns('The quiet room waited. The quiet room waited.')
+    const result = attachPerplexity(diagnostic, [Math.log(0.5), Math.log(0.5)])
+    expect(result.spans).toEqual(diagnostic.spans)
+    expect(result.perplexity).toMatchObject({ status: 'available', mean: 2, tokenCount: 2 })
+  })
   it('runs deterministic checks without a model', () => {
     const result = evaluateDraftDeterministically({
       draft: 'Here is the draft:\nA new paragraph.',

@@ -1119,6 +1119,7 @@ export function SimpleAssist() {
         ...(mode === 'write' ? {
           evaluate_prose: settings?.write_evaluation_enabled !== false,
           rewrite_predictable_patterns: settings?.write_pattern_rewrite_enabled === true,
+          english_style_checker_enabled: settings?.english_style_checker_enabled === true,
         } : {}),
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
         ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
@@ -1948,6 +1949,12 @@ export function SimpleAssist() {
                   onCheckedChange={(checked) => void updateSettings({ write_pattern_rewrite_enabled: checked })}
                 >
                   Suggest predictable-pattern revisions
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={settings?.english_style_checker_enabled === true}
+                  onCheckedChange={(checked) => void updateSettings({ english_style_checker_enabled: checked })}
+                >
+                  Run English style checks
                 </DropdownMenuCheckboxItem>
                 <p className="px-2 py-1 text-[10px] leading-snug text-[var(--text-muted)]">
                   Adds advisory checks and optional revision suggestions. This is not AI-authorship detection.

@@ -43,6 +43,7 @@ export interface AppSettings {
   /** Run deterministic checks and an advisory model review after Write mode. */
   write_evaluation_enabled?: boolean
   write_pattern_rewrite_enabled?: boolean
+  english_style_checker_enabled?: boolean
   linked_workspace_dir?: string | null
   workspace_profiles?: { id: string; name: string; path: string }[]
   history_turns?: number

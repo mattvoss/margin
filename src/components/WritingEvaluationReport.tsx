@@ -31,9 +31,10 @@ export function WritingEvaluationReport(props: {
     )
   }
 
-  const { deterministicChecks, modelReview, predictablePattern } = evaluation.result
+  const { deterministicChecks, modelReview, predictablePattern, styleChecks } = evaluation.result
   const warningCount = deterministicChecks.filter((check) => check.status !== 'pass').length
     + (modelReview?.findings.filter((finding) => finding.severity === 'warning').length ?? 0)
+    + (styleChecks?.warnings ?? 0)
   return (
     <details className="my-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[10px] text-[var(--text-secondary)]">
       <summary className="cursor-pointer list-none px-2.5 py-2 font-medium text-[var(--text-heading)]">
@@ -68,6 +69,25 @@ export function WritingEvaluationReport(props: {
                 ))}
               </ul>
             )}
+          </section>
+        )}
+        {styleChecks && (
+          <section aria-label="English style checks">
+            <h4 className="mb-1 font-medium text-[var(--text-heading)]">English style checks</h4>
+            <p className="text-[9px] text-[var(--text-muted)]">{styleChecks.disclaimer}</p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {styleChecks.checks.map((styleCheck) => (
+                <li key={styleCheck.id}>
+                  <span className={styleCheck.status === 'warning' ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-[var(--text-muted)]'}>
+                    {styleCheck.status.replace(/_/g, ' ').toUpperCase()} · {styleCheck.label}
+                  </span>
+                  <div>{styleCheck.detail}</div>
+                  {styleCheck.evidence?.map((evidence, index) => (
+                    <blockquote key={`${styleCheck.id}-${index}`} className="mt-0.5 border-l border-[var(--border)] pl-1.5 text-[var(--text-muted)]">{evidence}</blockquote>
+                  ))}
+                </li>
+              ))}
+            </ul>
           </section>
         )}
         {modelReview && (

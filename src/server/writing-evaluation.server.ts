@@ -25,6 +25,41 @@ export function calculatePerplexity(logprobs: readonly number[]): number | null 
   return Number.isFinite(perplexity) ? Number(perplexity.toFixed(4)) : null
 }
 
+/** Extract OpenAI-compatible token log probabilities from AI SDK metadata. */
+export function extractTokenLogprobs(metadata: unknown, providerName?: string): number[] | null {
+  if (!metadata || typeof metadata !== 'object') return null
+  const root = metadata as Record<string, unknown>
+  const namespaces = [providerName, 'openai'].filter((name, index, all): name is string => Boolean(name) && all.indexOf(name) === index)
+  const payload = namespaces.map((name) => root[name]).find((value) => value && typeof value === 'object')
+  if (!payload || typeof payload !== 'object') return null
+  const record = payload as Record<string, unknown>
+  const values: unknown[] | null = Array.isArray(record.logprobs)
+    ? record.logprobs
+    : record.logprobs && typeof record.logprobs === 'object' && Array.isArray((record.logprobs as Record<string, unknown>).content)
+      ? (record.logprobs as Record<string, unknown>).content as unknown[]
+      : null
+  if (!values) return null
+  const result = values.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const value = (item as Record<string, unknown>).logprob
+    return typeof value === 'number' && Number.isFinite(value) && value <= 0 ? [value] : []
+  }).slice(0, 100_000)
+  return result.length ? result : null
+}
+
+export function attachPerplexity(
+  diagnostic: WritingPredictablePattern,
+  logprobs: readonly number[] | null | undefined,
+): WritingPredictablePattern {
+  const mean = logprobs?.length ? calculatePerplexity(logprobs) : null
+  return {
+    ...diagnostic,
+    perplexity: mean == null
+      ? { status: 'unavailable', detail: 'Token log probabilities were not supplied by the configured endpoint; no perplexity score was inferred.' }
+      : { status: 'available', mean, tokenCount: logprobs!.length, detail: 'Calculated from token log probabilities returned by the configured endpoint.' },
+  }
+}
+
 function normalizedWords(text: string): string[] {
   return text
     .normalize('NFKC')
@@ -287,6 +322,6 @@ function normalizeWritingModelReview(value: unknown): unknown {
             : 'note',
         }
       })
-    : findings
+    : []
   return { ...record, criteria: normalizedCriteriaWithConfidence, findings }
 }

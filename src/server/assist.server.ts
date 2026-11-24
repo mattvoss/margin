@@ -56,6 +56,7 @@ export interface AssistEndpointConfig {
   context_window?: number | string
   is_thinking?: boolean
   custom_thinking_tags?: Array<{ open?: string; close?: string }>
+  provider_name?: string
 }
 
 /**
@@ -107,6 +108,7 @@ export interface SimpleAssistRequest {
   evaluate_prose?: boolean
   /** Explicitly request a bounded predictable-pattern revision candidate. */
   rewrite_predictable_patterns?: boolean
+  english_style_checker_enabled?: boolean
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -140,6 +142,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     clarification_id: str(input.clarification_id),
     evaluate_prose: typeof input.evaluate_prose === 'boolean' ? input.evaluate_prose : undefined,
     rewrite_predictable_patterns: input.rewrite_predictable_patterns === true,
+    english_style_checker_enabled: input.english_style_checker_enabled === true,
   }
 }
 
@@ -151,6 +154,7 @@ export interface SimpleAssistClientConfig {
   isThinking: boolean
   customOpeningTags: string[]
   customClosingTags: string[]
+  providerName: string
 }
 
 export interface ChatMessage {
@@ -422,6 +426,7 @@ export function resolveSimpleAssistClientConfig(settings: AssistSettings): Simpl
         customClosingTags: customTags
           .filter((t) => typeof t?.close === 'string')
           .map((t) => t.close as string),
+        providerName: typeof ep.provider_name === 'string' && ep.provider_name.trim() ? ep.provider_name.trim() : 'margin',
       }
     }
   }
