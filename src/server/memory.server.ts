@@ -1,4 +1,4 @@
-import duckdb from 'duckdb'
+import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { copyFile, rename } from 'node:fs/promises'
@@ -331,48 +331,28 @@ const MEMORY_SCHEMA = `
   );
 `
 
-function callbackError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
-}
-
-function all<T extends Record<string, unknown>>(
-  database: duckdb.Database,
+async function all<T extends Record<string, unknown>>(
+  connection: DuckDBConnection,
   sql: string,
   params: unknown[],
 ): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    database.all(sql, ...params, (error, rows) => {
-      if (error) {
-        reject(callbackError(error))
-        return
-      }
-      resolve(rows as T[])
-    })
-  })
+  const reader = params.length > 0
+    ? await connection.runAndReadAll(sql, params)
+    : await connection.runAndReadAll(sql)
+  return reader.getRowObjects() as unknown as T[]
 }
 
-function run(database: duckdb.Database, sql: string, params: unknown[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    database.run(sql, ...params, error => {
-      if (error) {
-        reject(callbackError(error))
-        return
-      }
-      resolve()
-    })
-  })
+async function run(connection: DuckDBConnection, sql: string, params: unknown[]): Promise<void> {
+  if (params.length > 0) await connection.run(sql, params)
+  else await connection.run(sql)
 }
 
-function close(database: duckdb.Database): Promise<void> {
-  return new Promise((resolve, reject) => {
-    database.close(error => {
-      if (error) {
-        reject(callbackError(error))
-        return
-      }
-      resolve()
-    })
-  })
+async function close(connection: DuckDBConnection, instance: DuckDBInstance): Promise<void> {
+  try {
+    connection.disconnectSync()
+  } finally {
+    instance.closeSync()
+  }
 }
 
 function validateEmbedding(embedding: number[]): void {
@@ -661,34 +641,34 @@ export async function consolidateMemories(store: MemoryStore, workspaceKey?: str
 }
 
 export async function openMemoryStore(databasePath: string): Promise<MemoryStore> {
-  const database = await new Promise<duckdb.Database>((resolve, reject) => {
-    const instance = new duckdb.Database(databasePath, error => {
-      if (error) {
-        reject(callbackError(error))
-        return
-      }
-      resolve(instance)
-    })
-  })
+  const instance = await DuckDBInstance.create(databasePath)
+  const connection = await instance.connect()
 
-  await run(database, MEMORY_SCHEMA, [])
-  for (const statement of [
-    'ALTER TABLE memories ADD COLUMN source_path VARCHAR',
-    'ALTER TABLE memories ADD COLUMN source_start_line INTEGER',
-    'ALTER TABLE memories ADD COLUMN source_end_line INTEGER',
-    'ALTER TABLE memories ADD COLUMN source_start_offset INTEGER',
-    'ALTER TABLE memories ADD COLUMN source_end_offset INTEGER',
-    'ALTER TABLE memories ADD COLUMN source_heading VARCHAR',
-    'ALTER TABLE memories ADD COLUMN source_content_hash VARCHAR',
-  ]) {
-    try { await run(database, statement, []) } catch { /* Existing databases already have this column. */ }
+  try {
+    for (const statement of MEMORY_SCHEMA.split(';').map(value => value.trim()).filter(Boolean)) {
+      await run(connection, statement, [])
+    }
+    for (const statement of [
+      'ALTER TABLE memories ADD COLUMN source_path VARCHAR',
+      'ALTER TABLE memories ADD COLUMN source_start_line INTEGER',
+      'ALTER TABLE memories ADD COLUMN source_end_line INTEGER',
+      'ALTER TABLE memories ADD COLUMN source_start_offset INTEGER',
+      'ALTER TABLE memories ADD COLUMN source_end_offset INTEGER',
+      'ALTER TABLE memories ADD COLUMN source_heading VARCHAR',
+      'ALTER TABLE memories ADD COLUMN source_content_hash VARCHAR',
+    ]) {
+      try { await run(connection, statement, []) } catch { /* Existing databases already have this column. */ }
+    }
+  } catch (error) {
+    await close(connection, instance)
+    throw error
   }
 
   return {
     all: <T extends Record<string, unknown>>(sql: string, ...params: unknown[]) =>
-      all<T>(database, sql, params),
-    run: (sql: string, ...params: unknown[]) => run(database, sql, params),
-    close: () => close(database),
+      all<T>(connection, sql, params),
+    run: (sql: string, ...params: unknown[]) => run(connection, sql, params),
+    close: () => close(connection, instance),
   }
 }
 
