@@ -2,7 +2,7 @@
 # Margin — single-process TanStack Start image (Linux only).
 # UI + /api/* served by Nitro node-server on :3000. Data lives in /data.
 
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -11,7 +11,7 @@ COPY . ./
 RUN npx --yes @tanstack/router-plugin --help >/dev/null 2>&1 || true
 RUN npm run build
 
-FROM node:22-bookworm-slim AS run
+FROM node:24-bookworm-slim AS run
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep \
   && rm -rf /var/lib/apt/lists/*
