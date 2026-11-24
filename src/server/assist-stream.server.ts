@@ -1004,8 +1004,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 let modelReview: WritingModelReview | null = null
                 const contextWindow = getActiveContextWindow(settings as never)
                 const evaluatorMaxTokens = contextWindow
-                  ? Math.min(1400, Math.max(800, Math.floor(contextWindow * 0.3)))
-                  : 1400
+                  ? Math.min(1800, Math.max(1000, Math.floor(contextWindow * 0.25)))
+                  : 1800
                 const evaluationInputChars = contextWindow
                   ? Math.min(48_000, Math.max(2_800, (contextWindow - evaluatorMaxTokens - 600) * 4))
                   : 48_000

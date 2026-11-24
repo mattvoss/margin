@@ -71,6 +71,8 @@ describe('writing evaluation', () => {
 
   it('parses valid JSON and rejects missing, duplicate, or out-of-range criteria', () => {
     expect(parseWritingModelReview(JSON.stringify(validReview))).toEqual(validReview)
+    const wrapped = `Evaluation result:\n\n\`\`\`json\n${JSON.stringify(validReview)}\n\`\`\`\nHope this helps.`
+    expect(parseWritingModelReview(wrapped)).toEqual(validReview)
     expect(() => parseWritingModelReview(JSON.stringify({ ...validReview, criteria: validReview.criteria.slice(1) }))).toThrow()
     expect(() => parseWritingModelReview(JSON.stringify({
       ...validReview,
