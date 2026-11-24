@@ -2860,7 +2860,7 @@ export function SimpleAssist() {
                         <>
                           <AssistMarkdown streaming={!assistRun.complete} className="assist-markdown">{streamingChatText || assistRun.finalOutput}</AssistMarkdown>
                           <MessageFooter className="opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                            {mode !== 'write' && <Tooltip>
+                            <Tooltip>
                               <TooltipTrigger render={
                                 <Button
                                   variant="ghost"
@@ -2868,7 +2868,7 @@ export function SimpleAssist() {
                                   onClick={() => {
                                     const activeEditor = useEditorStore.getState().editor
                                     if (activeEditor && !activeEditor.isDestroyed) {
-                                      activeEditor.chain().focus().insertContent(streamingChatText).run()
+                                      activeEditor.chain().focus().insertContent(streamingChatText || assistRun.finalOutput).run()
                                     }
                                   }}
                                   aria-label="Insert response"
@@ -2877,7 +2877,7 @@ export function SimpleAssist() {
                                 </Button>
                               } />
                               <TooltipContent>Insert at cursor</TooltipContent>
-                            </Tooltip>}
+                            </Tooltip>
                             <Tooltip>
                               <TooltipTrigger render={
                                 <Button
