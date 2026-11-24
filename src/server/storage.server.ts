@@ -338,7 +338,7 @@ export function defaultSettings(): Settings {
     planner_include_outline: false,
     character_tracking: true,
     write_evaluation_enabled: true,
-    write_pattern_rewrite_enabled: false,
+    write_pattern_rewrite_enabled: true,
     english_style_checker_enabled: false,
     history_turns: 5,
     post_processing: createDefaultPostProcessing(),

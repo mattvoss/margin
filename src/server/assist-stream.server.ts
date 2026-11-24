@@ -79,6 +79,7 @@ import {
   evaluateDraftDeterministically,
   evaluatePredictablePatterns,
   buildPredictablePatternRewritePrompt,
+  buildAutomaticProseRevisionPrompt,
   runBoundedPatternRewrite,
   parseWritingModelReview,
   attachPerplexity,
@@ -956,17 +957,21 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   payload.selected_text,
                   payload.cursor_paragraph_text,
                 )
-                const deterministicChecks = evaluateDraftDeterministically({
+                let deterministicChecks = evaluateDraftDeterministically({
                   draft: finalOutput,
                   paragraphBefore: anchor.paragraphBefore,
                   paragraphAfter: anchor.paragraphAfter,
                 })
                 let predictablePattern = attachPerplexity(evaluatePredictablePatterns(finalOutput), proseLogprobs)
-                const styleChecks = payload.english_style_checker_enabled
+                let styleChecks = payload.english_style_checker_enabled
                   ? checkEnglishStyle({ draft: finalOutput })
                   : null
                 const originalDraft = finalOutput
-                if (payload.rewrite_predictable_patterns && predictablePattern.spans.length) {
+                // Prose evaluation is an automatic post-write pass. Apply the
+                // bounded predictable-pattern rewrite whenever it finds spans;
+                // callers should not need a second opt-in toggle after asking
+                // for prose evaluation.
+                if (predictablePattern.spans.length) {
                   const rewriteResult = await runBoundedPatternRewrite({
                     draft: finalOutput,
                     maxIterations: 3,
@@ -1024,6 +1029,47 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   const evaluationSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000)])
                   const evaluation = await evaluator.generate({ prompt, abortSignal: evaluationSignal })
                   modelReview = parseWritingModelReview(evaluation.text)
+                }
+                const actionableFindings = [
+                  ...deterministicChecks.filter(check => check.status !== 'pass'),
+                  ...(modelReview?.findings ?? []),
+                  ...(predictablePattern?.spans ?? []),
+                  ...(styleChecks?.checks ?? []).filter(check => check.status === 'warning'),
+                ]
+                if (actionableFindings.length) {
+                  const rewriter = createWriteEvaluationAgent({
+                    endpoint: {
+                      model: client.model,
+                      baseUrl: client.baseUrl,
+                      apiKey: client.apiKey,
+                      requestBody: { chat_template_kwargs: { enable_thinking: false } },
+                    },
+                    instructions: 'Return only the complete revised passage. Apply every supported editorial finding while preserving facts, voice, and meaning.',
+                    maxOutputTokens: 1800,
+                  })
+                  const revision = await rewriter.generate({
+                    prompt: buildAutomaticProseRevisionPrompt({
+                      draft: finalOutput,
+                      instruction: requestMessage,
+                      modelReview,
+                      deterministicChecks,
+                      predictablePattern,
+                      styleChecks,
+                    }),
+                    abortSignal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
+                  })
+                  const revised = revision.text.trim()
+                  if (revised && revised !== finalOutput) {
+                    finalOutput = revised
+                    deterministicChecks = evaluateDraftDeterministically({
+                      draft: finalOutput,
+                      paragraphBefore: anchor.paragraphBefore,
+                      paragraphAfter: anchor.paragraphAfter,
+                    })
+                    predictablePattern = attachPerplexity(evaluatePredictablePatterns(finalOutput), proseLogprobs)
+                    styleChecks = payload.english_style_checker_enabled ? checkEnglishStyle({ draft: finalOutput }) : null
+                    send({ status: 'write_rewrite_candidate', output: finalOutput, iterations: 1 })
+                  }
                 }
                 const result: WritingEvaluationResult = {
                   version: 1,

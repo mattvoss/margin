@@ -106,7 +106,7 @@ export interface SimpleAssistRequest {
   clarification_id?: string | null
   /** Whether to run the advisory prose evaluator for the dedicated writing flow. */
   evaluate_prose?: boolean
-  /** Explicitly request a bounded predictable-pattern revision candidate. */
+  /** Legacy compatibility flag; predictable-pattern revisions are automatic. */
   rewrite_predictable_patterns?: boolean
   english_style_checker_enabled?: boolean
 }

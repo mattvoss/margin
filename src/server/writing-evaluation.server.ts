@@ -4,6 +4,7 @@ import {
   type WritingDeterministicCheck,
   type WritingModelReview,
   type WritingPredictablePattern,
+  type EnglishStyleCheckResult,
 } from '../lib/writingEvaluation'
 
 const MAX_DRAFT_CHARS = 100_000
@@ -196,6 +197,31 @@ export function buildPredictablePatternRewritePrompt(input: {
     'This is an optional editorial revision, not an attempt to evade authorship detection. Do not add facts, remove constraints, or rewrite unflagged text.',
     'Return the complete revised passage only. Preserve the original passage if a flagged sentence is already intentional or natural.',
     `<flagged_patterns>\n${input.spans.map((span) => `${span.signal}: ${span.sentence} — ${span.detail}`).join('\n')}\n</flagged_patterns>`,
+    `<original_draft>\n${truncate(input.draft, 40_000)}\n</original_draft>`,
+  ].join('\n\n')
+}
+
+export function buildAutomaticProseRevisionPrompt(input: {
+  draft: string
+  instruction: string
+  modelReview: WritingModelReview | null
+  deterministicChecks: readonly WritingDeterministicCheck[]
+  predictablePattern: WritingPredictablePattern | null
+  styleChecks: EnglishStyleCheckResult | null
+}): string {
+  const actionable = [
+    ...input.deterministicChecks.filter(check => check.status !== 'pass').map(check => `${check.label}: ${check.detail}${check.evidence ? ` Evidence: ${check.evidence}` : ''}`),
+    ...(input.modelReview?.findings ?? []).map(finding => `${finding.severity} ${finding.criterion}: ${finding.message}${finding.suggestion ? ` Suggestion: ${finding.suggestion}` : ''}${finding.evidence ? ` Evidence: ${finding.evidence}` : ''}`),
+    ...(input.predictablePattern?.spans ?? []).map(span => `${span.signal}: ${span.sentence} — ${span.detail}`),
+    ...(input.styleChecks?.checks ?? []).filter(check => check.status === 'warning').map(check => `${check.label}: ${check.detail}${check.evidence?.length ? ` Evidence: ${check.evidence.join(' | ')}` : ''}`),
+  ]
+  return [
+    'Revise the complete manuscript passage using every applicable editorial finding below.',
+    'Apply the findings automatically, but preserve the user request, story facts, point of view, tense, voice, intentional fragments, and all unaffected meaning.',
+    'Do not add facts, remove necessary details, mention the evaluation, or claim anything about authorship detection.',
+    'Return the complete revised passage only. If a finding is unsupported or would damage the prose, leave that portion unchanged.',
+    `<user_request>\n${truncate(input.instruction, 4_000)}\n</user_request>`,
+    `<findings>\n${actionable.length ? actionable.join('\n') : 'No actionable findings; return the draft unchanged.'}\n</findings>`,
     `<original_draft>\n${truncate(input.draft, 40_000)}\n</original_draft>`,
   ].join('\n\n')
 }

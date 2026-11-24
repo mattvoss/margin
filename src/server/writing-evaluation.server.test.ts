@@ -5,6 +5,7 @@ import {
   parseWritingModelReview,
   evaluatePredictablePatterns,
   buildPredictablePatternRewritePrompt,
+  buildAutomaticProseRevisionPrompt,
   runBoundedPatternRewrite,
   calculatePerplexity,
   attachPerplexity,
@@ -167,6 +168,20 @@ describe('writing evaluation', () => {
     })
     expect(prompt).toContain('not an attempt to evade authorship detection')
     expect(prompt).toContain('<flagged_patterns>')
+  })
+
+  it('includes actionable findings from every evaluation in the automatic revision prompt', () => {
+    const prompt = buildAutomaticProseRevisionPrompt({
+      draft: 'The draft.',
+      instruction: 'Write a tense scene.',
+      modelReview: { ...validReview, findings: [{ severity: 'warning', criterion: 'prose_clarity', message: 'Clarify the subject.', suggestion: 'Name the actor.' }] },
+      deterministicChecks: [{ id: 'continuity', label: 'Continuity', status: 'warning', detail: 'Check the transition.' }],
+      predictablePattern: null,
+      styleChecks: { version: 1, language: 'en', disclaimer: 'Advisory.', warnings: 1, checks: [{ id: 'word_repetition', label: 'Repeated words', status: 'warning', detail: 'A word repeats.' }] },
+    })
+    expect(prompt).toContain('Clarify the subject.')
+    expect(prompt).toContain('Check the transition.')
+    expect(prompt).toContain('A word repeats.')
   })
 
   it('calculates perplexity from token log probabilities without treating it as authorship evidence', () => {
