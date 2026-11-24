@@ -24,7 +24,7 @@ import { confirmDialog } from '../stores/dialogStore'
 import { useCharactersStore } from '../stores/charactersStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { MarkdownMentionEditor } from './Editor/MarkdownMentionEditor'
+import { NovelEditor } from './Editor/NovelEditor'
 import {
   chapterDisplayName,
   resolveRescanTarget,
@@ -575,8 +575,10 @@ export function CharacterDialog() {
             <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
               Current state description
             </span>
-            <MarkdownMentionEditor
+            <NovelEditor
               label="Current state description"
+              standalone
+              showInlinePopup={false}
               value={currentStateDraft.description}
               onChange={(description) => {
                 setCurrentStateDraft((current) => ({ ...current, description }))

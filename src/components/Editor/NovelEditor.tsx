@@ -35,6 +35,34 @@ interface SuggestionState {
   range: { from: number; to: number }
 }
 
+const STANDALONE_FORMAT_BUTTONS = [
+  {
+    label: 'B',
+    title: 'Bold',
+    command: (editor: Editor) => editor.chain().focus().toggleBold().run(),
+  },
+  {
+    label: 'I',
+    title: 'Italic',
+    command: (editor: Editor) => editor.chain().focus().toggleItalic().run(),
+  },
+  {
+    label: 'S',
+    title: 'Strikethrough',
+    command: (editor: Editor) => editor.chain().focus().toggleStrike().run(),
+  },
+  {
+    label: '• List',
+    title: 'Bullet list',
+    command: (editor: Editor) => editor.chain().focus().toggleBulletList().run(),
+  },
+  {
+    label: '1. List',
+    title: 'Numbered list',
+    command: (editor: Editor) => editor.chain().focus().toggleOrderedList().run(),
+  },
+]
+
 // Upload pasted/dropped image files, inserting each stored asset in turn.
 async function handleImageFiles(editor: Editor, files: File[]): Promise<void> {
   for (const file of files) {
@@ -78,8 +106,21 @@ async function handleBareImageUrl(
   insertStoredImageAt(editor, anchor, path)
 }
 
-export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: boolean }) {
-  const content = useEditorStore(state => state.content)
+export function NovelEditor({
+  showInlinePopup = true,
+  standalone = false,
+  value,
+  onChange,
+  label = 'Document editor',
+}: {
+  showInlinePopup?: boolean
+  standalone?: boolean
+  value?: string
+  onChange?: (value: string) => void
+  label?: string
+}) {
+  const storeContent = useEditorStore(state => state.content)
+  const content = standalone ? value ?? '' : storeContent
   const setContent = useEditorStore(state => state.setContent)
   const setEditor = useEditorStore(state => state.setEditor)
   const setSelectedText = useEditorStore(state => state.setSelectedText)
@@ -153,10 +194,10 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
           },
         },
       }),
-      MarginImage,
+      ...(!standalone ? [MarginImage] : []),
       Markdown.configure({ html: false, tightLists: true }),
-      AiDiffHighlightExtension,
-      FileMentionExtension,
+      ...(!standalone ? [AiDiffHighlightExtension] : []),
+      FileMentionExtension.configure({ excludeCurrentFile: !standalone }),
     ],
     // Feed raw markdown — the Markdown extension parses it natively
     content: content || '',
@@ -165,7 +206,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
       if (isProgrammaticUpdateRef.current) return
 
       // Auto-accept AI edits if the user types
-      if (aiPendingEdit) {
+      if (!standalone && aiPendingEdit) {
         setAiPendingEdit(null)
         isProgrammaticUpdateRef.current = true
         editor.commands.clearAiHighlight()
@@ -173,37 +214,44 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
       }
       const markdownStorage = editor.storage as { markdown?: { getMarkdown: () => string } }
       const newMarkdown = markdownStorage.markdown?.getMarkdown()
-      if (newMarkdown) {
+      if (newMarkdown != null) {
         lastContentRef.current = newMarkdown
-        setContent(newMarkdown)
+        if (standalone) onChange?.(newMarkdown)
+        else setContent(newMarkdown)
       }
-      refreshSlash(editor)
+      if (!standalone) refreshSlash(editor)
       refreshFileMention(editor)
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to, empty } = editor.state.selection
-      setAnchorPosition(from)
-      if (empty) {
-        setSelectedText('')
-        setSelectionRange(null)
-      } else {
-        const text = editor.state.doc.textBetween(from, to, ' ')
-        setSelectedText(text)
-        setSelectionRange({ from, to })
+      if (!standalone) {
+        setAnchorPosition(from)
+        if (empty) {
+          setSelectedText('')
+          setSelectionRange(null)
+        } else {
+          const text = editor.state.doc.textBetween(from, to, ' ')
+          setSelectedText(text)
+          setSelectionRange({ from, to })
+        }
       }
-      refreshSlash(editor)
+      if (!standalone) refreshSlash(editor)
       refreshFileMention(editor)
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-slate relative max-w-none focus:outline-none min-h-[500px] px-8 py-6',
+        ...(standalone ? { 'aria-label': label } : {}),
+        class: standalone
+          ? 'prose prose-sm relative max-w-none focus:outline-none min-h-[84px] max-h-[220px] overflow-y-auto px-2.5 py-2 text-[12px] leading-relaxed'
+          : 'prose prose-slate relative max-w-none focus:outline-none min-h-[500px] px-8 py-6',
       },
       handleKeyDown: (_view, event) => {
         if (mentionRef.current?.onKeyDown(event)) return true
-        if (slashRef.current?.onKeyDown(event)) return true
+        if (!standalone && slashRef.current?.onKeyDown(event)) return true
         return false
       },
       handlePaste: (_view, event) => {
+        if (standalone) return false
         const editor = editorRef.current
         if (!editor) return false
         const files = Array.from(event.clipboardData?.files ?? []).filter(isImageFile)
@@ -223,6 +271,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
         return false
       },
       handleDrop: (_view, event) => {
+        if (standalone) return false
         const editor = editorRef.current
         if (!editor) return false
         const files = Array.from(event.dataTransfer?.files ?? []).filter(isImageFile)
@@ -236,10 +285,10 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
 
   useEffect(() => {
     if (editor) {
-      setEditor(editor)
+      if (!standalone) setEditor(editor)
       editorRef.current = editor
     }
-  }, [editor, setEditor])
+  }, [editor, setEditor, standalone])
 
   // Chips are view-only decorations computed from the store. When the
   // workspace file list arrives (or changes), an empty transaction forces a
@@ -286,11 +335,11 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
         // The rebuild resets every plugin's state — a pending harness diff
         // highlight set just before this is wiped with it. Doc is unchanged,
         // so the same block positions re-apply cleanly.
-        reapplyHarnessHighlight(editor)
+        if (!standalone) reapplyHarnessHighlight(editor)
         isProgrammaticUpdateRef.current = false
       }
     }
-  }, [content, editor])
+  }, [content, editor, standalone])
 
   // Both menus anchor to the live caret; the shared hook handles flip, shift,
   // height constraints, and scroll/resize tracking.
@@ -299,7 +348,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
 
   const selectFileMention = (file: ReferenceFile) => {
     if (!editor || !fileMention) return
-    const text = `${mentionTextFor(file, openedFiles, currentFilePath)} `
+    const text = `${mentionTextFor(file, openedFiles, standalone ? null : currentFilePath)} `
     const { from, to } = fileMention.range
     setFileMention(null)
     editor.view
@@ -315,11 +364,35 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
   }
 
   return (
-    <div className="bg-[var(--bg)] relative">
+    <div className={standalone
+      ? 'relative overflow-hidden rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-input)] focus-within:border-[var(--text-secondary)]'
+      : 'bg-[var(--bg)] relative'}>
+      {standalone && (
+        <div className="flex items-center gap-0.5 border-b border-[var(--border-subtle)] px-1.5 py-1">
+          {STANDALONE_FORMAT_BUTTONS.map((button) => (
+            <button
+              key={button.title}
+              type="button"
+              title={button.title}
+              aria-label={button.title}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => editor && button.command(editor)}
+              className="rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-heading)]"
+            >
+              {button.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {standalone && editor && !(value ?? '').trim() && (
+        <span className="pointer-events-none absolute left-2.5 top-9 text-[12px] text-[var(--text-muted)]">
+          Describe the current situation. Type @ to reference a workspace file.
+        </span>
+      )}
       <EditorContent editor={editor} />
-      {showInlinePopup && <WritingBubbleMenu />}
-      <ImageGenerateDialogHost />
-      {editor && slash && createPortal(
+      {showInlinePopup && !standalone && <WritingBubbleMenu />}
+      {!standalone && <ImageGenerateDialogHost />}
+      {editor && !standalone && slash && createPortal(
         <div
           ref={slashElRef}
           className="fixed left-0 top-0 z-[10001]"
@@ -340,7 +413,7 @@ export function NovelEditor({ showInlinePopup = true }: { showInlinePopup?: bool
             query={fileMention.query}
             range={fileMention.range}
             files={openedFiles}
-            currentPath={currentFilePath}
+            currentPath={standalone ? null : currentFilePath}
             onSelect={selectFileMention}
             onCancel={cancelFileMention}
           />
