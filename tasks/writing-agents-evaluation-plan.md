@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The Write flow now includes the optional predictable-pattern diagnostic, explicit non-authorship-detection framing, and user-controlled bounded rewrite candidate loop. The diagnostic is offline and conservative by default; true perplexity is calculated only when compatible token log-probabilities are supplied, otherwise it is reported as unavailable. Focused validation passes; the full suite is currently blocked by an existing `api.memory.index` test import mismatch, and repository-wide lint reports unrelated baseline errors.
+The Write flow now includes the optional predictable-pattern diagnostic, explicit non-authorship-detection framing, and user-controlled bounded rewrite candidate loop. The diagnostic is offline and conservative by default; true perplexity is calculated only when compatible token log-probabilities are supplied, otherwise it is reported as unavailable. An English-specific Style Checker is planned but not yet implemented; it will remain opt-in and separate from the general evaluator and post-processing passes. Focused validation passes; the full suite is currently blocked by an existing `api.memory.index` test import mismatch, and repository-wide lint reports unrelated baseline errors.
 
 ## Goal
 
@@ -216,6 +216,63 @@ Add a separate revision action that can consume flagged spans from the predictab
 
 **Checkpoint:** Existing features remain intact, documentation matches behavior, and all automated verification passes.
 
+### Phase 6 — English Style Checker
+
+Add a pure, deterministic English-language checker at `src/server/english-style-checker.server.ts`. It must not call a model, read files, mutate the workspace, rewrite prose, block output, or calculate an aggregate quality score.
+
+#### Contract and bounds
+
+- [x] Add versioned `styleChecks` schemas and types to `src/lib/writingEvaluation.ts`.
+- [x] Use `language: 'en'`, bounded check IDs, and `pass | warning | not_applicable` statuses.
+- [x] Bound results to 20 checks, 12 evidence snippets per check, 2,000 sentences, and 100,000 characters.
+- [x] Include label, detail, optional evidence, count, and threshold; do not expose a combined style score.
+- [x] Add a disclaimer that these are configurable English editing signals, not objective literary-quality or authorship judgments.
+
+#### Pure checks
+
+- [x] Sentence length and unusually long sentence signals.
+- [x] Sentence-length variance, distinct from the broader predictable-pattern diagnostic.
+- [x] Paragraph word-count signals.
+- [x] Repeated non-stopwords in a bounded local window, with configurable ignored words.
+- [x] Repeated sentence starters with case/punctuation normalization.
+- [x] Conservative dialogue detection for straight and curly English quotation marks.
+- [x] Dialogue ratio reporting without a default target.
+- [x] Dialogue-tag counts; do not treat `said` or `asked` as bad by default.
+- [x] Possible passive-voice heuristic, explicitly labeled as uncertain.
+- [x] `-ly` adverb count/density, informational unless configured.
+- [x] Mixed English quotation-style detection.
+- [x] Conservative fragment-density signal, accounting for intentional prose rhythm.
+- [ ] Keep headings, contractions, dialogue, names, refrains, and configured exclusions from producing avoidable false positives.
+
+#### Configuration and integration
+
+- [x] Add server-synced `english_style_checker_enabled`, defaulting to `false`.
+- [ ] Keep initial thresholds in typed options/rules rather than adding many global settings.
+- [x] Run checks after deterministic prose checks and before the structured model review completes.
+- [x] Add `styleChecks` to the existing `write_evaluation_completed` payload and persisted `writing_evaluation.result`.
+- [ ] Preserve the draft and complete evaluation safely if the checker fails.
+- [ ] Do not parse arbitrary prose in `styles/STYLES.md` as executable rules in the first version.
+- [ ] Add a later validated explicit style-rule block for thresholds, dialogue ratio, ignored words, quote style, and opt-in warnings.
+
+#### UI and documentation
+
+- [x] Add an expandable “English style checks” section to `WritingEvaluationReport`.
+- [x] Display warning counts, status, thresholds, concise evidence, and limitations.
+- [ ] Avoid “bad writing,” “must fix,” “AI writing,” and aggregate quality language.
+- [ ] Add the opt-in setting to the Assist mode/model dropdown.
+- [ ] Document the checker separately from model review, predictable-pattern diagnostics, and post-processing.
+
+#### Tests and validation
+
+- [x] Add `src/server/english-style-checker.server.test.ts` for sentence, paragraph, repetition, dialogue, quote, passive-voice, adverb, fragment, configuration, and bounds behavior.
+- [ ] Add false-positive tests for contractions, dialogue, headings, intentional repetition, names, and fragments.
+- [ ] Add schema tests for invalid IDs, excessive evidence, invalid language, and aggregate-score rejection.
+- [ ] Add UI tests for the section, disclaimer, evidence, and no aggregate score.
+- [ ] Add SSE, route, persistence, and settings tests for enabled, disabled, and failure-safe behavior.
+- [ ] Run focused style/evaluation tests, existing Assist/SSE regressions, targeted lint, and build.
+
+**Checkpoint:** English style signals are opt-in, deterministic, bounded, evidence-based, and unable to alter or block manuscript prose.
+
 ## Acceptance Criteria
 
 - Writing stages have explicit, testable contracts and no longer depend on one opaque inline stage loop.
@@ -226,6 +283,7 @@ Add a separate revision action that can consume flagged spans from the predictab
 - No unbounded agent, evaluator, or revision loop is introduced.
 - The user retains control over whether generated or revised prose is applied.
 - Existing clarification, editing, chat, planner/drafter, post-processing, streaming, and workspace isolation behavior passes regression tests.
+- English Style Checker results are opt-in, deterministic, bounded, configurable, and clearly distinguished from AI-authorship detection and literary-quality judgments.
 - Normal CI tests require no live model endpoint or credentials.
 
 ## Risks and Mitigations
@@ -240,6 +298,8 @@ Add a separate revision action that can consume flagged spans from the predictab
 | Evaluation events break older clients or streams | UI or generation regression | Keep SSE handling additive and tolerate unknown/missing events. |
 | Refactor changes scene planning or endpoint edit behavior unintentionally | Regressions outside the requested writing flow | Keep those flows separate and add regression tests before sharing abstractions. |
 | Evaluation is confused with post-processing | User cannot tell whether text changed | Keep event types and UI distinct; evaluate the exact candidate presented for review and document ordering. |
+| English style heuristics create false positives | Users distrust or disable the checker | Use conservative signals, distinguish warnings from failures, support exclusions and explicit thresholds, and test dialogue, names, contractions, headings, refrains, and fragments. |
+| English rules are applied to non-English or multilingual prose | Incorrect or noisy feedback | Keep the checker explicitly opt-in with `language: 'en'`; do not enable it from general evaluation alone. |
 
 ## Open Decisions
 
@@ -252,4 +312,6 @@ Add a separate revision action that can consume flagged spans from the predictab
 - [x] Retain the existing six writing stages as typed specialists; consider consolidation only after output evaluation.
 - [x] Store the bounded evaluation report alongside the normal AI session log.
 - [x] Store the bounded predictable-pattern diagnostic in the evaluation result without any AI-probability field.
+- [ ] Add the opt-in English Style Checker as a separate deterministic report with no aggregate style score.
+- [ ] Define and validate explicit project style rules before reading any workspace style file as configuration.
 - [x] Review the HackerNoon article and record any additional relevant design constraints.
