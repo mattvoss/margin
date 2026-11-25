@@ -121,6 +121,9 @@ interface SimpleLogEntry {
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number
+  logprobs_requested?: boolean
+  logprobs_received?: boolean
+  logprob_token_count?: number
   tool_calls?: Array<{ tool: string; detail: string }>
   writing_evaluation?: unknown
 }
@@ -408,6 +411,7 @@ export function SimpleAssist() {
   const [assistRun, dispatchAssistRun] = useReducer(reduceAssistStream, initialAssistRunState)
   const [runningPass, setRunningPass] = useState<{ logId: string; passId: string } | null>(null)
   const [instructionText, setInstructionText] = useState('')
+  const [showLogprobs, setShowLogprobs] = useState(false)
   const [historyLogs, setHistoryLogs] = useState<SimpleLogEntry[]>([])
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -920,10 +924,15 @@ export function SimpleAssist() {
     return 0
   }, [filteredLogs])
 
+  const currentContextEstimate = useMemo(() => {
+    if (contextUsedTokens > 0 || !instructionText.trim()) return contextUsedTokens
+    return Math.ceil((content.length + instructionText.length) / 4)
+  }, [content.length, contextUsedTokens, instructionText])
+
   const percentUsed = useMemo(() => {
     if (!activeContextWindow) return 0
-    return (contextUsedTokens / activeContextWindow) * 100
-  }, [contextUsedTokens, activeContextWindow])
+    return (currentContextEstimate / activeContextWindow) * 100
+  }, [currentContextEstimate, activeContextWindow])
 
   const percentLeft = useMemo(() => {
     return Math.max(0, 100 - percentUsed)
@@ -1155,6 +1164,7 @@ export function SimpleAssist() {
           rewrite_predictable_patterns: true,
           english_style_checker_enabled: settings?.english_style_checker_enabled === true,
         } : {}),
+        show_logprobs: showLogprobs,
         ...(Object.keys(clarificationAnswers).length ? { clarification_answers: clarificationAnswers } : {}),
         ...(retry?.clarificationId ? { clarification_id: retry.clarificationId } : {}),
       }
@@ -2038,14 +2048,27 @@ export function SimpleAssist() {
                   <div className="flex items-center justify-between gap-3 text-sm">
                     <span className="font-medium">Context</span>
                     <span className="text-muted-foreground">
-                      {contextUsedTokens.toLocaleString()} / {activeContextWindow.toLocaleString()}
+                      {currentContextEstimate.toLocaleString()} / {activeContextWindow.toLocaleString()}
                     </span>
                   </div>
                   <Progress value={percentUsed} aria-label="Context used" />
                   <Context className="text-[var(--text-secondary)] leading-relaxed">
+                    <div className="flex justify-between gap-4"><ContextLabel>{contextUsedTokens > 0 ? 'Last prompt:' : 'Current estimate:'}</ContextLabel><ContextValue className="text-[var(--text)]">{currentContextEstimate.toLocaleString()}</ContextValue></div>
                     <div className="flex justify-between gap-4"><ContextLabel>Session input:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionInputTokens.toLocaleString()}</ContextValue></div>
                     <div className="flex justify-between gap-4"><ContextLabel>Session output:</ContextLabel><ContextValue className="text-[var(--text)]">{sessionOutputTokens.toLocaleString()}</ContextValue></div>
                     <div className="flex justify-between gap-4"><ContextLabel>{percentUsed.toFixed(1)}% used:</ContextLabel><ContextValue className="text-[var(--text)]">{percentLeft.toFixed(1)}% left</ContextValue></div>
+                    <div className="mt-1 flex items-center justify-between gap-4 border-t border-[var(--border-subtle)] pt-2">
+                      <ContextLabel>Logprobs</ContextLabel>
+                      <label className="flex items-center gap-1.5 text-[10px] text-[var(--text)]">
+                        <input type="checkbox" checked={showLogprobs} onChange={(event) => setShowLogprobs(event.target.checked)} />
+                        Show provider status
+                      </label>
+                    </div>
+                    {showLogprobs && (() => {
+                      const latest = displayLogs[displayLogs.length - 1]
+                      const received = latest?.logprobs_received === true
+                      return <div className="text-[10px] text-[var(--text-muted)]">{latest?.logprobs_requested ? (received ? `Received (${latest.logprob_token_count ?? 0} tokens)` : 'Requested, but none returned') : 'Not requested for the last request'}</div>
+                    })()}
                   </Context>
                 </HoverCardContent>
               </HoverCard>
