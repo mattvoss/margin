@@ -3,6 +3,7 @@ export type ThinkingLevel = 'low' | 'medium' | 'high'
 
 export interface AgentSettings {
   enabled: boolean
+  model_ref?: string
   endpoint_id?: string
   model?: string
   thinking_enabled: boolean
@@ -11,6 +12,7 @@ export interface AgentSettings {
 }
 
 export type AgentSettingsByMode = Record<AgentMode, Record<string, AgentSettings>>
+export const DEFAULT_AGENT_MODEL_REF = 'default'
 
 export interface AgentDefinition {
   id: string
@@ -85,6 +87,7 @@ export function normalizeAgentSettings(input: unknown): AgentSettingsByMode {
         : base.temperature,
       ...(typeof value.endpoint_id === 'string' ? { endpoint_id: value.endpoint_id } : {}),
       ...(typeof value.model === 'string' ? { model: value.model } : {}),
+      ...(typeof value.model_ref === 'string' && value.model_ref.trim() ? { model_ref: value.model_ref } : {}),
     }
   }
   return defaults
@@ -98,4 +101,16 @@ export function agentSettingsFor(
   return normalizeAgentSettings(settings.agents)[mode][id] ?? {
     enabled: false, thinking_enabled: false, thinking_level: 'medium', temperature: 0.7,
   }
+}
+
+export function resolveAgentModel(
+  settings: { agents?: unknown; endpoints?: Record<string, { model?: string }>; harnesses?: Record<string, { model?: string }> },
+  config: AgentSettings,
+  fallbackModel: string,
+): string {
+  const ref = config.model_ref || DEFAULT_AGENT_MODEL_REF
+  if (ref === DEFAULT_AGENT_MODEL_REF) return fallbackModel
+  if (ref.startsWith('endpoint:')) return settings.endpoints?.[ref.slice('endpoint:'.length)]?.model?.trim() || fallbackModel
+  if (ref.startsWith('harness:')) return settings.harnesses?.[ref.slice('harness:'.length)]?.model?.trim() || fallbackModel
+  return config.model?.trim() || fallbackModel
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSettingsFor, defaultAgentSettings, normalizeAgentSettings } from './agents'
+import { agentSettingsFor, defaultAgentSettings, normalizeAgentSettings, resolveAgentModel } from './agents'
 
 describe('agent settings', () => {
   it('provides independent defaults for each mode', () => {
@@ -24,5 +24,12 @@ describe('agent settings', () => {
 
   it('returns a safe disabled configuration for unknown agents', () => {
     expect(agentSettingsFor({}, 'chat', 'missing').enabled).toBe(false)
+  })
+
+  it('resolves default and configured model references at run time', () => {
+    const settings = { endpoints: { local: { model: 'configured-model' } }, harnesses: { pi: { model: 'harness-model' } } }
+    expect(resolveAgentModel(settings, { ...defaultAgentSettings().chat.chat, model_ref: 'default' }, 'active-model')).toBe('active-model')
+    expect(resolveAgentModel(settings, { ...defaultAgentSettings().chat.chat, model_ref: 'endpoint:local' }, 'active-model')).toBe('configured-model')
+    expect(resolveAgentModel(settings, { ...defaultAgentSettings().chat.chat, model_ref: 'harness:pi' }, 'active-model')).toBe('harness-model')
   })
 })

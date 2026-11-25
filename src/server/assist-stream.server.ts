@@ -75,7 +75,7 @@ import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
 import { scheduleCurrentStateReview } from './current-state-review.server'
 import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.server'
-import { agentSettingsFor, type AgentMode } from '../lib/agents'
+import { agentSettingsFor, resolveAgentModel, type AgentMode } from '../lib/agents'
 import {
   buildWritingEvaluationPrompt,
   evaluateDraftDeterministically,
@@ -948,7 +948,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               const stageConfig = agentConfig('write', id)
               const agent = createWriteStageAgent({
                 endpoint: {
-                  model: stageConfig.model?.trim() || client.model,
+                  model: resolveAgentModel(settings, stageConfig, client.model),
                   baseUrl: client.baseUrl,
                   providerName: client.providerName,
                   apiKey: client.apiKey,
@@ -1360,7 +1360,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const agent = createAssistPlannerAgent({
             endpoint: {
               ...agentEndpoint,
-              model: plannerConfig.model?.trim() || client.model,
+              model: resolveAgentModel(settings, plannerConfig, client.model),
               requestBody: {
                 ...cacheRequestBody(plannerCache),
                 chat_template_kwargs: { enable_thinking: plannerConfig.thinking_enabled, thinking_level: plannerConfig.thinking_level },
@@ -1501,7 +1501,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const agent = createAssistEditAgent({
             endpoint: {
               ...agentEndpoint,
-              model: writerConfig.model?.trim() || client.model,
+              model: resolveAgentModel(settings, writerConfig, client.model),
               requestBody: {
                 ...cacheRequestBody(writerCache),
                 chat_template_kwargs: { enable_thinking: writerConfig.thinking_enabled, thinking_level: writerConfig.thinking_level },
@@ -1662,7 +1662,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
            const agent = createAssistChatAgent({
             endpoint: {
               ...agentEndpoint,
-              model: chatConfig.model?.trim() || client.model,
+               model: resolveAgentModel(settings, chatConfig, client.model),
                requestBody: {
                  ...cacheRequestBody(chatCache),
                  chat_template_kwargs: { enable_thinking: chatConfig.thinking_enabled, thinking_level: chatConfig.thinking_level },

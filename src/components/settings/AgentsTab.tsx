@@ -8,6 +8,7 @@ import {
   type AgentMode,
   type AgentSettings,
   type ThinkingLevel,
+  DEFAULT_AGENT_MODEL_REF,
 } from '../../lib/agents'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -75,6 +76,7 @@ export function AgentsSettings({
                         open={!!open[`${item.id}:${definition.id}`]}
                         onOpenChange={(next) => setOpen((previous) => ({ ...previous, [`${item.id}:${definition.id}`]: next }))}
                         onChange={(patch) => updateAgent(item.id, definition.id, patch)}
+                        appSettings={settings}
                       />
                     )
                   })}
@@ -94,6 +96,7 @@ function AgentRow({ definition, settings, open, onOpenChange, onChange }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onChange: (patch: Partial<AgentSettings>) => void
+  appSettings: AppSettings
 }) {
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
@@ -109,7 +112,7 @@ function AgentRow({ definition, settings, open, onOpenChange, onChange }: {
           <Toggle checked={settings.enabled} onChange={(enabled) => onChange({ enabled })} label={`Enable ${definition.label}`} />
         </div>
         <CollapsibleContent>
-          <AgentConfiguration definition={definition} settings={settings} onChange={onChange} />
+          <AgentConfiguration definition={definition} settings={settings} appSettings={appSettings} onChange={onChange} />
         </CollapsibleContent>
       </div>
     </Collapsible>
@@ -119,6 +122,7 @@ function AgentRow({ definition, settings, open, onOpenChange, onChange }: {
 function AgentConfiguration({ definition, settings, onChange }: {
   definition: (typeof AGENT_DEFINITIONS)[number]
   settings: AgentSettings
+  appSettings: AppSettings
   onChange: (patch: Partial<AgentSettings>) => void
 }) {
   const [prompt, setPrompt] = useState('')
@@ -166,6 +170,19 @@ function AgentConfiguration({ definition, settings, onChange }: {
     }
   }
 
+  const modelOptions = [
+    { value: DEFAULT_AGENT_MODEL_REF, label: 'Default model (currently selected)' },
+    ...Object.entries(appSettings.endpoints ?? {}).map(([id, endpoint]) => ({
+      value: `endpoint:${id}`,
+      label: `Endpoint · ${id.replace(/_/g, ' ')} · ${endpoint.model || 'configured model'}`,
+    })),
+    ...Object.entries(appSettings.harnesses ?? {}).map(([id, harness]) => ({
+      value: `harness:${id}`,
+      label: `Harness · ${id.replace(/_/g, ' ')}${harness.model ? ` · ${harness.model}` : ''}`,
+    })),
+  ]
+  const modelRef = settings.model_ref || DEFAULT_AGENT_MODEL_REF
+
   return (
     <div className="border-t border-[var(--border-subtle)]/60 px-4 py-4">
       {definition.promptFile && (
@@ -184,7 +201,7 @@ function AgentConfiguration({ definition, settings, onChange }: {
         </div>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-[12px] text-[var(--text-secondary)]">Model<input value={settings.model ?? ''} onChange={(event) => onChange({ model: event.target.value || undefined })} placeholder="Active endpoint model" className="mt-1 w-full rounded-[7px] border border-[var(--border-subtle)] bg-[var(--bg-input)] px-2 py-1.5 text-[12px] text-[var(--text)]" /></label>
+        <label className="text-[12px] text-[var(--text-secondary)]">Model or harness<select value={modelRef} onChange={(event) => onChange({ model_ref: event.target.value, model: undefined })} className="mt-1 w-full rounded-[7px] border border-[var(--border-subtle)] bg-[var(--bg-input)] px-2 py-1.5 text-[12px] text-[var(--text)]">{modelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         <label className="text-[12px] text-[var(--text-secondary)]">Temperature <span className="text-[var(--text)]">{settings.temperature.toFixed(2)}</span><input type="range" min="0" max="2" step="0.05" value={settings.temperature} onChange={(event) => onChange({ temperature: Number(event.target.value) })} className="mt-2 w-full" /></label>
         <div className="flex items-center justify-between rounded-[7px] border border-[var(--border-subtle)] px-2 py-2 text-[12px] text-[var(--text-secondary)]"><span>Thinking enabled</span><Toggle checked={settings.thinking_enabled} onChange={(thinking_enabled) => onChange({ thinking_enabled })} label={`Enable thinking for ${definition.label}`} /></div>
         {settings.thinking_enabled && <label className="text-[12px] text-[var(--text-secondary)]">Thinking level<select value={settings.thinking_level} onChange={(event) => onChange({ thinking_level: event.target.value as ThinkingLevel })} className="mt-1 w-full rounded-[7px] border border-[var(--border-subtle)] bg-[var(--bg-input)] px-2 py-1.5 text-[12px] text-[var(--text)]"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>}
