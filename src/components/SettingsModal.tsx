@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Search, SlidersHorizontal, Folder, Palette, Image as ImageIcon, BookOpen, Brain, SquareTerminal, Sparkles } from 'lucide-react'
+import { X, Search, SlidersHorizontal, Folder, Palette, Image as ImageIcon, BookOpen, Brain, SquareTerminal, Sparkles, Bot } from 'lucide-react'
 import { useSettingsStore, type SettingsTabId } from '../stores/settingsStore'
 import { toast } from '../stores/toastStore'
 import { API_BASE, apiFetch } from '../lib/api'
@@ -18,6 +18,7 @@ import { EndpointsSettings } from './settings/EndpointsTab'
 import { HarnessesSettings } from './settings/HarnessTab'
 import { ImagesSettings } from './settings/ImagineTab'
 import { MemorySettings } from './settings/MemoryTab'
+import { AgentsSettings } from './settings/AgentsTab'
 interface SettingsModalProps {
   onClose: () => void
 }
@@ -32,6 +33,7 @@ const TABS: { id: SettingsTabId; label: string; icon: React.ComponentType<{ size
   { id: 'post-processing', label: 'Post-processing', icon: Sparkles, title: 'Post-processing', keywords: 'post-processing post processing pipeline passes prose polish rewrite review grounding character rhythm repetition' },
   { id: 'endpoints', label: 'Endpoints', icon: EndpointLogo, title: 'Endpoints', keywords: 'endpoints endpoint api provider model url key' },
   { id: 'harnesses', label: 'Harness', icon: SquareTerminal, title: 'Harness', keywords: 'harness terminal executable model context agent' },
+  { id: 'agents', label: 'Agents', icon: Bot, title: 'Agents', keywords: 'agents agent write edit chat prompt model thinking temperature enable disable' },
 ]
 
 // Forgiving multi-term match: every query token must appear in the haystack.
@@ -121,6 +123,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 {activeTab === 'post-processing' && <PostProcessingSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'endpoints' && <EndpointsSettings settings={settings} updateSettings={updateSettings} query={query} />}
                 {activeTab === 'harnesses' && <HarnessesSettings settings={settings} updateSettings={updateSettings} query={query} />}
+                {activeTab === 'agents' && <AgentsSettings settings={settings} updateSettings={updateSettings} />}
               </div>
             </ScrollArea>
           </div>

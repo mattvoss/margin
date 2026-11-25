@@ -11,6 +11,7 @@ import {
 } from '../lib/settingsScope'
 import { toast } from './toastStore'
 import type { PostProcessingSettings } from '../lib/postProcessing'
+import type { AgentSettingsByMode } from '../lib/agents'
 
 export interface AppSettings {
   default_mode: string
@@ -49,6 +50,7 @@ export interface AppSettings {
   history_turns?: number
   /** Ordered, independently toggleable post-processing passes. Server-synced. */
   post_processing?: PostProcessingSettings
+  agents?: AgentSettingsByMode
   image_endpoints: Record<string, {
     provider: string
     base_url: string
@@ -94,7 +96,7 @@ interface SettingsState {
   selectedWorkspaceDir: () => string | null
 }
 
-export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'memory' | 'post-processing' | 'endpoints' | 'harnesses' | 'images'
+export type SettingsTabId = 'general' | 'workspaces' | 'appearance' | 'context' | 'memory' | 'post-processing' | 'endpoints' | 'harnesses' | 'images' | 'agents'
 
 /** First paint before localStorage is consulted: legacy builds cached only the
     workspace dir, so migrate that and otherwise start from defaults (a fresh

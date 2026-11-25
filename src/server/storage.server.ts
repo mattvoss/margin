@@ -104,6 +104,7 @@ import {
 } from './env.server.js';
 import { CLIENT_ONLY_KEYS, CLIENT_SETTINGS_HEADER } from '../lib/settingsScope';
 import { createDefaultPostProcessing } from '../lib/postProcessing';
+import { defaultAgentSettings } from '../lib/agents';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -342,6 +343,7 @@ export function defaultSettings(): Settings {
     english_style_checker_enabled: false,
     history_turns: 5,
     post_processing: createDefaultPostProcessing(),
+    agents: defaultAgentSettings(),
     image_endpoints: {},
     active_image_endpoint: null,
     image_default_style: null,
