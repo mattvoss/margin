@@ -105,16 +105,17 @@ async function captureResponseTelemetry(
         for (const choice of choices) {
           if (!choice || typeof choice !== 'object') continue
           const delta = (choice as { delta?: unknown }).delta
-          if (!delta || typeof delta !== 'object') continue
-          const deltaRecord = delta as Record<string, unknown>
-          const reasoning =
-            typeof deltaRecord['reasoning_content'] === 'string'
-              ? deltaRecord['reasoning_content']
-              : typeof deltaRecord['reasoning'] === 'string'
-                ? deltaRecord['reasoning']
-                : ''
-          if (reasoning) telemetry.onReasoningDelta?.(reasoning)
-          const logprobs = choice && typeof choice === 'object' ? (choice as Record<string, unknown>)['logprobs'] : undefined
+          const deltaRecord = delta && typeof delta === 'object' ? delta as Record<string, unknown> : null
+          if (deltaRecord) {
+            const reasoning =
+              typeof deltaRecord['reasoning_content'] === 'string'
+                ? deltaRecord['reasoning_content']
+                : typeof deltaRecord['reasoning'] === 'string'
+                  ? deltaRecord['reasoning']
+                  : ''
+            if (reasoning) telemetry.onReasoningDelta?.(reasoning)
+          }
+          const logprobs = (choice as Record<string, unknown>)['logprobs']
           const content = logprobs && typeof logprobs === 'object' ? (logprobs as Record<string, unknown>)['content'] : undefined
           if (Array.isArray(content)) {
             for (const token of content) {
@@ -204,12 +205,13 @@ export function createAssistPlannerAgent(input: {
   instructions: string
   memory?: MemoryToolContext
   maxOutputTokens?: number
+  temperature?: number
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions + memoryInstructions(input.memory),
     ...(memoryTools(input.memory) ? { tools: memoryTools(input.memory), stopWhen: isStepCount(3) } : { stopWhen: isStepCount(1) }),
-    temperature: 0.3,
+    temperature: input.temperature ?? 0.3,
     maxOutputTokens: input.maxOutputTokens ?? 800,
   })
 }
@@ -219,12 +221,13 @@ export function createAssistEditAgent(input: {
   endpoint: AssistAgentEndpoint
   instructions: string
   maxOutputTokens?: number | null
+  temperature?: number
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions,
     stopWhen: isStepCount(1),
-    temperature: 0.7,
+    temperature: input.temperature ?? 0.7,
     ...(input.maxOutputTokens != null ? { maxOutputTokens: input.maxOutputTokens } : {}),
   })
 }
@@ -318,12 +321,13 @@ export function createAssistChatAgent(input: {
   instructions: string
   maxOutputTokens?: number | null
   memory?: MemoryToolContext
+  temperature?: number
 }) {
   return new ToolLoopAgent({
     model: createAssistAgentModel(input.endpoint),
     instructions: input.instructions + memoryInstructions(input.memory),
     ...(memoryTools(input.memory) ? { tools: memoryTools(input.memory), stopWhen: isStepCount(3) } : { stopWhen: isStepCount(1) }),
-    temperature: 0.7,
+    temperature: input.temperature ?? 0.7,
     ...(input.maxOutputTokens != null ? { maxOutputTokens: input.maxOutputTokens } : {}),
   })
 }

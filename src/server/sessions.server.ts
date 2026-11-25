@@ -53,6 +53,9 @@ export interface AiLogEntry {
   prompt_ms?: number | null
   tokens_cached?: number | null
   slot_id?: number | null
+  logprobs_requested?: boolean
+  logprobs_received?: boolean
+  logprob_token_count?: number
 }
 
 function rid(prefix: string): string {

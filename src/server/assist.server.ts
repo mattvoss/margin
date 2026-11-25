@@ -109,6 +109,7 @@ export interface SimpleAssistRequest {
   /** Legacy compatibility flag; predictable-pattern revisions are automatic. */
   rewrite_predictable_patterns?: boolean
   english_style_checker_enabled?: boolean
+  show_logprobs?: boolean
 }
 
 /** Apply the Pydantic field defaults to a raw parsed body. */
@@ -143,6 +144,7 @@ export function normalizeSimpleAssistRequest(input: Record<string, unknown>): Si
     evaluate_prose: typeof input.evaluate_prose === 'boolean' ? input.evaluate_prose : undefined,
     rewrite_predictable_patterns: input.rewrite_predictable_patterns === true,
     english_style_checker_enabled: input.english_style_checker_enabled === true,
+    show_logprobs: input.show_logprobs === true,
   }
 }
 

@@ -284,6 +284,42 @@ describe('SimpleAssist agents', () => {
     expect(reasoning.join('')).toBe('I am planning the reply.')
   })
 
+  it('captures returned token logprobs when the provider includes them', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        stream([
+          {
+            choices: [{
+              index: 0,
+              delta: { content: 'Reply.' },
+              logprobs: {
+                content: [
+                  { token: 'Reply', logprob: -0.12 },
+                  { token: '.', logprob: -0.03 },
+                ],
+              },
+              finish_reason: null,
+            }],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]),
+      ),
+    )
+    const telemetry: AssistAgentTelemetry = {
+      timings: null,
+      tokensCached: null,
+      pending: null,
+    }
+
+    const agent = createAssistChatAgent({ endpoint: { ...endpoint, telemetry }, instructions: 'Chat.' })
+    const result = await agent.stream({ prompt: 'Hello.' })
+    await expect(result.text).resolves.toBe('Reply.')
+    await telemetry.pending
+
+    expect(telemetry.tokenLogprobs).toEqual([-0.12, -0.03])
+  })
+
   it('pauses on ask_user and resumes the clarification loop with its tool result', async () => {
     const questions = [{
       id: 'ending',

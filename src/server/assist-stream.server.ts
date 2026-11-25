@@ -75,6 +75,7 @@ import { recallMemoryContext } from './memory.server'
 import { memoryConfig } from './memory.server'
 import { scheduleCurrentStateReview } from './current-state-review.server'
 import { WRITING_PIPELINE_STAGES, runWritingPipeline } from './writing-pipeline.server'
+import { agentSettingsFor, type AgentMode } from '../lib/agents'
 import {
   buildWritingEvaluationPrompt,
   evaluateDraftDeterministically,
@@ -216,6 +217,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           ? formatCharacterPrompt(characterState)
           : null
         const mode = payload.mode.trim().toLowerCase()
+        const agentConfig = (agentMode: AgentMode, id: string) => agentSettingsFor(settings, agentMode, id)
         const questionnaireAnswers = payload.clarification_answers ?? payload.write_answers
         const answerLines = Object.entries(questionnaireAnswers ?? {}).map(([question, answer]) =>
           `${question}: ${Array.isArray(answer) ? answer.join(', ') : answer}`,
@@ -791,8 +793,11 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             send({ status: 'write_clarifying', continuation: true })
           }
           if (pending || Object.keys(clarificationAnswers).length === 0) {
+            if (!agentConfig('write', 'clarification').enabled) {
+              throw new Error('The Clarification agent is disabled. Enable it in Settings → Agents → Write, or provide clarification answers and retry.')
+            }
             const clarificationMemoryConfig = memoryConfig(process.env, settings)
-            const clarificationAgent = createWriteClarificationAgent({
+          const clarificationAgent = createWriteClarificationAgent({
               endpoint: {
                 model: client.model,
                 baseUrl: client.baseUrl,
@@ -886,7 +891,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             context += `\n\nClarification answers:\n${JSON.stringify(clarificationAnswers)}`
           }
 
-          const evaluateProse = payload.evaluate_prose ?? (settings.write_evaluation_enabled !== false)
+          const evaluateProse = (payload.evaluate_prose ?? (settings.write_evaluation_enabled !== false))
+            && agentConfig('write', 'evaluator').enabled
           let allThinking = ''
           let finalOutput = ''
           let proseLogprobs: number[] | null = null
@@ -894,14 +900,22 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           let writingEvaluation: WritingEvaluationRecord = evaluateProse
             ? { status: 'skipped', reason: 'not_run' }
             : { status: 'skipped', reason: 'disabled' }
+          const enabledWritingStages = WRITING_PIPELINE_STAGES.filter((stage) => {
+            const config = agentConfig('write', stage.id)
+            if (config.enabled) return true
+            if (stage.id === 'prose') throw new Error('The Prose Writer agent is disabled. Enable it in Settings → Agents → Write to generate prose.')
+            send({ status: 'write_stage_skipped', stage: stage.id, reason: 'disabled' })
+            return false
+          })
           send({
             status: 'write_started',
             run_id: payload.session_id,
             model_used: client.model,
-            stages: WRITING_PIPELINE_STAGES.map((stage) => stage.id),
+            stages: enabledWritingStages.map((stage) => stage.id),
           })
           const pipeline = await runWritingPipeline({
             context,
+            stages: enabledWritingStages,
             signal,
             onStageStart: (stage) => send({
               status: 'write_stage_started',
@@ -931,21 +945,23 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   send({ status: 'write_reasoning', stage: id, chunk: delta })
                 },
               }
+              const stageConfig = agentConfig('write', id)
               const agent = createWriteStageAgent({
                 endpoint: {
-                  model: client.model,
+                  model: stageConfig.model?.trim() || client.model,
                   baseUrl: client.baseUrl,
-                providerName: client.providerName,
+                  providerName: client.providerName,
                   apiKey: client.apiKey,
                   telemetry: stageTelemetry,
                   requestBody: {
                     chat_template_kwargs: {
-                      enable_thinking: client.isThinking,
+                      enable_thinking: stageConfig.thinking_enabled,
+                      thinking_level: stageConfig.thinking_level,
                     },
                   },
                 },
                 instructions: stage.agentInstructions,
-                temperature: stage.temperature,
+                temperature: stageConfig.temperature,
                 // Internal notes stay bounded, but the final prose stage is
                 // intentionally uncapped; the provider's context window remains
                 // the hard limit.
@@ -954,7 +970,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   : {
                       maxOutputTokens: generationBudget(
                         stage.maxOutputTokens,
-                        client.isThinking,
+                        stageConfig.thinking_enabled,
                         prompt.length,
                         getActiveContextWindow(settings as never),
                       ),
@@ -966,7 +982,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 ...(id === 'prose' ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
               })
               const thinkingFilter = new ThinkingTagFilter(
-                client.isThinking,
+                stageConfig.thinking_enabled,
                 client.customOpeningTags,
                 client.customClosingTags,
               )
@@ -1109,7 +1125,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                   ]
                   if (!actionableFindings.length || revisionIterations >= 3 || signal.aborted) break
 
-                  const rewriter = createWriteEvaluationAgent({
+                   if (!agentConfig('write', 'rewriter').enabled) break
+                   const rewriter = createWriteEvaluationAgent({
                     endpoint: {
                       model: client.model,
                       baseUrl: client.baseUrl,
@@ -1251,6 +1268,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           tokensCached: number | null
           anchor: ReturnType<typeof extractAnchorContext>
           slotId: number | null
+          logprobsReceived: boolean
+          logprobTokenCount: number
         }
         type ChatRun = {
           raw: string
@@ -1264,6 +1283,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           tokensCached: number | null
           anchor: ReturnType<typeof extractAnchorContext> | null
           slotId: number | null
+          logprobsReceived: boolean
+          logprobTokenCount: number
           logs: Awaited<ReturnType<typeof getWorkspaceAiLogs>>
         }
 
@@ -1286,6 +1307,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
 
         async function performPlanner(announce: boolean): Promise<PlannerRun | null> {
           if (payload.skip_planner) return null
+          const plannerConfig = agentConfig('edit', 'planner')
+          if (!plannerConfig.enabled) {
+            throw new Error('The Edit Planner agent is disabled. Enable it in Settings → Agents → Edit, or skip planning explicitly.')
+          }
           if (plannerRun) return plannerRun
           if (announce) send({ status: 'planning' })
           send({
@@ -1333,11 +1358,19 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             }),
           )
           const agent = createAssistPlannerAgent({
-            endpoint: { ...agentEndpoint, requestBody: cacheRequestBody(plannerCache) },
+            endpoint: {
+              ...agentEndpoint,
+              model: plannerConfig.model?.trim() || client.model,
+              requestBody: {
+                ...cacheRequestBody(plannerCache),
+                chat_template_kwargs: { enable_thinking: plannerConfig.thinking_enabled, thinking_level: plannerConfig.thinking_level },
+              },
+            },
             instructions: planner.system,
+            temperature: plannerConfig.temperature,
             maxOutputTokens: generationBudget(
               800,
-              client.isThinking,
+              plannerConfig.thinking_enabled,
               messageChars(plannerMsgs.messages),
               getActiveContextWindow(settings as never),
             ),
@@ -1400,6 +1433,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
 
         async function performEdit(): Promise<EditRun> {
           if (editRun) return editRun
+          const writerConfig = agentConfig('edit', 'writer')
+          if (!writerConfig.enabled) {
+            throw new Error('The Editor agent is disabled. Enable it in Settings → Agents → Edit to apply edits.')
+          }
           const plan = payload.skip_planner ? null : await runPlanner(true)
           if (!plan) {
             send({ status: 'context_resolved', context_needed: taggedContext })
@@ -1459,19 +1496,25 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             timings: null,
             tokensCached: null,
             pending: null,
+            tokenLogprobs: [],
           }
           const agent = createAssistEditAgent({
             endpoint: {
               ...agentEndpoint,
-              requestBody: cacheRequestBody(writerCache),
+              model: writerConfig.model?.trim() || client.model,
+              requestBody: {
+                ...cacheRequestBody(writerCache),
+                chat_template_kwargs: { enable_thinking: writerConfig.thinking_enabled, thinking_level: writerConfig.thinking_level },
+              },
               telemetry: writerTelemetry,
             },
             instructions: gen.system,
+            temperature: writerConfig.temperature,
           })
           let fullRaw = ''
           let fullThinking = ''
           const thinkingFilter = new ThinkingTagFilter(
-            client.isThinking,
+            writerConfig.thinking_enabled,
             client.customOpeningTags,
             client.customClosingTags,
           )
@@ -1480,6 +1523,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               (message) => message.role !== 'system',
             ) as ModelMessage[],
             abortSignal: signal,
+            ...(payload.show_logprobs ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
           })
           for await (const part of result.fullStream) {
             if (signal.aborted) break
@@ -1494,7 +1538,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 send({ status: 'thinking_chunk', stage: 'writer', chunk: filtered.thinking })
               }
             } else if (part.type === 'reasoning-delta') {
-              if (client.isThinking) {
+              if (writerConfig.thinking_enabled) {
                 fullThinking += part.text
                 send({ status: 'thinking_chunk', stage: 'writer', chunk: part.text })
               } else {
@@ -1522,7 +1566,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           const response = await result.response
           const raw = fullRaw || splitThinkingTags(
             await result.text,
-            client.isThinking,
+            writerConfig.thinking_enabled,
             client.customOpeningTags,
             client.customClosingTags,
           ).text
@@ -1542,6 +1586,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokensCached: writerTelemetry.tokensCached,
             anchor,
             slotId: writerCache.slotId ?? null,
+            logprobsReceived: Boolean(writerTelemetry.tokenLogprobs?.length),
+            logprobTokenCount: writerTelemetry.tokenLogprobs?.length ?? 0,
           }
           editRun = run
           return run
@@ -1555,6 +1601,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
 
         async function performChat(): Promise<ChatRun> {
           if (chatRun) return chatRun
+          const chatConfig = agentConfig('chat', 'chat')
+          if (!chatConfig.enabled) {
+            throw new Error('The Chat agent is disabled. Enable it in Settings → Agents → Chat to continue.')
+          }
           send({ status: 'generating' })
           send({
             status: 'subagent_started',
@@ -1607,20 +1657,26 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             timings: null,
             tokensCached: null,
             pending: null,
+            tokenLogprobs: [],
           }
            const agent = createAssistChatAgent({
             endpoint: {
               ...agentEndpoint,
-              requestBody: cacheRequestBody(chatCache),
+              model: chatConfig.model?.trim() || client.model,
+               requestBody: {
+                 ...cacheRequestBody(chatCache),
+                 chat_template_kwargs: { enable_thinking: chatConfig.thinking_enabled, thinking_level: chatConfig.thinking_level },
+               },
               telemetry: chatTelemetry,
             },
              instructions: composed.system,
-             memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
+              memory: { workspaceKey: ws, config: memoryConfig(process.env, settings) },
+              temperature: chatConfig.temperature,
            })
           let fullChat = ''
           let fullThinking = ''
           const thinkingFilter = new ThinkingTagFilter(
-            client.isThinking,
+             chatConfig.thinking_enabled,
             client.customOpeningTags,
             client.customClosingTags,
           )
@@ -1629,6 +1685,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               (message) => message.role !== 'system',
             ) as ModelMessage[],
             abortSignal: signal,
+              ...(payload.show_logprobs ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
           })
           for await (const part of result.fullStream) {
             if (signal.aborted) break
@@ -1643,7 +1700,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 send({ status: 'thinking_chunk', stage: 'chat', chunk: filtered.thinking })
               }
             } else if (part.type === 'reasoning-delta') {
-              if (client.isThinking) {
+              if (chatConfig.thinking_enabled) {
                 fullThinking += part.text
                 send({ status: 'thinking_chunk', stage: 'chat', chunk: part.text })
               } else {
@@ -1682,7 +1739,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
           }
           const raw = fullChat || splitThinkingTags(
             await result.text,
-            client.isThinking,
+            chatConfig.thinking_enabled,
             client.customOpeningTags,
             client.customClosingTags,
           ).text
@@ -1709,6 +1766,8 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokensCached: chatTelemetry.tokensCached,
             anchor: chatAnchor,
             slotId: chatCache.slotId ?? null,
+            logprobsReceived: Boolean(chatTelemetry.tokenLogprobs?.length),
+            logprobTokenCount: chatTelemetry.tokenLogprobs?.length ?? 0,
             logs: chatLogs,
           }
           chatRun = run
@@ -1779,6 +1838,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
               prompt_ms: edit.promptMs,
               tokens_cached: edit.tokensCached,
               slot_id: edit.slotId,
+              logprobs_requested: payload.show_logprobs === true,
+              logprobs_received: edit.logprobsReceived,
+              logprob_token_count: edit.logprobTokenCount,
             }, ws)
             finalized = true
             send({
@@ -1839,6 +1901,9 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             prompt_ms: chat.promptMs,
             tokens_cached: chat.tokensCached,
             slot_id: chat.slotId,
+            logprobs_requested: payload.show_logprobs === true,
+            logprobs_received: chat.logprobsReceived,
+            logprob_token_count: chat.logprobTokenCount,
           }, ws)
           // Manuscript memory is updated from categorized file saves. Chat
           // responses are intentionally not treated as durable story canon.
