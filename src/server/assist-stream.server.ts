@@ -939,6 +939,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                 tokensCached: null,
                 pending: null,
                 tokenLogprobs: [],
+                logprobStage: `write:${id}`,
                 onReasoningDelta: (delta) => {
                   stageThinking += delta
                   allThinking += delta
@@ -976,10 +977,14 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
                       ),
                     }),
               })
+              const requestsLogprobs = id === 'prose'
+              if (requestsLogprobs) {
+                console.log(JSON.stringify({ event: 'assist_logprobs_requested', stage: `write:${id}`, provider: client.providerName }))
+              }
               const result = await agent.stream({
                 messages: [{ role: 'user', content: prompt }],
                 abortSignal: signal,
-                ...(id === 'prose' ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
+                ...(requestsLogprobs ? { providerOptions: logprobProviderOptions(client.providerName) } : {}),
               })
               const thinkingFilter = new ThinkingTagFilter(
                 stageConfig.thinking_enabled,
@@ -1497,6 +1502,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokensCached: null,
             pending: null,
             tokenLogprobs: [],
+            logprobStage: 'edit:writer',
           }
           const agent = createAssistEditAgent({
             endpoint: {
@@ -1518,7 +1524,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             client.customOpeningTags,
             client.customClosingTags,
           )
-          const result = await agent.stream({
+           if (payload.show_logprobs) {
+             console.log(JSON.stringify({ event: 'assist_logprobs_requested', stage: 'edit:writer', provider: client.providerName }))
+           }
+           const result = await agent.stream({
             messages: writerMsgs.messages.filter(
               (message) => message.role !== 'system',
             ) as ModelMessage[],
@@ -1658,6 +1667,7 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             tokensCached: null,
             pending: null,
             tokenLogprobs: [],
+            logprobStage: 'chat',
           }
            const agent = createAssistChatAgent({
             endpoint: {
@@ -1680,7 +1690,10 @@ export function runSimpleAssist(payload: SimpleAssistRequest, request: Request):
             client.customOpeningTags,
             client.customClosingTags,
           )
-          const result = await agent.stream({
+           if (payload.show_logprobs) {
+             console.log(JSON.stringify({ event: 'assist_logprobs_requested', stage: 'chat', provider: client.providerName }))
+           }
+           const result = await agent.stream({
             messages: chatMsgs.messages.filter(
               (message) => message.role !== 'system',
             ) as ModelMessage[],

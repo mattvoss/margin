@@ -285,6 +285,7 @@ describe('SimpleAssist agents', () => {
   })
 
   it('captures returned token logprobs when the provider includes them', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -318,6 +319,7 @@ describe('SimpleAssist agents', () => {
     await telemetry.pending
 
     expect(telemetry.tokenLogprobs).toEqual([-0.12, -0.03])
+    expect(log.mock.calls.some(([line]) => String(line).includes('assist_logprobs_received'))).toBe(true)
   })
 
   it('pauses on ask_user and resumes the clarification loop with its tool result', async () => {

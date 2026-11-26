@@ -40,6 +40,11 @@ export interface AssistAgentTelemetry {
   pending: Promise<void> | null
   onReasoningDelta?: (delta: string) => void
   tokenLogprobs?: number[]
+  logprobStage?: string
+}
+
+const logLogprobs = (event: string, fields: Record<string, unknown>) => {
+  console.log(JSON.stringify({ event, ...fields }))
 }
 
 function memoryTools(memory: MemoryToolContext | undefined) {
@@ -118,13 +123,22 @@ async function captureResponseTelemetry(
           const logprobs = (choice as Record<string, unknown>)['logprobs']
           const content = logprobs && typeof logprobs === 'object' ? (logprobs as Record<string, unknown>)['content'] : undefined
           if (Array.isArray(content)) {
+            const returned: number[] = []
             for (const token of content) {
               if (!token || typeof token !== 'object') continue
               const value = (token as Record<string, unknown>)['logprob']
               if (typeof value === 'number' && Number.isFinite(value) && value <= 0) {
                 telemetry.tokenLogprobs ??= []
                 if (telemetry.tokenLogprobs.length < 100_000) telemetry.tokenLogprobs.push(value)
+                if (returned.length < 1000) returned.push(value)
               }
+            }
+            if (returned.length) {
+              logLogprobs('assist_logprobs_received', {
+                stage: telemetry.logprobStage ?? 'unknown',
+                count: returned.length,
+                values: returned,
+              })
             }
           }
         }
